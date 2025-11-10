@@ -10,13 +10,14 @@ Set up a reproducible, isolated Python development environment for Riverghost on
 ## Technical Context
 
 **Language/Version**: Python 3.12  
-**Primary Dependencies**: pipenv, ultralytics, mss, opencv-python, easyocr, evdev, pypoker-eval, ollama, numpy, asyncio, schedule, humanize, noise, label-studio  
+**Primary Dependencies**: pipenv, ultralytics, mss, opencv-python, easyocr, evdev, python3-evdev, pypoker-eval, ollama, numpy, asyncio, schedule, humanize, noise, label-studio
 **Storage**: N/A  
 **Testing**: Manual verification, `pipenv run python -c "import mss; print('OK')"`  
 **Target Platform**: Ubuntu 24.04 LTS (desktop or VM), Wine  
 **Project Type**: Single-project CLI/automation  
 **Performance Goals**: Setup completes in under 30 minutes  
-**Constraints**: 100% offline, pipenv for all Python code, no data uploads  
+**Constraints**: 100% offline, pipenv for all Python code, no data uploads
+**System Setup**: uinput kernel module is built-in on Ubuntu 24.04; load with `modprobe uinput`. Set permissions with udev rule and add user to input group for /dev/uinput access. Remove any reference to uinput-modules-dkms.
 **Scale/Scope**: Single-user, local workstation
 
 ## Constitution Check

@@ -2,8 +2,9 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create project directory at ~/matija/riverghost
-- [ ] T002 Install system dependencies with apt (`wine`, `winetricks`, `python3-pip`, `pipenv`, `libevdev2`, `uinput-modules-dkms`, `x11-utils`)
+- [X] T001 Create project directory at ~/matija/riverghost
+- [ ] T002 Install system dependencies with apt (`wine`, `winetricks`, `python3-pip`, `pipenv`, `libevdev2`, `x11-utils`, `python3-evdev`)
+- [ ] T002.1 Load uinput kernel module, set permissions with udev rule, and add user to input group for /dev/uinput access
 - [ ] T003 Set up dedicated WINEPREFIX at ~/matija/riverghost/.wine-riverghost and export WINEPREFIX
 - [ ] T004 Download WPTClient.exe to ~/Downloads
 - [ ] T005 Install WPT client using Wine (`wine ~/Downloads/WPTClient.exe`)
