@@ -1,5 +1,6 @@
 import cv2
 import time
+import threading
 from card_detector import CardDetector
 from poker_analyzer import PokerAnalyzer
 from dashboard import Dashboard
@@ -13,6 +14,7 @@ class HoPilot:
         self.image_path = image_path
         self.current_assignments = {}
         self.phase = 'pre-flop'  # Default phase
+        self.lock = threading.Lock()
 
     def determine_phase(self, assignments):
         """
@@ -29,7 +31,8 @@ class HoPilot:
             return 'river'
 
     def get_current_assignments(self):
-        return self.current_assignments
+        with self.lock:
+            return self.current_assignments.copy()
 
     def get_advice(self):
         hole_cards = []
@@ -49,9 +52,11 @@ class HoPilot:
         return getattr(self, 'current_image_path', None)
 
     def process_image(self, image_path):
-        self.current_assignments = self.detector.detect_cards(image_path)
-        self.phase = self.determine_phase(self.current_assignments)
-        self.current_image_path = image_path
+        assignments = self.detector.detect_cards(image_path)
+        with self.lock:
+            self.current_assignments = assignments
+            self.phase = self.determine_phase(self.current_assignments)
+            self.current_image_path = image_path
 
     def process_video_frame(self, frame):
         # Save frame to temp file or process directly
@@ -75,33 +80,33 @@ class HoPilot:
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_delay = 1.0 / fps if fps > 0 else 0.033  # Default ~30fps
 
-        # Process frames at a reasonable rate, e.g., every 5th frame for 10fps video
+        # Process frames at a reasonable rate, skip some for speed
         frame_interval = 5
-        frame_count = 0
 
-        running = True
-        while running and cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        def process_frames():
+            frame_count = 0
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            frame_count += 1
-            if frame_count % frame_interval == 0:
-                # Process frame
-                temp_path = 'temp_frame.jpg'
-                cv2.imwrite(temp_path, frame)
-                self.process_image(temp_path)
-                print(f"Processed frame {frame_count}")
-                cv2.imshow("Debug Image", frame)
-                cv2.waitKey(1)
+                frame_count += 1
+                if frame_count % frame_interval == 0:
+                    # Process frame
+                    temp_path = 'temp_frame.jpg'
+                    cv2.imwrite(temp_path, frame)
+                    self.process_image(temp_path)
+                    print(f"Processed frame {frame_count}")
 
-            # Sleep to match video timing
-            time.sleep(frame_delay * frame_interval)
+            cap.release()
+            cv2.destroyAllWindows()
 
-        cap.release()
-        cv2.destroyAllWindows()
+        # Start processing thread
+        processing_thread = threading.Thread(target=process_frames)
+        processing_thread.daemon = True
+        processing_thread.start()
 
-        # Run dashboard with last processed frame
+        # Run dashboard concurrently
         self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path)
 
 if __name__ == "__main__":

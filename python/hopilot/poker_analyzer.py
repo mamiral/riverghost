@@ -62,8 +62,17 @@ class PokerAnalyzer:
         board_cards: list of up to 5 card names
         Returns hand strength score (lower is better)
         """
-        hole = [self.card_name_to_treys(c) for c in hole_cards if c]
-        board = [self.card_name_to_treys(c) for c in board_cards if c]
+        hole = []
+        for c in hole_cards:
+            card = self.card_name_to_treys(c)
+            if card is not None:
+                hole.append(card)
+
+        board = []
+        for c in board_cards:
+            card = self.card_name_to_treys(c)
+            if card is not None:
+                board.append(card)
 
         if len(hole) != 2:
             return None

@@ -78,10 +78,10 @@ class Dashboard:
             advice = advice_func()
             image_path = image_path_func() if image_path_func else None
 
+            print(f"Dashboard updating: assignments keys: {list(assignments.keys())}, advice: {advice[:50] if advice else 'None'}")
             self.display_cards(assignments, advice)
             self.show_debug_image(image_path)
 
             self.clock.tick(30)  # 30 FPS
 
         pygame.quit()
-        sys.exit()
