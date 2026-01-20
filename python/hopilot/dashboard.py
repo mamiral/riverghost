@@ -1,5 +1,6 @@
 import pygame
 import sys
+import threading
 
 class Dashboard:
     def __init__(self, width=900, height=600):
@@ -11,6 +12,10 @@ class Dashboard:
         self.font = pygame.font.SysFont(None, 24)
         self.large_font = pygame.font.SysFont(None, 36)
         self.clock = pygame.time.Clock()
+        self.speed = 1.0
+        self.slow_down = True
+        self.paused = False
+        self.speed_lock = threading.Lock()
 
     def draw_text(self, text, x, y, font=None, color=(255, 255, 255)):
         if font is None:
@@ -53,6 +58,33 @@ class Dashboard:
         self.draw_text("Advice:", 50, 400, self.large_font)
         self.draw_text(advice, 50, 440)
 
+        # Draw buttons on the right
+        button_y = 450
+        button_width = 100
+        button_height = 30
+
+        # Pause/Play
+        pygame.draw.rect(self.screen, (255,255,0), (600, button_y, button_width, button_height))
+        text = "Play" if self.paused else "Pause"
+        self.screen.blit(self.font.render(text, True, (0,0,0)), (605, button_y + 5))
+
+        # Speed up
+        pygame.draw.rect(self.screen, (0,255,0), (710, button_y, button_width, button_height))
+        self.screen.blit(self.font.render("Speed +", True, (0,0,0)), (715, button_y + 5))
+
+        # Speed down
+        pygame.draw.rect(self.screen, (255,0,0), (600, button_y + 40, button_width, button_height))
+        self.screen.blit(self.font.render("Speed -", True, (0,0,0)), (605, button_y + 45))
+
+        # Toggle slow
+        color = (0,255,0) if self.slow_down else (255,0,0)
+        pygame.draw.rect(self.screen, color, (710, button_y + 40, button_width, button_height))
+        text = "Slow ON" if self.slow_down else "Slow OFF"
+        self.screen.blit(self.font.render(text, True, (0,0,0)), (715, button_y + 45))
+
+        # Speed display
+        self.draw_text(f"Speed: {self.speed:.1f}x", 600, button_y + 80)
+
         pygame.display.flip()
 
     def show_debug_image(self, image_path):
@@ -72,13 +104,27 @@ class Dashboard:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    x, y = event.pos
+                    button_y = 450
+                    if 600 <= x <= 700 and button_y <= y <= button_y + 30:
+                        with self.speed_lock:
+                            self.paused = not self.paused
+                    elif 710 <= x <= 810 and button_y <= y <= button_y + 30:
+                        with self.speed_lock:
+                            self.speed = min(self.speed * 1.5, 10.0)
+                    elif 600 <= x <= 700 and button_y + 40 <= y <= button_y + 70:
+                        with self.speed_lock:
+                            self.speed = max(self.speed / 1.5, 0.1)
+                    elif 710 <= x <= 810 and button_y + 40 <= y <= button_y + 70:
+                        with self.speed_lock:
+                            self.slow_down = not self.slow_down
 
             # Get current card assignments and advice
             assignments = card_assignments_func()
             advice = advice_func()
             image_path = image_path_func() if image_path_func else None
 
-            print(f"Dashboard updating: assignments keys: {list(assignments.keys())}, advice: {advice[:50] if advice else 'None'}")
             self.display_cards(assignments, advice)
             self.show_debug_image(image_path)
 

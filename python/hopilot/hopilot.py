@@ -7,7 +7,7 @@ from dashboard import Dashboard
 
 class HoPilot:
     def __init__(self, video_path=None, image_path=None):
-        self.detector = CardDetector()
+        self.detector = CardDetector(model_path='models/playing_cards_model.pt')
         self.analyzer = PokerAnalyzer()
         self.dashboard = Dashboard()
         self.video_path = video_path
@@ -86,6 +86,11 @@ class HoPilot:
         def process_frames():
             frame_count = 0
             while cap.isOpened():
+                with self.dashboard.speed_lock:
+                    if self.dashboard.paused:
+                        time.sleep(0.1)
+                        continue
+
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -97,6 +102,11 @@ class HoPilot:
                     cv2.imwrite(temp_path, frame)
                     self.process_image(temp_path)
                     print(f"Processed frame {frame_count}")
+
+                    # Sleep if slow down enabled
+                    with self.dashboard.speed_lock:
+                        if self.dashboard.slow_down:
+                            time.sleep(frame_delay * frame_interval / self.dashboard.speed)
 
             cap.release()
             cv2.destroyAllWindows()
