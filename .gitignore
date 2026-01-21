@@ -149,3 +149,11 @@ Thumbs.db
 
 # Downloads (if any)
 Downloads/
+
+# Media files
+*.mp4
+*.png
+*.jpg
+*.jpeg
+
+*.npy
