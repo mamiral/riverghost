@@ -101,18 +101,7 @@ class HoPilot:
                     temp_path = 'temp_frame.jpg'
                     cv2.imwrite(temp_path, frame)
 
-                    # Apply CLAHE preprocessing
-                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-                    if len(frame.shape) == 3:
-                        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-                        lab[...,0] = clahe.apply(lab[...,0])
-                        clahe_frame = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                    else:
-                        clahe_frame = clahe.apply(frame)
-                    temp_clahe_path = 'temp_clahe.jpg'
-                    cv2.imwrite(temp_clahe_path, clahe_frame)
-
-                    self.process_image(temp_clahe_path)
+                    self.process_image(temp_path)
                     print(f"Processed frame {frame_count}")
 
                     # Sleep if slow down enabled
