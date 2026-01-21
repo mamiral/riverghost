@@ -26,6 +26,7 @@ class Dashboard:
         self.speed_up_rect = (710, self.button_y, self.button_width, self.button_height)
         self.speed_down_rect = (600, self.button_y + 40, self.button_width, self.button_height)
         self.slow_toggle_rect = (710, self.button_y + 40, self.button_width, self.button_height)
+        self.screenshot_rect = (710, self.button_y + 80, self.button_width, self.button_height)
 
     def is_mouse_inside(self, rect, pos):
         x, y = pos
@@ -93,6 +94,10 @@ class Dashboard:
         text = "Slow ON" if self.slow_down else "Slow OFF"
         self.screen.blit(self.font.render(text, True, (0,0,0)), (715, self.button_y + 45))
 
+        # Screenshot button
+        pygame.draw.rect(self.screen, (0,255,255), self.screenshot_rect)
+        self.screen.blit(self.font.render("Screenshot", True, (0,0,0)), (715, self.button_y + 85))
+
         # Speed display
         self.draw_text(f"Speed: {self.speed:.1f}x", 600, self.button_y + 80)
 
@@ -126,6 +131,25 @@ class Dashboard:
                     elif self.is_mouse_inside(self.slow_toggle_rect, event.pos):
                         with self.speed_lock:
                             self.slow_down = not self.slow_down
+                    elif self.is_mouse_inside(self.screenshot_rect, event.pos):
+                        current_image_path = image_path_func() if image_path_func else None
+                        if current_image_path and os.path.exists(current_image_path):
+                            screenshots_dir = 'recordings/screenshots'
+                            os.makedirs(screenshots_dir, exist_ok=True)
+                            files = os.listdir(screenshots_dir)
+                            jpeg_files = [f for f in files if f.endswith('.jpeg')]
+                            numbers = []
+                            for f in jpeg_files:
+                                try:
+                                    num = int(f[:-5])
+                                    numbers.append(num)
+                                except ValueError:
+                                    pass
+                            next_num = max(numbers) + 1 if numbers else 1
+                            screenshot_path = os.path.join(screenshots_dir, f'{next_num}.jpeg')
+                            import shutil
+                            shutil.copy(current_image_path, screenshot_path)
+                            print(f"Screenshot saved to {screenshot_path}")
 
             # Get current card assignments and advice
             assignments = card_assignments_func()
