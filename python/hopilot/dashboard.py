@@ -18,6 +18,20 @@ class Dashboard:
         self.paused = False
         self.speed_lock = threading.Lock()
 
+        # Button dimensions
+        self.button_width = 100
+        self.button_height = 30
+        self.button_y = 450
+        self.pause_rect = (600, self.button_y, self.button_width, self.button_height)
+        self.speed_up_rect = (710, self.button_y, self.button_width, self.button_height)
+        self.speed_down_rect = (600, self.button_y + 40, self.button_width, self.button_height)
+        self.slow_toggle_rect = (710, self.button_y + 40, self.button_width, self.button_height)
+
+    def is_mouse_inside(self, rect, pos):
+        x, y = pos
+        rx, ry, rw, rh = rect
+        return rx <= x <= rx + rw and ry <= y <= ry + rh
+
     def draw_text(self, text, x, y, font=None, color=(255, 255, 255)):
         if font is None:
             font = self.font
@@ -60,31 +74,27 @@ class Dashboard:
         self.draw_text(advice, 50, 440)
 
         # Draw buttons on the right
-        button_y = 450
-        button_width = 100
-        button_height = 30
-
         # Pause/Play
-        pygame.draw.rect(self.screen, (255,255,0), (600, button_y, button_width, button_height))
+        pygame.draw.rect(self.screen, (255,255,0), self.pause_rect)
         text = "Play" if self.paused else "Pause"
-        self.screen.blit(self.font.render(text, True, (0,0,0)), (605, button_y + 5))
+        self.screen.blit(self.font.render(text, True, (0,0,0)), (605, self.button_y + 5))
 
         # Speed up
-        pygame.draw.rect(self.screen, (0,255,0), (710, button_y, button_width, button_height))
-        self.screen.blit(self.font.render("Speed +", True, (0,0,0)), (715, button_y + 5))
+        pygame.draw.rect(self.screen, (0,255,0), self.speed_up_rect)
+        self.screen.blit(self.font.render("Speed +", True, (0,0,0)), (715, self.button_y + 5))
 
         # Speed down
-        pygame.draw.rect(self.screen, (255,0,0), (600, button_y + 40, button_width, button_height))
-        self.screen.blit(self.font.render("Speed -", True, (0,0,0)), (605, button_y + 45))
+        pygame.draw.rect(self.screen, (255,0,0), self.speed_down_rect)
+        self.screen.blit(self.font.render("Speed -", True, (0,0,0)), (605, self.button_y + 45))
 
         # Toggle slow
         color = (0,255,0) if self.slow_down else (255,0,0)
-        pygame.draw.rect(self.screen, color, (710, button_y + 40, button_width, button_height))
+        pygame.draw.rect(self.screen, color, self.slow_toggle_rect)
         text = "Slow ON" if self.slow_down else "Slow OFF"
-        self.screen.blit(self.font.render(text, True, (0,0,0)), (715, button_y + 45))
+        self.screen.blit(self.font.render(text, True, (0,0,0)), (715, self.button_y + 45))
 
         # Speed display
-        self.draw_text(f"Speed: {self.speed:.1f}x", 600, button_y + 80)
+        self.draw_text(f"Speed: {self.speed:.1f}x", 600, self.button_y + 80)
 
         pygame.display.flip()
 
@@ -104,18 +114,16 @@ class Dashboard:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    x, y = event.pos
-                    button_y = 450
-                    if 600 <= x <= 700 and button_y <= y <= button_y + 30:
+                    if self.is_mouse_inside(self.pause_rect, event.pos):
                         with self.speed_lock:
                             self.paused = not self.paused
-                    elif 710 <= x <= 810 and button_y <= y <= button_y + 30:
+                    elif self.is_mouse_inside(self.speed_up_rect, event.pos):
                         with self.speed_lock:
                             self.speed = min(self.speed * 1.5, 10.0)
-                    elif 600 <= x <= 700 and button_y + 40 <= y <= button_y + 70:
+                    elif self.is_mouse_inside(self.speed_down_rect, event.pos):
                         with self.speed_lock:
                             self.speed = max(self.speed / 1.5, 0.1)
-                    elif 710 <= x <= 810 and button_y + 40 <= y <= button_y + 70:
+                    elif self.is_mouse_inside(self.slow_toggle_rect, event.pos):
                         with self.speed_lock:
                             self.slow_down = not self.slow_down
 
