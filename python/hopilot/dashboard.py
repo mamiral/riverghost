@@ -1,6 +1,7 @@
 import pygame
 import sys
 import threading
+import os
 
 class Dashboard:
     def __init__(self, width=900, height=600):
@@ -91,10 +92,18 @@ class Dashboard:
         if image_path:
             try:
                 import cv2
-                frame = cv2.imread(image_path)
-                if frame is not None:
-                    cv2.imshow("Debug Image", frame)
-                    cv2.waitKey(1)
+                if 'clahe' in image_path:
+                    original_path = image_path.replace('temp_clahe.jpg', 'temp_frame.jpg')
+                    if os.path.exists(original_path):
+                        original = cv2.imread(original_path)
+                        clahe_img = cv2.imread(image_path)
+                        combined = cv2.hconcat([original, clahe_img])
+                        cv2.imshow("Debug Image", combined)
+                    else:
+                        cv2.imshow("Debug Image", cv2.imread(image_path))
+                else:
+                    cv2.imshow("Debug Image", cv2.imread(image_path))
+                cv2.waitKey(1)
             except:
                 pass
 
