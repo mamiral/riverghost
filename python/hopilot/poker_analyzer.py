@@ -43,12 +43,16 @@ class PokerAnalyzer:
                 return None
             return Card.new(rank + suit)
         else:
-            # Format: 'AS', '2C', etc.
-            if len(card_name) != 2:
-                return None
-            rank_char, suit_char = card_name[0], card_name[1]
+            # Format: 'AS', '2C', '10H', etc.
             rank_map = {'A': 'A', 'K': 'K', 'Q': 'Q', 'J': 'J', 'T': 'T', '9': '9', '8': '8', '7': '7', '6': '6', '5': '5', '4': '4', '3': '3', '2': '2'}
             suit_map = {'S': 's', 'H': 'h', 'D': 'd', 'C': 'c'}
+            if len(card_name) == 2:
+                rank_char, suit_char = card_name[0], card_name[1]
+            elif len(card_name) == 3 and card_name.startswith('10'):
+                rank_char = 'T'
+                suit_char = card_name[2]
+            else:
+                return None
             rank = rank_map.get(rank_char.upper())
             suit = suit_map.get(suit_char.upper())
             if not rank or not suit:
@@ -78,6 +82,8 @@ class PokerAnalyzer:
             return None
 
         all_cards = hole + board
+        if len(set(all_cards)) < len(all_cards):
+            return None  # Duplicates not allowed
         if len(all_cards) < 5:
             return None  # Need at least 5 cards for evaluation
 

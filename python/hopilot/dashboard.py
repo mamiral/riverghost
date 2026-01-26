@@ -2,6 +2,67 @@ import pygame
 import sys
 import threading
 import os
+import shutil
+
+class Command:
+    def execute(self):
+        raise NotImplementedError
+
+class TogglePauseCommand(Command):
+    def __init__(self, dashboard):
+        self.dashboard = dashboard
+
+    def execute(self):
+        with self.dashboard.speed_lock:
+            self.dashboard.paused = not self.dashboard.paused
+
+class SpeedUpCommand(Command):
+    def __init__(self, dashboard):
+        self.dashboard = dashboard
+
+    def execute(self):
+        with self.dashboard.speed_lock:
+            self.dashboard.speed = min(self.dashboard.speed * 1.5, 10.0)
+
+class SpeedDownCommand(Command):
+    def __init__(self, dashboard):
+        self.dashboard = dashboard
+
+    def execute(self):
+        with self.dashboard.speed_lock:
+            self.dashboard.speed = max(self.dashboard.speed / 1.5, 0.1)
+
+class ToggleSlowCommand(Command):
+    def __init__(self, dashboard):
+        self.dashboard = dashboard
+
+    def execute(self):
+        with self.dashboard.speed_lock:
+            self.dashboard.slow_down = not self.dashboard.slow_down
+
+class ScreenshotCommand(Command):
+    def __init__(self, dashboard, image_path_func):
+        self.dashboard = dashboard
+        self.image_path_func = image_path_func
+
+    def execute(self):
+        current_image_path = self.image_path_func() if self.image_path_func else None
+        if current_image_path and os.path.exists(current_image_path):
+            screenshots_dir = 'recordings/screenshots'
+            os.makedirs(screenshots_dir, exist_ok=True)
+            files = os.listdir(screenshots_dir)
+            jpeg_files = [f for f in files if f.endswith('.jpeg')]
+            numbers = []
+            for f in jpeg_files:
+                try:
+                    num = int(f[:-5])
+                    numbers.append(num)
+                except ValueError:
+                    pass
+            next_num = max(numbers) + 1 if numbers else 1
+            screenshot_path = os.path.join(screenshots_dir, f'{next_num}.jpeg')
+            shutil.copy(current_image_path, screenshot_path)
+            print(f"Screenshot saved to {screenshot_path}")
 
 class Dashboard:
     def __init__(self, width=900, height=600):
@@ -27,6 +88,8 @@ class Dashboard:
         self.speed_down_rect = (600, self.button_y + 40, self.button_width, self.button_height)
         self.slow_toggle_rect = (710, self.button_y + 40, self.button_width, self.button_height)
         self.screenshot_rect = (710, self.button_y + 80, self.button_width, self.button_height)
+        self.prev_rect = (600, self.button_y + 120, self.button_width, self.button_height)
+        self.next_rect = (710, self.button_y + 120, self.button_width, self.button_height)
 
     def is_mouse_inside(self, rect, pos):
         x, y = pos
@@ -39,11 +102,14 @@ class Dashboard:
         text_surface = font.render(text, True, color)
         self.screen.blit(text_surface, (x, y))
 
-    def display_cards(self, assignments, advice):
+    def display_cards(self, assignments, advice, image_path=None):
         self.screen.fill((0, 0, 0))  # Black background
 
         # Title
         self.draw_text("HoPilot Dashboard", 50, 20, self.large_font)
+
+        if self.dir_mode and image_path:
+            self.draw_text(f"Image: {os.path.basename(image_path)}", 50, 50)
 
         # Hole cards
         self.draw_text("Hole Cards:", 50, 80)
@@ -75,31 +141,41 @@ class Dashboard:
         self.draw_text(advice, 50, 440)
 
         # Draw buttons on the right
-        # Pause/Play
-        pygame.draw.rect(self.screen, (255,255,0), self.pause_rect)
-        text = "Play" if self.paused else "Pause"
-        self.screen.blit(self.font.render(text, True, (0,0,0)), (605, self.button_y + 5))
+        if self.video_mode:
+            # Pause/Play
+            pygame.draw.rect(self.screen, (255,255,0), self.pause_rect)
+            text = "Play" if self.paused else "Pause"
+            self.screen.blit(self.font.render(text, True, (0,0,0)), (605, self.button_y + 5))
 
-        # Speed up
-        pygame.draw.rect(self.screen, (0,255,0), self.speed_up_rect)
-        self.screen.blit(self.font.render("Speed +", True, (0,0,0)), (715, self.button_y + 5))
+            # Speed up
+            pygame.draw.rect(self.screen, (0,255,0), self.speed_up_rect)
+            self.screen.blit(self.font.render("Speed +", True, (0,0,0)), (715, self.button_y + 5))
 
-        # Speed down
-        pygame.draw.rect(self.screen, (255,0,0), self.speed_down_rect)
-        self.screen.blit(self.font.render("Speed -", True, (0,0,0)), (605, self.button_y + 45))
+            # Speed down
+            pygame.draw.rect(self.screen, (255,0,0), self.speed_down_rect)
+            self.screen.blit(self.font.render("Speed -", True, (0,0,0)), (605, self.button_y + 45))
 
-        # Toggle slow
-        color = (0,255,0) if self.slow_down else (255,0,0)
-        pygame.draw.rect(self.screen, color, self.slow_toggle_rect)
-        text = "Slow ON" if self.slow_down else "Slow OFF"
-        self.screen.blit(self.font.render(text, True, (0,0,0)), (715, self.button_y + 45))
+            # Toggle slow
+            color = (0,255,0) if self.slow_down else (255,0,0)
+            pygame.draw.rect(self.screen, color, self.slow_toggle_rect)
+            text = "Slow ON" if self.slow_down else "Slow OFF"
+            self.screen.blit(self.font.render(text, True, (0,0,0)), (715, self.button_y + 45))
+
+            # Speed display
+            self.draw_text(f"Speed: {self.speed:.1f}x", 600, self.button_y + 80)
 
         # Screenshot button
         pygame.draw.rect(self.screen, (0,255,255), self.screenshot_rect)
         self.screen.blit(self.font.render("Screenshot", True, (0,0,0)), (715, self.button_y + 85))
 
-        # Speed display
-        self.draw_text(f"Speed: {self.speed:.1f}x", 600, self.button_y + 80)
+        if self.dir_mode:
+            # Prev button
+            pygame.draw.rect(self.screen, (255,165,0), self.prev_rect)
+            self.screen.blit(self.font.render("Prev", True, (0,0,0)), (605, self.button_y + 125))
+
+            # Next button
+            pygame.draw.rect(self.screen, (255,165,0), self.next_rect)
+            self.screen.blit(self.font.render("Next", True, (0,0,0)), (715, self.button_y + 125))
 
         pygame.display.flip()
 
@@ -112,51 +188,49 @@ class Dashboard:
             except:
                 pass
 
-    def run(self, card_assignments_func, advice_func, image_path_func=None):
+    def run(self, card_assignments_func, advice_func, image_path_func=None, prev_func=None, next_func=None, dir_mode=False, video_mode=False):
+        self.card_assignments_func = card_assignments_func
+        self.advice_func = advice_func
+        self.image_path_func = image_path_func
+        self.prev_func = prev_func
+        self.next_func = next_func
+        self.dir_mode = dir_mode
+        self.video_mode = video_mode
+
+        # Create commands
+        toggle_pause_cmd = TogglePauseCommand(self)
+        speed_up_cmd = SpeedUpCommand(self)
+        speed_down_cmd = SpeedDownCommand(self)
+        toggle_slow_cmd = ToggleSlowCommand(self)
+        screenshot_cmd = ScreenshotCommand(self, self.image_path_func)
+
         running = True
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if self.is_mouse_inside(self.pause_rect, event.pos):
-                        with self.speed_lock:
-                            self.paused = not self.paused
-                    elif self.is_mouse_inside(self.speed_up_rect, event.pos):
-                        with self.speed_lock:
-                            self.speed = min(self.speed * 1.5, 10.0)
-                    elif self.is_mouse_inside(self.speed_down_rect, event.pos):
-                        with self.speed_lock:
-                            self.speed = max(self.speed / 1.5, 0.1)
-                    elif self.is_mouse_inside(self.slow_toggle_rect, event.pos):
-                        with self.speed_lock:
-                            self.slow_down = not self.slow_down
+                    if self.video_mode and self.is_mouse_inside(self.pause_rect, event.pos):
+                        toggle_pause_cmd.execute()
+                    elif self.video_mode and self.is_mouse_inside(self.speed_up_rect, event.pos):
+                        speed_up_cmd.execute()
+                    elif self.video_mode and self.is_mouse_inside(self.speed_down_rect, event.pos):
+                        speed_down_cmd.execute()
+                    elif self.video_mode and self.is_mouse_inside(self.slow_toggle_rect, event.pos):
+                        toggle_slow_cmd.execute()
                     elif self.is_mouse_inside(self.screenshot_rect, event.pos):
-                        current_image_path = image_path_func() if image_path_func else None
-                        if current_image_path and os.path.exists(current_image_path):
-                            screenshots_dir = 'recordings/screenshots'
-                            os.makedirs(screenshots_dir, exist_ok=True)
-                            files = os.listdir(screenshots_dir)
-                            jpeg_files = [f for f in files if f.endswith('.jpeg')]
-                            numbers = []
-                            for f in jpeg_files:
-                                try:
-                                    num = int(f[:-5])
-                                    numbers.append(num)
-                                except ValueError:
-                                    pass
-                            next_num = max(numbers) + 1 if numbers else 1
-                            screenshot_path = os.path.join(screenshots_dir, f'{next_num}.jpeg')
-                            import shutil
-                            shutil.copy(current_image_path, screenshot_path)
-                            print(f"Screenshot saved to {screenshot_path}")
+                        screenshot_cmd.execute()
+                    elif self.dir_mode and self.is_mouse_inside(self.prev_rect, event.pos) and self.prev_func:
+                        self.prev_func()
+                    elif self.dir_mode and self.is_mouse_inside(self.next_rect, event.pos) and self.next_func:
+                        self.next_func()
 
             # Get current card assignments and advice
             assignments = card_assignments_func()
             advice = advice_func()
             image_path = image_path_func() if image_path_func else None
 
-            self.display_cards(assignments, advice)
+            self.display_cards(assignments, advice, image_path)
             self.show_debug_image(image_path)
 
             self.clock.tick(30)  # 30 FPS

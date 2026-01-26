@@ -5,7 +5,7 @@ from ultralytics import YOLO
 from card_layout import CardLayout
 
 class CardDetector:
-    def __init__(self, model_path='models/playing-cards.pt', model_url='https://huggingface.co/koolguy06/playing-cards/resolve/main/playing-cards.pt'):
+    def __init__(self, model_path='runs/detect/train4/weights/best.pt', model_url='https://huggingface.co/koolguy06/playing-cards/resolve/main/playing-cards.pt'):
         self.model_path = model_path
         self.model_url = model_url
         self.model = None
@@ -46,6 +46,14 @@ class CardDetector:
             name = results[0].names[cls]
             xyxy = boxes.xyxy[idx]
             detected_cards.append((name, conf_val, xyxy))
+
+        # Deduplicate cards by name, keeping the one with highest confidence
+        from collections import defaultdict
+        best_cards = defaultdict(lambda: (0, None))
+        for name, conf, xyxy in detected_cards:
+            if conf > best_cards[name][0]:
+                best_cards[name] = (conf, xyxy)
+        detected_cards = [(name, conf, xyxy) for name, (conf, xyxy) in best_cards.items()]
 
         # Assign to slots
         assignments = self.layout.assign_cards(detected_cards)
