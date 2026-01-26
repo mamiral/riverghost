@@ -13,21 +13,19 @@ ultralytics = "*"
 mss = "*"
 opencv-python = "*"
 easyocr = "*"
-evdev = "*"
 ollama = "*"
 numpy = "*"
 schedule = "*"
 humanize = "*"
-noise = "*"
 label-studio = "*"
 treys = "*"
 pygame = "*"
 streamlit = "*"
 Pillow = "*"
-paddleocr = {extras = ["all"], version = "*"}
+# paddleocr = {extras = ["all"], version = "*"}
 
 [dev-packages]
 
 [requires]
-python_version = "3.12"
-python_full_version = "3.12.0"
+python_version = "3.13"
+python_full_version = "3.13.7"
