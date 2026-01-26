@@ -5,7 +5,7 @@ from ultralytics import YOLO
 from card_layout import CardLayout
 
 class CardDetector:
-    def __init__(self, model_path='runs/detect/train4/weights/best.pt', model_url='https://huggingface.co/koolguy06/playing-cards/resolve/main/playing-cards.pt'):
+    def __init__(self, model_path='models/playing-cards.pt', model_url='https://huggingface.co/koolguy06/playing-cards/resolve/main/playing-cards.pt'):
         self.model_path = model_path
         self.model_url = model_url
         self.model = None
@@ -23,12 +23,12 @@ class CardDetector:
 
         self.model = YOLO(self.model_path)
 
-    def detect_cards(self, image_path, conf=0.1, imgsz=1280):
+    def detect_cards(self, image, conf=0.1):
         """
-        Detect cards in an image.
+        Detect cards in an image (path or numpy array).
         Returns dict of slot -> (name, conf) or None
         """
-        results = self.model.predict(source=image_path, save=False, conf=conf, imgsz=imgsz)
+        results = self.model.predict(source=image, save=False, conf=conf)
 
         if not results:
             return {}

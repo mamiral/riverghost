@@ -23,7 +23,7 @@ class CardLayout:
 
         for i, (name, conf, xyxy) in enumerate(detected_cards[:len(slot_order)]):
             slot = slot_order[i]
-            assignments[slot] = (name, conf)
+            assignments[slot] = (name, conf, xyxy)
 
         return assignments
 

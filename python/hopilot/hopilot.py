@@ -1,50 +1,98 @@
 import cv2
 import time
 import threading
+import win32gui
+import numpy as np
+import dxcam
+import pygetwindow as gw
+import os
 from card_detector import CardDetector
 from poker_analyzer import PokerAnalyzer
 from dashboard import Dashboard
 
+def list_visible_windows():
+    """Print all visible window titles to help find the correct one"""
+    print("Visible windows:")
+    def enum_handler(hwnd, results):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title.strip():
+                print(f"  - {title} (HWND: {hwnd})")
+    win32gui.EnumWindows(enum_handler, None)
+
+
+def get_window_coords(window_title):
+    """
+    Get window coordinates (left, top, right, bottom) by title.
+    Tries exact match first, then partial via pygetwindow.
+    Returns (left, top, right, bottom) or None if not found.
+    """
+    # Try exact match with win32gui
+    hwnd = win32gui.FindWindow(None, window_title)
+    if hwnd:
+        rect = win32gui.GetWindowRect(hwnd)
+        print(f"Found exact match: '{window_title}'")
+        return rect  # (left, top, right, bottom)
+
+    # Fallback: partial match with pygetwindow
+    windows = gw.getWindowsWithTitle(window_title)
+    if windows:
+        win = windows[0]
+        left, top, width, height = win.left, win.top, win.width, win.height
+        right = left + width
+        bottom = top + height
+        print(f"Found partial match: '{win.title}'")
+        return (left, top, right, bottom)
+
+    print(f"No window found matching '{window_title}'")
+    print("Tip: Run list_visible_windows() to see titles.")
+    return None
+
+
+def capture_with_dxcam(region):
+    """Capture using DXcam (fast, GPU-friendly)"""
+    if region is None:
+        return None
+
+    # DXcam expects (left, top, right, bottom)
+    camera = dxcam.create(output_idx=0, output_color="BGR")
+    if camera is None:
+        print("DXcam failed to initialize. Check GPU/drivers.")
+        return None
+
+    try:
+        frame = camera.grab(region=region)
+        if frame is None:
+            print("Capture returned None.")
+            return None
+
+        # DXcam usually returns correct orientation (no flip needed)
+        # But if flipped, uncomment:
+        # frame = cv2.flip(frame, 0)  # vertical
+        # frame = cv2.flip(frame, 1)  # horizontal
+        # frame = cv2.flip(frame, -1) # both
+
+        return frame
+
+    finally:
+        camera.release()  # Important: release after each grab in loop
+
+
 class HoPilot:
-    def __init__(self, video_path=None, image_path=None, dir_path=None, start_frame=0):
+    def __init__(self, window_title):
         self.detector = CardDetector()
         self.analyzer = PokerAnalyzer()
         self.dashboard = Dashboard()
-        self.video_path = video_path
-        self.image_path = image_path
-        self.dir_path = dir_path
-        self.start_frame = start_frame
+        self.window_title = window_title
+        self.region = get_window_coords(window_title)
+        if self.region is None:
+            raise ValueError(f"Window '{window_title}' not found")
         self.current_assignments = {}
         self.phase = 'pre-flop'  # Default phase
         self.lock = threading.Lock()
-        self.image_list = []
-        self.current_index = 0
-        if self.dir_path:
-            self.load_image_list()
+        self.current_frame = None
+        self.video_writer = None
 
-    def load_image_list(self):
-        import os
-        import glob
-        if not os.path.isdir(self.dir_path):
-            raise ValueError(f"Directory {self.dir_path} does not exist")
-        # Support common image formats
-        extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff', '*.tif']
-        self.image_list = []
-        for ext in extensions:
-            self.image_list.extend(glob.glob(os.path.join(self.dir_path, ext)))
-        self.image_list.sort()  # Sort alphabetically
-        if not self.image_list:
-            raise ValueError(f"No image files found in {self.dir_path}")
-
-    def prev_image(self):
-        if self.image_list:
-            self.current_index = (self.current_index - 1) % len(self.image_list)
-            self.process_image(self.image_list[self.current_index])
-
-    def next_image(self):
-        if self.image_list:
-            self.current_index = (self.current_index + 1) % len(self.image_list)
-            self.process_image(self.image_list[self.current_index])
 
     def determine_phase(self, assignments):
         """
@@ -81,100 +129,86 @@ class HoPilot:
     def get_current_image_path(self):
         return getattr(self, 'current_image_path', None)
 
-    def process_image(self, image_path):
-        assignments = self.detector.detect_cards(image_path)
+    def toggle_recording(self, start):
+        if start:
+            if self.video_writer is None:
+                os.makedirs('recordings', exist_ok=True)
+                files = os.listdir('recordings')
+                avi_files = [f for f in files if f.endswith('.avi')]
+                numbers = []
+                for f in avi_files:
+                    try:
+                        num = int(f[:-4])
+                        numbers.append(num)
+                    except ValueError:
+                        pass
+                next_num = max(numbers) + 1 if numbers else 1
+                video_path = f'recordings/{next_num}.avi'
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                fps = 30
+                height, width = self.region[3] - self.region[1], self.region[2] - self.region[0]
+                self.video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+                print(f"Started recording to {video_path}")
+        else:
+            if self.video_writer:
+                self.video_writer.release()
+                self.video_writer = None
+                print("Stopped recording")
+
+    def process_frame(self, image):
+        assignments = self.detector.detect_cards(image)
         with self.lock:
             self.current_assignments = assignments
             self.phase = self.determine_phase(self.current_assignments)
-            self.current_image_path = image_path
+            self.current_image_path = image if isinstance(image, str) else None
 
-    def process_video_frame(self, frame):
-        # Save frame to temp file or process directly
-        # For simplicity, assume frame is path
-        self.process_image(frame)
-
-    def run_with_image(self):
-        if self.image_path:
-            self.process_image(self.image_path)
-            self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False)
-
-    def run_with_dir(self):
-        if self.image_list:
-            self.process_image(self.image_list[0])  # Start with first image
-            self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path,
-                               prev_func=self.prev_image, next_func=self.next_image, dir_mode=True)
-
-    def run_with_video(self):
-        if not self.video_path:
-            return
-
-        cap = cv2.VideoCapture(self.video_path)
-        if not cap.isOpened():
-            print("Error opening video file")
-            return
-
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_delay = 1.0 / fps if fps > 0 else 0.033  # Default ~30fps
-
-        # Process frames at a reasonable rate, skip some for speed
-        frame_interval = 5
-
+    def run_with_capture(self):
         def process_frames():
-            if self.start_frame > 0:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, self.start_frame)
-            frame_count = self.start_frame
-            while cap.isOpened():
+            frame_delay = 0.033  # ~30fps
+            frame_interval = 5
+            frame_count = 0
+            while True:
                 with self.dashboard.speed_lock:
                     if self.dashboard.paused:
                         time.sleep(0.1)
                         continue
 
-                ret, frame = cap.read()
-                if not ret:
-                    break
+                frame = capture_with_dxcam(self.region)
+                if frame is None:
+                    print("Capture failed - retrying in 1s...")
+                    time.sleep(1)
+                    continue
+
+                self.current_frame = frame
+
+                if self.video_writer:
+                    self.video_writer.write(frame)
 
                 frame_count += 1
                 if frame_count % frame_interval == 0:
-                    # Process frame
-                    temp_path = 'temp_frame.jpg'
-                    cv2.imwrite(temp_path, frame)
-
-                    self.process_image(temp_path)
+                    self.process_frame(frame)
                     print(f"Processed frame {frame_count}")
 
-                    # Sleep if slow down enabled
                     with self.dashboard.speed_lock:
                         if self.dashboard.slow_down:
                             time.sleep(frame_delay * frame_interval / self.dashboard.speed)
 
-            cap.release()
-            cv2.destroyAllWindows()
-
-        # Start processing thread
         processing_thread = threading.Thread(target=process_frames)
         processing_thread.daemon = True
         processing_thread.start()
 
-        # Run dashboard concurrently
-        self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False, video_mode=True)
+        self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False, video_mode=True, frame_func=lambda: self.current_frame, recording_toggle_func=lambda start: self.toggle_recording(start))
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='HoPilot Poker Copilot')
-    parser.add_argument('--image', help='Path to image file')
-    parser.add_argument('--video', help='Path to video file')
-    parser.add_argument('--dir', help='Path to directory with images')
-    parser.add_argument('--start-frame', type=int, default=0, help='Frame number to start processing from (for video)')
+    parser.add_argument('--window-title', help='Title of the window to capture')
+    parser.add_argument('--replay-video', help='Path to video file to replay')
     args = parser.parse_args()
 
-    if args.video:
-        pilot = HoPilot(video_path=args.video, start_frame=args.start_frame)
-        pilot.run_with_video()
-    elif args.image:
-        pilot = HoPilot(image_path=args.image)
-        pilot.run_with_image()
-    elif args.dir:
-        pilot = HoPilot(dir_path=args.dir)
-        pilot.run_with_dir()
+    if args.replay_video:
+        dashboard = Dashboard()
+        dashboard.run(lambda: {}, lambda: "Replaying", lambda: args.replay_video, dir_mode=False, video_mode=True, frame_func=None, recording_toggle_func=None, replay_mode=True, video_path=args.replay_video)
     else:
-        print("Usage: python hopilot.py --image <path> or --video <path> or --dir <path> [--start-frame <num>]")
+        pilot = HoPilot(args.window_title)
+        pilot.run_with_capture()
