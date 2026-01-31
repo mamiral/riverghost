@@ -63,6 +63,19 @@ class ToggleRecordingCommand(Command):
             if self.dashboard.recording_toggle_func:
                 self.dashboard.recording_toggle_func(self.dashboard.recording)
 
+class ToggleAutoSaveCommand(Command):
+    def __init__(self, dashboard):
+        self.dashboard = dashboard
+
+    def execute(self):
+        with self.dashboard.speed_lock:
+            self.dashboard.auto_save = not self.dashboard.auto_save
+            if not self.dashboard.auto_save:
+                # Reset states when turning off
+                self.dashboard.round_active = False
+                self.dashboard.saved_this_round = {i: False for i in range(len(self.dashboard.bboxes))}
+            print(f"Auto save toggled: {'ON' if self.dashboard.auto_save else 'OFF'}")
+
 class CropBBoxesCommand(Command):
     def __init__(self, dashboard):
         self.dashboard = dashboard
@@ -77,11 +90,11 @@ class CropBBoxesCommand(Command):
             import os
             os.makedirs('recordings/screenshots', exist_ok=True)
             files = os.listdir('recordings/screenshots')
-            bbox_files = [f for f in files if f.startswith('bbox') and f.endswith('.jpeg')]
+            bbox_files = [f for f in files if f.startswith('bbox') and f.endswith('.png')]
             numbers = []
             for f in bbox_files:
                 try:
-                    num = int(f[4:-5])
+                    num = int(f[4:-4])
                     numbers.append(num)
                 except ValueError:
                     pass
@@ -89,7 +102,7 @@ class CropBBoxesCommand(Command):
             # Crop boxes using bboxes
             crops = [frame[y1:y2, x1:x2] for x1, y1, x2, y2 in self.dashboard.bboxes]
             for i, crop in enumerate(crops, start=next_num):
-                path = f'recordings/screenshots/bbox{i}.jpeg'
+                path = f'recordings/screenshots/bbox{i}.png'
                 cv2.imwrite(path, crop)
                 print(f"Saved {path}")
                 next_num += 1
@@ -106,16 +119,16 @@ class ScreenshotCommand(Command):
                 screenshots_dir = 'recordings/screenshots'
                 os.makedirs(screenshots_dir, exist_ok=True)
                 files = os.listdir(screenshots_dir)
-                jpeg_files = [f for f in files if f.endswith('.jpeg')]
+                png_files = [f for f in files if f.endswith('.png')]
                 numbers = []
-                for f in jpeg_files:
+                for f in png_files:
                     try:
-                        num = int(f[:-5])
+                        num = int(f[:-4])
                         numbers.append(num)
                     except ValueError:
                         pass
                 next_num = max(numbers) + 1 if numbers else 1
-                screenshot_path = os.path.join(screenshots_dir, f'{next_num}.jpeg')
+                screenshot_path = os.path.join(screenshots_dir, f'{next_num}.png')
                 cv2.imwrite(screenshot_path, frame)
                 print(f"Screenshot saved to {screenshot_path}")
         else:
@@ -124,16 +137,16 @@ class ScreenshotCommand(Command):
                 screenshots_dir = 'recordings/screenshots'
                 os.makedirs(screenshots_dir, exist_ok=True)
                 files = os.listdir(screenshots_dir)
-                jpeg_files = [f for f in files if f.endswith('.jpeg')]
+                png_files = [f for f in files if f.endswith('.png')]
                 numbers = []
-                for f in jpeg_files:
+                for f in png_files:
                     try:
-                        num = int(f[:-5])
+                        num = int(f[:-4])
                         numbers.append(num)
                     except ValueError:
                         pass
                 next_num = max(numbers) + 1 if numbers else 1
-                screenshot_path = os.path.join(screenshots_dir, f'{next_num}.jpeg')
+                screenshot_path = os.path.join(screenshots_dir, f'{next_num}.png')
                 shutil.copy(current_image_path, screenshot_path)
                 print(f"Screenshot saved to {screenshot_path}")
 
@@ -154,12 +167,32 @@ class Dashboard:
         self.fast_speed = 1.0
         self.recording = False
         self.bboxes = [
-            (68, 416, 84, 450),   # bbox1
-            (123, 416, 139, 450), # bbox2
-            (179, 416, 195, 450), # bbox3
-            (234, 416, 250, 450), # bbox4
-            (289, 416, 305, 450)  # bbox5
+            (68, 416, 84 + 1, 450),   # bbox1
+            (123, 416, 139 + 1, 450), # bbox2
+            (179, 416, 195 + 1, 450), # bbox3
+            (234, 416, 250 + 1, 450), # bbox4
+            (289, 416, 305 + 1, 450)  # bbox5
         ]
+        self.auto_save = False
+        self.round_active = False
+        self.saved_this_round = {i: False for i in range(len(self.bboxes))}
+        # Suffixes for each bbox: f1, f2, f3, t, r
+        self.bbox_suffixes = ['f1', 'f2', 'f3', 't', 'r']
+        # Initialize auto save counter
+        auto_capture_dir = 'recordings/screenshots/auto_capture'
+        os.makedirs(auto_capture_dir, exist_ok=True)
+        files = os.listdir(auto_capture_dir)
+        png_files = [f for f in files if f.endswith('.png')]
+        numbers = []
+        for f in png_files:
+            parts = f.split('_')
+            if parts and parts[0].isdigit():
+                try:
+                    num = int(parts[0])
+                    numbers.append(num)
+                except ValueError:
+                    pass
+        self.auto_save_counter = max(numbers) if numbers else 0
 
         # Button dimensions
         self.button_width = 100
@@ -174,11 +207,75 @@ class Dashboard:
         self.crop_rect = (600, self.button_y + 120, self.button_width, self.button_height)
         self.prev_rect = (600, self.button_y + 120, self.button_width, self.button_height)
         self.next_rect = (710, self.button_y + 120, self.button_width, self.button_height)
+        self.auto_save_rect = (710, self.button_y + 120, self.button_width, self.button_height)
 
     def is_mouse_inside(self, rect, pos):
         x, y = pos
         rx, ry, rw, rh = rect
         return rx <= x <= rx + rw and ry <= y <= ry + rh
+
+    def is_near_white(self, pixel):
+        # pixel is (b, g, r) in OpenCV
+        b, g, r = pixel
+        # Near white if all channels >= 230 (close to 255)
+        return r >= 230 and g >= 230 and b >= 230
+
+    def is_bbox_steady(self, frame, bbox):
+        x1, y1, x2, y2 = bbox
+        corners = [
+            (x1, y1),      # upper left
+            (x2-1, y1),    # upper right
+            (x1, y2-1),    # lower left
+            (x2-1, y2-1)   # lower right
+        ]
+        for x, y in corners:
+            if y < 0 or y >= frame.shape[0] or x < 0 or x >= frame.shape[1]:
+                return False  # out of bounds
+            pixel = frame[y, x]
+            if not self.is_near_white(pixel):
+                return False
+        # Check entire left vertical line
+        for y in range(y1, y2):
+            pixel = frame[y, x1]
+            if not self.is_near_white(pixel):
+                return False
+        return True
+
+    def check_auto_save(self, frame):
+        if not self.auto_save or frame is None:
+            return
+
+        # Check bbox1 (index 0) for round detection
+        x1, y1, x2, y2 = self.bboxes[0]
+        pixel = frame[y1, x1]  # upper left corner
+        is_white = self.is_near_white(pixel)
+
+        if is_white and not self.round_active:
+            # Start of new round
+            self.round_active = True
+            self.saved_this_round = {i: False for i in range(len(self.bboxes))}
+            print("New round started")
+        elif not is_white and self.round_active:
+            # Round ended
+            self.round_active = False
+            print("Round ended")
+
+        if self.round_active:
+            # Check each bbox for saving
+            for i, bbox in enumerate(self.bboxes):
+                if self.saved_this_round[i]:
+                    continue
+                x1, y1, x2, y2 = bbox
+                if self.is_bbox_steady(frame, bbox):
+                    # Save the crop
+                    crop = frame[y1:y2, x1:x2]
+                    os.makedirs('recordings/screenshots/auto_capture', exist_ok=True)
+                    suffix = self.bbox_suffixes[i] if i < len(self.bbox_suffixes) else f'bbox{i}'
+                    self.auto_save_counter += 1
+                    path = f'recordings/screenshots/auto_capture/{self.auto_save_counter}_{suffix}.png'
+                    cv2.imwrite(path, crop)
+                    print(f"Saved auto capture {path}")
+                    self.saved_this_round[i] = True
 
     def draw_text(self, text, x, y, font=None, color=(255, 255, 255)):
         if font is None:
@@ -270,6 +367,12 @@ class Dashboard:
             pygame.draw.rect(self.screen, (255,255,0), self.crop_rect)
             self.screen.blit(self.font.render("Crop BBoxes", True, (0,0,0)), (605, self.button_y + 125))
 
+            # Auto Save button
+            color = (0,255,0) if self.auto_save else (255,0,0)
+            pygame.draw.rect(self.screen, color, self.auto_save_rect)
+            text = "AutoSave ON" if self.auto_save else "AutoSave OFF"
+            self.screen.blit(self.font.render(text, True, (0,0,0)), (715, self.button_y + 125))
+
         if self.dir_mode:
             # Prev button
             pygame.draw.rect(self.screen, (255,165,0), self.prev_rect)
@@ -302,9 +405,15 @@ class Dashboard:
         self.recording_toggle_func = recording_toggle_func
         self.replay_mode = replay_mode
         self.video_path = video_path
+        if self.replay_mode:
+            self.paused = True  # Start paused in replay mode
         if self.replay_mode and self.video_path:
             self.cap = cv2.VideoCapture(self.video_path)
             self.current_frame_idx = 0
+            # Read first frame for initial display
+            ret, frame = self.cap.read()
+            if ret:
+                self.current_frame = frame
 
         # Create debug window if frame_func is provided or in replay mode
         if self.frame_func or self.replay_mode:
@@ -316,6 +425,7 @@ class Dashboard:
         speed_down_cmd = SpeedDownCommand(self)
         toggle_slow_cmd = ToggleSlowCommand(self)
         toggle_recording_cmd = ToggleRecordingCommand(self)
+        toggle_auto_save_cmd = ToggleAutoSaveCommand(self)
         crop_cmd = CropBBoxesCommand(self)
         screenshot_cmd = ScreenshotCommand(self, self.image_path_func)
 
@@ -342,6 +452,8 @@ class Dashboard:
                         toggle_recording_cmd.execute()
                     elif self.video_mode and self.is_mouse_inside(self.crop_rect, event.pos):
                         crop_cmd.execute()
+                    elif self.video_mode and self.is_mouse_inside(self.auto_save_rect, event.pos):
+                        toggle_auto_save_cmd.execute()
                     elif self.dir_mode and self.is_mouse_inside(self.prev_rect, event.pos) and self.prev_func:
                         self.prev_func()
                     elif self.dir_mode and self.is_mouse_inside(self.next_rect, event.pos) and self.next_func:
@@ -351,10 +463,11 @@ class Dashboard:
                 if not self.paused:
                     ret, frame = self.cap.read()
                     if not ret:
-                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        ret, frame = self.cap.read()
+                        running = False  # Stop when video ends
+                        break
                     if ret:
                         self.current_frame = frame
+                        self.check_auto_save(frame)
                         frame_copy = frame.copy()
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
@@ -395,6 +508,7 @@ class Dashboard:
                 if self.frame_func:
                     frame = self.frame_func()
                     if frame is not None:
+                        self.check_auto_save(frame)
                         frame_copy = frame.copy()
                         assignments = card_assignments_func()
                         for slot, data in assignments.items():
