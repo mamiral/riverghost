@@ -108,6 +108,44 @@ class CropBBoxesCommand(Command):
                 cv2.imwrite(path, crop)
                 print(f"Saved {path}")
                 next_num += 1
+            # Find next hole number to avoid overwriting
+            hole_files = [f for f in files if f.startswith('hole_') and f.endswith('.png') and not '_orig' in f]
+            numbers_hole = []
+            for f in hole_files:
+                try:
+                    num = int(f[5:-4])
+                    numbers_hole.append(num)
+                except ValueError:
+                    pass
+            next_hole_num = max(numbers_hole) + 1 if numbers_hole else 1
+            # Crop hole boxes using bboxes_hole
+            hole_crops = []
+            for (x1, y1, x2, y2) in self.dashboard.bboxes_hole:
+                center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                size = (x2 - x1, y2 - y1)
+                angle = -5.0  # CCW rotation
+                rect = (center, size, angle)
+                box = cv2.boxPoints(rect)
+                x1_bb = int(min(box[:, 0]))
+                y1_bb = int(min(box[:, 1]))
+                x2_bb = int(max(box[:, 0]))
+                y2_bb = int(max(box[:, 1]))
+                sub = frame[y1_bb:y2_bb, x1_bb:x2_bb]
+                # Save original bounding box crop for debugging
+                orig_path = f'recordings/screenshots/hole_{next_hole_num}_orig.png'
+                cv2.imwrite(orig_path, sub)
+                print(f"Saved {orig_path}")
+                rel_center = (center[0] - x1_bb, center[1] - y1_bb)
+                M = cv2.getRotationMatrix2D(rel_center, angle, 1.0)
+                rotated_sub = cv2.warpAffine(sub, M, (x2_bb - x1_bb, y2_bb - y1_bb))
+                crop = rotated_sub[int(rel_center[1] - size[1]/2):int(rel_center[1] + size[1]/2), 
+                                   int(rel_center[0] - size[0]/2):int(rel_center[0] + size[0]/2)]
+                hole_crops.append(crop)
+                # Save the cropped hole
+                path = f'recordings/screenshots/hole_{next_hole_num}.png'
+                cv2.imwrite(path, crop)
+                print(f"Saved {path}")
+                next_hole_num += 1
 
 class ScreenshotCommand(Command):
     def __init__(self, dashboard, image_path_func):
@@ -174,6 +212,9 @@ class Dashboard:
             (179, 416 - 1, 195 + 3, 450), # bbox3
             (234, 416 - 1, 250 + 3, 450), # bbox4
             (289 + 1, 416 - 1, 305 + 4, 450)  # bbox5
+        ]
+        self.bboxes_hole = [
+            (25 + 2, 668, 48 - 2, 695 - 2)  # hole_1
         ]
         self.auto_save = False
         self.round_active = False
@@ -559,6 +600,15 @@ class Dashboard:
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
                             cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        # Draw hole card bounding boxes in cyan
+                        for x1, y1, x2, y2 in self.bboxes_hole:
+                            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                            size = (x2 - x1, y2 - y1)
+                            angle = -5.0  # CCW rotation
+                            rect = (center, size, angle)
+                            box = cv2.boxPoints(rect)
+                            box = box.astype(np.int32)
+                            cv2.drawContours(frame_copy, [box], 0, (255, 255, 0), 2)
 
                         # Process frame for card detection if processor provided
                         if self.frame_processor:
@@ -579,6 +629,15 @@ class Dashboard:
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
                             cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        # Draw hole card bounding boxes in cyan
+                        for x1, y1, x2, y2 in self.bboxes_hole:
+                            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                            size = (x2 - x1, y2 - y1)
+                            angle = -5.0  # CCW rotation
+                            rect = (center, size, angle)
+                            box = cv2.boxPoints(rect)
+                            box = box.astype(np.int32)
+                            cv2.drawContours(frame_copy, [box], 0, (255, 255, 0), 2)
                         assignments = {}
                         advice = "Replaying video (Paused)"
                         image_path = self.video_path
@@ -612,6 +671,15 @@ class Dashboard:
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
                             cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        # Draw hole card bounding boxes in cyan
+                        for x1, y1, x2, y2 in self.bboxes_hole:
+                            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                            size = (x2 - x1, y2 - y1)
+                            angle = -5.0  # CCW rotation
+                            rect = (center, size, angle)
+                            box = cv2.boxPoints(rect)
+                            box = box.astype(np.int32)
+                            cv2.drawContours(frame_copy, [box], 0, (255, 255, 0), 2)
                         cv2.imshow("Captured Frame", frame_copy)
                         cv2.resizeWindow("Captured Frame", frame.shape[1], frame.shape[0])
                         cv2.waitKey(1)
