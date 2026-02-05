@@ -3,17 +3,18 @@ Card recognition and matching functionality for poker cards.
 Provides color-based suite detection and template-based rank matching.
 """
 
-import cv2
-import numpy as np
 import os
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 
 def load_rank_templates(templates_dir):
     """Load rank templates and normalize to 0-1 range like test_template_matching.py"""
     templates = {}
     for file in os.listdir(templates_dir):
-        if file.endswith(('.png', '.jpg', '.jpeg')):
+        if file.endswith((".png", ".jpg", ".jpeg")):
             template_path = os.path.join(templates_dir, file)
             template = cv2.imread(template_path)
             if template is None:
@@ -31,7 +32,9 @@ def load_rank_templates(templates_dir):
 
             name = os.path.splitext(file)[0]
             templates[name] = template_norm
-            print(f"Loaded rank template: {name} {template.shape} -> {template_norm.shape}")
+            print(
+                f"Loaded rank template: {name} {template.shape} -> {template_norm.shape}"
+            )
 
     return templates
 
@@ -53,7 +56,10 @@ def convert_to_white_hot(image, threshold=200):
 def match_template_correlation(image_normalized, template, method=cv2.TM_CCOEFF_NORMED):
     """Perform template matching using correlation like test_template_matching.py"""
     # Ensure image is large enough for template
-    if image_normalized.shape[0] < template.shape[0] or image_normalized.shape[1] < template.shape[1]:
+    if (
+        image_normalized.shape[0] < template.shape[0]
+        or image_normalized.shape[1] < template.shape[1]
+    ):
         return None
 
     # Perform template matching
@@ -156,41 +162,6 @@ def classify_suite(image):
     return suite_name, rank_crop
 
 
-def match_template_correlation(image, template, method=cv2.TM_CCOEFF_NORMED):
-    """Perform template matching and return score and confidence"""
-    # Ensure image is large enough for template
-    if image.shape[0] < template.shape[0] or image.shape[1] < template.shape[1]:
-        return None
-
-    # Perform template matching
-    result = cv2.matchTemplate(image, template, method)
-
-    # Get best match
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-
-    # Calculate confidence - use max_val directly since TM_CCOEFF_NORMED gives -1 to 1
-    # Shift to 0-1 range and use as confidence
-    confidence = (max_val + 1.0) / 2.0
-
-    return max_val, confidence
-
-
-def get_top_matches_correlation(image, templates, top_n=5):
-    """Get top N template matches sorted by correlation score"""
-    matches = []
-
-    for template_name, template in templates.items():
-        result = match_template_correlation(image, template)
-        if result is not None:
-            score, confidence = result
-            matches.append((template_name, score, confidence))
-
-    # Sort by score (highest first)
-    matches.sort(key=lambda x: x[1], reverse=True)
-
-    return matches[:top_n]
-
-
 class CardMatcher:
     """Main class for card recognition and matching"""
 
@@ -198,8 +169,8 @@ class CardMatcher:
         """Initialize with rank templates"""
         if templates_dir is None:
             # Default to templates directory in the same directory as this module
-            templates_dir = Path(__file__).parent / 'templates'
-        
+            templates_dir = Path(__file__).parent / "templates"
+
         self.rank_templates = {}
         if os.path.exists(templates_dir):
             self.rank_templates = load_rank_templates(templates_dir)
@@ -222,12 +193,12 @@ class CardMatcher:
         image = cv2.imread(str(image_path))
         if image is None:
             return {
-                'suite': None,
-                'rank': None,
-                'rank_score': 0.0,
-                'rank_confidence': 0.0,
-                'success': False,
-                'error': f"Failed to read image: {image_path}"
+                "suite": None,
+                "rank": None,
+                "rank_score": 0.0,
+                "rank_confidence": 0.0,
+                "success": False,
+                "error": f"Failed to read image: {image_path}",
             }
 
         # Classify suite
@@ -237,32 +208,38 @@ class CardMatcher:
         rank_result = self._match_rank(rank_crop)
 
         return {
-            'suite': suite_name,
-            'rank': rank_result['rank'],
-            'rank_score': rank_result['score'],
-            'rank_confidence': rank_result['confidence'],
-            'success': suite_name != "unknown" and rank_result['rank'] is not None,
-            'error': None
+            "suite": suite_name,
+            "rank": rank_result["rank"],
+            "rank_score": rank_result["score"],
+            "rank_confidence": rank_result["confidence"],
+            "success": suite_name != "unknown" and rank_result["rank"] is not None,
+            "error": None,
         }
 
     def _match_rank(self, rank_crop):
         """Match rank using template correlation"""
         if not self.rank_templates:
-            return {'rank': None, 'score': 0.0, 'confidence': 0.0}
+            return {"rank": None, "score": 0.0, "confidence": 0.0}
 
         # Convert rank_crop to 1-bit white hot for correlation matching
         rank_1bit = convert_to_white_hot(rank_crop)
 
         # Match rank using correlation-based template matching
-        rank_top = get_top_matches_correlation(rank_1bit.astype(np.float32), self.rank_templates)
+        rank_top = get_top_matches_correlation(
+            rank_1bit.astype(np.float32), self.rank_templates
+        )
 
         if rank_top and rank_top[0][1] >= 0.6:  # Using correlation score threshold
             rank_match, rank_score, confidence = rank_top[0]
-            return {'rank': rank_match, 'score': rank_score, 'confidence': confidence}
+            return {"rank": rank_match, "score": rank_score, "confidence": confidence}
         else:
             # Return best match even if below threshold
             if rank_top:
                 rank_match, rank_score, confidence = rank_top[0]
-                return {'rank': rank_match, 'score': rank_score, 'confidence': confidence}
+                return {
+                    "rank": rank_match,
+                    "score": rank_score,
+                    "confidence": confidence,
+                }
             else:
-                return {'rank': None, 'score': 0.0, 'confidence': 0.0}
+                return {"rank": None, "score": 0.0, "confidence": 0.0}
