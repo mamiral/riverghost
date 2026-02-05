@@ -4,6 +4,8 @@ import threading
 import os
 import shutil
 import cv2
+import numpy as np
+import time
 
 class Command:
     def execute(self):
@@ -167,11 +169,11 @@ class Dashboard:
         self.fast_speed = 1.0
         self.recording = False
         self.bboxes = [
-            (68, 416, 84 + 1, 450),   # bbox1
-            (123, 416, 139 + 1, 450), # bbox2
-            (179, 416, 195 + 1, 450), # bbox3
-            (234, 416, 250 + 1, 450), # bbox4
-            (289, 416, 305 + 1, 450)  # bbox5
+            (68 + 1, 416 - 1, 84 + 2, 450),   # bbox1
+            (123 + 1, 416 - 1, 139 + 4, 450), # bbox2
+            (179, 416 - 1, 195 + 3, 450), # bbox3
+            (234, 416 - 1, 250 + 3, 450), # bbox4
+            (289 + 1, 416 - 1, 305 + 4, 450)  # bbox5
         ]
         self.auto_save = False
         self.round_active = False
@@ -214,51 +216,135 @@ class Dashboard:
         rx, ry, rw, rh = rect
         return rx <= x <= rx + rw and ry <= y <= ry + rh
 
-    def is_near_white(self, pixel):
-        # pixel is (b, g, r) in OpenCV
+    def is_card_color_present(self, pixel):
+        """Check if pixel matches card background colors (more lenient)"""
         b, g, r = pixel
-        # Near white if all channels >= 230 (close to 255)
-        return r >= 230 and g >= 230 and b >= 230
+        
+        # Red (hearts) - high red, moderate dominance
+        is_red = r > 80 and r > g + 20 and r > b + 20
+        
+        # Blue (diamonds) - high blue, moderate dominance  
+        is_blue = b > 80 and b > r + 20 and b > g + 20
+        
+        # Green (clubs) - high green, moderate dominance
+        is_green = g > 80 and g > r + 20 and g > b + 20
+        
+        # Black/dark (spades) - all channels low
+        is_dark = r < 60 and g < 60 and b < 60
+        
+        # Also include very bright pixels (white text/symbols)
+        is_bright = r > 200 and g > 200 and b > 200
+        
+        return is_red or is_blue or is_green or is_dark or is_bright
+
+    def calculate_image_sharpness(self, image):
+        """Calculate image sharpness using Laplacian variance"""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    def calculate_image_contrast(self, image):
+        """Calculate image contrast (standard deviation of grayscale)"""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return np.std(gray)
 
     def is_bbox_steady(self, frame, bbox):
+        """Improved steady detection using multiple criteria"""
         x1, y1, x2, y2 = bbox
-        corners = [
-            (x1, y1),      # upper left
-            (x2-1, y1),    # upper right
-            (x1, y2-1),    # lower left
-            (x2-1, y2-1)   # lower right
-        ]
-        for x, y in corners:
-            if y < 0 or y >= frame.shape[0] or x < 0 or x >= frame.shape[1]:
-                return False  # out of bounds
-            pixel = frame[y, x]
-            if not self.is_near_white(pixel):
-                return False
-        # Check entire left vertical line
-        for y in range(y1, y2):
-            pixel = frame[y, x1]
-            if not self.is_near_white(pixel):
-                return False
-        return True
+        
+        # Extract the card region
+        card_crop = frame[y1:y2, x1:x2]
+        if card_crop.size == 0:
+            return False
+        
+        # Criterion 1: Sharpness (Laplacian variance)
+        # Good cards: > 8000, Bad/transit cards: < 3000
+        sharpness = self.calculate_image_sharpness(card_crop)
+        is_sharp = sharpness > 5000  # Higher threshold based on analysis
+        
+        # Criterion 2: Contrast
+        # Good cards: > 90, Bad cards: < 30
+        contrast = self.calculate_image_contrast(card_crop)
+        has_good_contrast = contrast > 60  # Higher threshold
+        
+        # Criterion 3: Card color presence (more lenient)
+        card_color_pixels = 0
+        total_pixels = card_crop.shape[0] * card_crop.shape[1]
+        
+        # Sample pixels more efficiently (every 2nd pixel)
+        for y in range(0, card_crop.shape[0], 2):
+            for x in range(0, card_crop.shape[1], 2):
+                pixel = card_crop[y, x]
+                if self.is_card_color_present(pixel):
+                    card_color_pixels += 1
+        
+        sampled_pixels = (card_crop.shape[0] // 2) * (card_crop.shape[1] // 2)
+        color_ratio = card_color_pixels / sampled_pixels if sampled_pixels > 0 else 0
+        has_card_colors = color_ratio > 0.3  # 30% of sampled pixels
+        
+        # Criterion 4: Edge density (cards should have some structure)
+        gray = cv2.cvtColor(card_crop, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 100, 200)
+        edge_pixels = np.sum(edges > 0)
+        edge_ratio = edge_pixels / total_pixels
+        has_edges = edge_ratio > 0.02  # At least 2% edges
+        
+        # Criterion 5: Left vertical line should be solid color (no white pixels)
+        # Cards have colored backgrounds, white text/symbols should not be on the left edge
+        # THIS IS A HARD RULE - if left edge is not solid, reject immediately
+        left_edge_solid = True
+        left_column_x = 0  # Leftmost column
+        white_threshold = 200  # RGB values above this are considered "white"
+        
+        for y in range(card_crop.shape[0]):
+            pixel = card_crop[y, left_column_x]
+            b, g, r = pixel
+            # Check if pixel is white/bright (not solid card color)
+            if r > white_threshold and g > white_threshold and b > white_threshold:
+                left_edge_solid = False
+                break
+        
+        # Hard rule: reject if left edge is not solid
+        if not left_edge_solid:
+            return False
+        
+        # Combine remaining criteria with weights
+        score = 0
+        score += 0.4 if is_sharp else 0
+        score += 0.3 if has_good_contrast else 0
+        score += 0.2 if has_card_colors else 0
+        score += 0.1 if has_edges else 0
+        
+        # Consider steady if score is high enough
+        return score > 0.6
 
     def check_auto_save(self, frame):
         if not self.auto_save or frame is None:
             return
 
-        # Check bbox1 (index 0) for round detection
-        x1, y1, x2, y2 = self.bboxes[0]
-        pixel = frame[y1, x1]  # upper left corner
-        is_white = self.is_near_white(pixel)
+        # Simplified round detection: check if first flop card (bbox1) is steady
+        # In Hold'em, flop appearance signals round start
+        flop_bbox = self.bboxes[0]  # First flop card (f1)
+        flop_is_steady = self.is_bbox_steady(frame, flop_bbox)
 
-        if is_white and not self.round_active:
-            # Start of new round
+        if flop_is_steady and not self.round_active:
+            # Start of new round (flop detected)
             self.round_active = True
             self.saved_this_round = {i: False for i in range(len(self.bboxes))}
-            print("New round started")
-        elif not is_white and self.round_active:
-            # Round ended
+            self.round_start_time = time.time()
+            print("New round started (flop detected)")
+        elif not flop_is_steady and self.round_active:
+            # Round ended (flop no longer steady - likely new hand/shuffle)
             self.round_active = False
             print("Round ended")
+
+        # Add timeout mechanism to prevent getting stuck (5 minutes)
+        current_time = time.time()
+        if self.round_active and hasattr(self, 'round_start_time'):
+            round_duration = current_time - self.round_start_time
+            if round_duration > 300:  # 5 minutes timeout
+                print("Round timeout - resetting auto-save state")
+                self.round_active = False
+                self.saved_this_round = {i: False for i in range(len(self.bboxes))}
 
         if self.round_active:
             # Check each bbox for saving
@@ -393,7 +479,7 @@ class Dashboard:
             except:
                 pass
 
-    def run(self, card_assignments_func, advice_func, image_path_func=None, prev_func=None, next_func=None, dir_mode=False, video_mode=False, frame_func=None, recording_toggle_func=None, replay_mode=False, video_path=None):
+    def run(self, card_assignments_func, advice_func, image_path_func=None, prev_func=None, next_func=None, dir_mode=False, video_mode=False, frame_func=None, recording_toggle_func=None, replay_mode=False, video_path=None, frame_processor=None):
         self.card_assignments_func = card_assignments_func
         self.advice_func = advice_func
         self.image_path_func = image_path_func
@@ -405,6 +491,7 @@ class Dashboard:
         self.recording_toggle_func = recording_toggle_func
         self.replay_mode = replay_mode
         self.video_path = video_path
+        self.frame_processor = frame_processor
         if self.replay_mode:
             self.paused = True  # Start paused in replay mode
         if self.replay_mode and self.video_path:
@@ -472,8 +559,13 @@ class Dashboard:
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
                             cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        assignments = {}
-                        advice = "Replaying video"
+
+                        # Process frame for card detection if processor provided
+                        if self.frame_processor:
+                            self.frame_processor(frame)
+
+                        assignments = self.card_assignments_func()
+                        advice = self.advice_func()
                         image_path = self.video_path
                         self.display_cards(assignments, advice, image_path)
                         cv2.imshow("Captured Frame", frame_copy)

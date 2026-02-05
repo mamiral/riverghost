@@ -5,147 +5,173 @@ import argparse
 import shutil
 from pathlib import Path
 
-def load_suite_templates(templates_dir):
-    templates = {}
-    red_suites = ['hearts', 'diamonds']
-    black_suites = ['spades', 'clubs_orig']
-    red_templates = {}
-    black_templates = {}
-    for file in os.listdir(templates_dir):
-        if file.endswith(('.png', '.jpg', '.jpeg')):
-            template_path = os.path.join(templates_dir, file)
-            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-            if template is None:
-                print(f"Error: Failed to load template {template_path} as grayscale")
-                continue
-            name = os.path.splitext(file)[0]
-            templates[name] = template
-            if name in red_suites:
-                red_templates[name] = template
-            elif name in black_suites:
-                # Map clubs_orig to clubs
-                suite_name = 'clubs' if name == 'clubs_orig' else name
-                black_templates[suite_name] = template
-    return red_templates, black_templates
-
 def load_rank_templates(templates_dir):
-    normal_templates = {}
-    edge_templates = {}
-    contour_templates = {}
+    """Load rank templates and normalize to 0-1 range like test_template_matching.py"""
+    templates = {}
     for file in os.listdir(templates_dir):
         if file.endswith(('.png', '.jpg', '.jpeg')):
             template_path = os.path.join(templates_dir, file)
-            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+            template = cv2.imread(template_path)
             if template is None:
-                print(f"Error: Failed to load template {template_path} as grayscale")
+                print(f"Error: Failed to load template {template_path}")
                 continue
+
+            # Convert to grayscale if needed
+            if len(template.shape) == 3:
+                template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+            else:
+                template_gray = template
+
+            # Normalize to 0-1 range (assuming it's already binary 0-255)
+            template_norm = template_gray.astype(np.float32) / 255.0
+
             name = os.path.splitext(file)[0]
-            # Store normal
-            normal_templates[name] = template
-            # Apply Canny edge detection
-            edges = cv2.Canny(template, 100, 200)
-            edge_templates[name] = edges
-            # Find contours
-            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if contours:
-                # Take the largest contour
-                main_contour = max(contours, key=cv2.contourArea)
-                contour_templates[name] = main_contour
-    return normal_templates, edge_templates, contour_templates
+            templates[name] = template_norm
+            print(f"Loaded rank template: {name} {template.shape} -> {template_norm.shape}")
 
-def match_template(image, template, method=cv2.TM_CCOEFF_NORMED):
-    res = cv2.matchTemplate(image, template, method)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-    return max_val, max_loc
+    return templates
 
-def match_shapes(contour1, contour2):
-    return cv2.matchShapes(contour1, contour2, cv2.CONTOURS_MATCH_I1, 0)
+def convert_to_white_hot(image, threshold=200):
+    """Convert image to 1-bit white hot (white pixels become 1, others 0)"""
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-def get_top_matches(gray_image, templates, n=3):
+    # Create binary mask where white pixels (> threshold) are 255, others are 0
+    _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+
+    # Convert to 1-bit (0 or 1)
+    binary_1bit = (binary / 255).astype(np.uint8)
+
+    return binary_1bit
+
+def match_template_correlation(image_normalized, template, method=cv2.TM_CCOEFF_NORMED):
+    """Perform template matching using correlation like test_template_matching.py"""
+    # Ensure image is large enough for template
+    if image_normalized.shape[0] < template.shape[0] or image_normalized.shape[1] < template.shape[1]:
+        return None
+
+    # Perform template matching
+    result = cv2.matchTemplate(image_normalized, template, method)
+
+    # Get best match
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+    # Calculate confidence - shift to 0-1 range
+    confidence = (max_val + 1.0) / 2.0
+
+    return max_val, confidence
+
+def get_top_matches_correlation(normalized_image, templates, n=3):
+    """Get top matches using correlation-based template matching"""
     matches = []
     for name, template in templates.items():
-        if template.shape[0] > gray_image.shape[0] or template.shape[1] > gray_image.shape[1]:
-            continue  # Skip if template is larger than image
-        score, loc = match_template(gray_image, template)
-        matches.append((name, score))
+        result = match_template_correlation(normalized_image, template)
+        if result is not None:
+            score, confidence = result
+            matches.append((name, score, confidence))
     matches.sort(key=lambda x: x[1], reverse=True)
     return matches[:n]
 
-def is_red_color(bgr_value):
-    b, g, r = bgr_value
-    # Red if R is highest and above threshold
-    return r > 50 and r > g and r > b
+def detect_card_color(bgr_value):
+    """Detect the specific color of a card based on BGR values"""
+    b, g, r = int(bgr_value[0]), int(bgr_value[1]), int(bgr_value[2])
+
+    # White/bright pixels first (text/symbols) - exclude from color voting
+    # Very strict white threshold since card backgrounds are bright but tinted
+    if r > 245 and g > 245 and b > 245:
+        return "white"
+
+    # Blue (diamonds) - for average background color, blue should dominate
+    if b > 100 and b > r + 20 and b > g + 20:
+        return "blue"
+    
+    # Red (hearts) - for average background color, red should dominate
+    if r > 100 and r > b + 20 and r > g + 20:
+        return "red"
+    
+    # Green (clubs) - for average background color, green should dominate
+    if g > 100 and g > r + 20 and g > b + 20:
+        return "green"
+    
+    # Black (spades) - for average background color, all channels should be low
+    if r < 80 and g < 80 and b < 80:
+        return "black"
+
+    # Everything else is unknown
+    return "unknown"
 
 def classify_suite(image):
-    # Crop rank: y=0 to 18, full width
-    rank_crop = image[0:18, :]
-    
-    # Crop suite: y=20 to bottom, full width
+    """Classify suite based on background color analysis, return suite name"""
+    # Crop suite area: y=20 to bottom, full width
     suite_crop = image[20:, :]
-    
+
     print(f"Image shape: {image.shape}, suite_crop shape: {suite_crop.shape}")
-    
-    # Get color of 5x5 area around center of suite_crop, vote on red
+
+    # Average all non-white pixels in the suite area for robust color detection
     h, w = suite_crop.shape[:2]
-    center_y, center_x = h // 2, w // 2
-    if h >= 5 and w >= 5:
-        y1 = max(0, center_y - 2)
-        y2 = min(h, center_y + 3)
-        x1 = max(0, center_x - 2)
-        x2 = min(w, center_x + 3)
-        patch = suite_crop[y1:y2, x1:x2]
-        red_votes = 0
-        total_pixels = (y2 - y1) * (x2 - x1)
-        for i in range(y2 - y1):
-            for j in range(x2 - x1):
-                pixel_bgr = patch[i, j]
-                if is_red_color(pixel_bgr):
-                    red_votes += 1
-        color_is_red = red_votes > total_pixels // 2
-        avg_bgr = np.mean(patch.reshape(-1, 3), axis=0)
-        print(f"5x5 patch avg BGR: {avg_bgr}, {red_votes}/{total_pixels} red pixels, is_red: {color_is_red}")
-    else:
-        color_is_red = False  # Default to black if can't sample
-        print(f"Cannot sample 5x5 patch, defaulting to black")
     
-    # Convert suite to grayscale
-    if len(suite_crop.shape) == 3:
-        if suite_crop.shape[2] == 4:
-            suite_crop = cv2.cvtColor(suite_crop, cv2.COLOR_BGRA2BGR)
-        suite_gray = cv2.cvtColor(suite_crop, cv2.COLOR_BGR2GRAY)
-    else:
-        suite_gray = suite_crop
+    # Collect all non-white pixels for averaging
+    background_pixels = []
     
-    return suite_gray, color_is_red, rank_crop
+    for i in range(h):
+        for j in range(w):
+            pixel_bgr = suite_crop[i, j]
+            b, g, r = int(pixel_bgr[0]), int(pixel_bgr[1]), int(pixel_bgr[2])
+            
+            # Exclude very bright/white pixels (symbols)
+            #if not (r > 240 and g > 240 and b > 240):
+            if not (r > 128 and g > 128 and b > 128):
+                background_pixels.append(pixel_bgr)
+    
+    if len(background_pixels) > 0:
+        # Calculate average BGR of background pixels
+        avg_bgr = np.mean(background_pixels, axis=0)
+        
+        # Classify based on the average background color
+        b_avg, g_avg, r_avg = avg_bgr
+        color = detect_card_color(avg_bgr)
+        
+        print(f"Background pixels: {len(background_pixels)}, avg BGR: {avg_bgr}, detected color: {color}")
+        
+        # Map color to suite
+        if color == "blue":
+            suite_name = "diamonds"
+        elif color == "red":
+            suite_name = "hearts"
+        elif color == "green":
+            suite_name = "clubs"
+        elif color == "black":
+            suite_name = "spades"
+        else:
+            suite_name = "unknown"
+    else:
+        suite_name = "unknown"
+        print(f"No background pixels found, defaulting to unknown")
+
+    # Crop rank area for processing
+    rank_crop = image[0:18, :]
+
+    return suite_name, rank_crop
 
 def main():
-    parser = argparse.ArgumentParser(description='Match suite and rank templates with images in specified directory.')
+    parser = argparse.ArgumentParser(description='Match card images using color-based suite detection and 1-bit template matching for ranks.')
     parser.add_argument('directory', help='Directory containing images to match')
     parser.add_argument('--debug-sorting', action='store_true', help='Copy images to validation directory organized by suite/rank')
     args = parser.parse_args()
 
-    templates_dir = 'templates/suites'
-    if not os.path.exists(templates_dir):
-        print(f"Templates directory '{templates_dir}' does not exist.")
-        return
-
-    red_templates, black_templates = load_suite_templates(templates_dir)
-    if not red_templates and not black_templates:
-        print("No suite templates found.")
-        return
-
-    print(f"Loaded red templates: {list(red_templates.keys())}")
-    print(f"Loaded black templates: {list(black_templates.keys())}")
-
-    rank_templates_dir = 'templates/ranks'
-    rank_normal = {}
-    rank_edges = {}
-    rank_contours = {}
+    # Load rank templates using the new correlation-based approach
+    rank_templates_dir = 'templates'
+    rank_templates = {}
     if os.path.exists(rank_templates_dir):
-        rank_normal, rank_edges, rank_contours = load_rank_templates(rank_templates_dir)
-        print(f"Loaded {len(rank_normal)} rank templates.")
+        rank_templates = load_rank_templates(rank_templates_dir)
+        print(f"Loaded {len(rank_templates)} rank templates.")
     else:
         print(f"Rank templates directory '{rank_templates_dir}' does not exist.")
+        return
+
+    if not rank_templates:
+        print("No rank templates found.")
+        return
 
     image_dir = Path(args.directory)
     if not image_dir.exists():
@@ -167,102 +193,53 @@ def main():
             continue
 
         print(f"Processing {img_path.name}:")
-        suite_gray, is_red, rank_crop = classify_suite(image)
+        suite_name, rank_crop = classify_suite(image)
         
-        # Match suite
-        suite_top = get_top_matches(suite_gray, red_templates if is_red else black_templates)
-        print(f"Top suite matches: {suite_top}")
-        if suite_top and suite_top[0][1] >= 0.8:
-            suite_match, suite_score = suite_top[0]
-            suite_result = f"matched {suite_match} (score {suite_score:.2f})"
-        else:
-            if suite_top:
-                suite_match, suite_score = suite_top[0]
-                suite_result = f"best {suite_match} (score {suite_score:.2f})"
-            else:
-                suite_result = "no templates"
-            if suite_top and suite_top[0][1] < 0.8:
-                unmatched.append(img_path.name)
+        # Suite is now determined by color analysis
+        suite_result = f"detected {suite_name} (color-based)"
         
-        # Convert rank_crop to gray
-        if len(rank_crop.shape) == 3:
-            if rank_crop.shape[2] == 4:
-                rank_crop = cv2.cvtColor(rank_crop, cv2.COLOR_BGRA2BGR)
-            rank_gray = cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY)
-        else:
-            rank_gray = rank_crop
-        rank_top = get_top_matches(rank_gray, rank_normal)
+        # Convert rank_crop to 1-bit white hot for correlation matching
+        rank_1bit = convert_to_white_hot(rank_crop)
+        
+        # Match rank using correlation-based template matching
+        rank_top = get_top_matches_correlation(rank_1bit.astype(np.float32), rank_templates)
         print(f"Top rank matches: {rank_top}")
-        if rank_top and rank_top[0][1] >= 0.6:
-            rank_match, rank_score = rank_top[0]
-            rank_result = f"matched {rank_match} (score {rank_score:.2f})"
+        if rank_top and rank_top[0][1] >= 0.6:  # Using correlation score threshold
+            rank_match, rank_score, confidence = rank_top[0]
+            rank_result = f"matched {rank_match} (score {rank_score:.2f}, conf {confidence:.2f})"
         else:
-            # Try with Canny edges
-            rank_edges_img = cv2.Canny(rank_gray, 100, 200)
-            rank_top_edges = get_top_matches(rank_edges_img, rank_edges)
-            print(f"Top rank edges matches: {rank_top_edges}")
-            if rank_top_edges and rank_top_edges[0][1] >= 0.6:
-                rank_match, rank_score = rank_top_edges[0]
-                rank_result = f"matched {rank_match} (edges, score {rank_score:.2f})"
+            if rank_top:
+                rank_match, rank_score, confidence = rank_top[0]
+                rank_result = f"best {rank_match} (score {rank_score:.2f}, conf {confidence:.2f})"
             else:
-                # Try with contour matching
-                contours, _ = cv2.findContours(rank_edges_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if contours:
-                    main_contour = max(contours, key=cv2.contourArea)
-                    best_match = None
-                    best_score = float('inf')
-                    for name, template_contour in rank_contours.items():
-                        score = cv2.matchShapes(main_contour, template_contour, cv2.CONTOURS_MATCH_I1, 0)
-                        if score < best_score:
-                            best_score = score
-                            best_match = name
-                    print(f"Best contour match: {best_match}, score {best_score:.4f}")
-                    if best_score < 0.5:  # Some threshold for shape matching
-                        rank_result = f"matched {best_match} (contour, score {best_score:.4f})"
-                    else:
-                        rank_result = f"best contour: {best_match} (score {best_score:.4f})"
-                else:
-                    rank_result = "no contours"
-                if rank_top_edges and rank_top_edges[0][1] < 0.6:
-                    unmatched_ranks.append(img_path.name)
+                rank_result = "no matches"
+            unmatched_ranks.append(img_path.name)
         
         print(f"{img_path.name}: Suite {suite_result}, Rank {rank_result}")
 
-        # Check if failed match
-        is_failed = not suite_result.startswith("matched ") or not rank_result.startswith("matched ")
+        # Check if failed match (suite is always detected, but rank might fail)
+        is_failed = not rank_result.startswith("matched ")
         if is_failed:
             failed_matches.append(img_path.name)
 
         if args.debug_sorting:
-            # Determine suite name
-            if suite_result.startswith("matched "):
-                suite_name = suite_result.split()[1]
-            elif suite_result.startswith("best "):
-                suite_name = suite_result.split()[1]
-            else:
-                suite_name = "unknown_suite"
+            # For debug sorting, we use the detected color-based suite
+            # Note: This will be "red" or "black", not specific suites
+            suite_sort_name = suite_name
             
             # Determine rank name
             if rank_result.startswith("matched "):
                 rank_name = rank_result.split()[1]
-            elif rank_result.startswith("best contour: "):
-                rank_name = rank_result.split()[2]
             elif rank_result.startswith("best "):
                 rank_name = rank_result.split()[1]
-            elif rank_result.startswith("top: "):
-                # Take first rank
-                parts = rank_result[5:].split(", ")
-                if parts:
-                    rank_name = parts[0].split()[0]
-                else:
-                    rank_name = "unknown_rank"
             else:
                 rank_name = "unknown_rank"
             
-            print(f"Classified {img_path.name} as {suite_name}/{rank_name}")
+            print(f"Classified {img_path.name} as {suite_sort_name}/{rank_name}")
             if is_failed:
                 dest_dir = "validation/failed"
             else:
+                dest_dir = f"validation/{suite_sort_name}/{rank_name}"
                 dest_dir = f"validation/{suite_name}/{rank_name}"
             os.makedirs(dest_dir, exist_ok=True)
             shutil.copy(str(img_path), dest_dir)

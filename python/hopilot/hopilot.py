@@ -187,7 +187,6 @@ class HoPilot:
                 frame_count += 1
                 if frame_count % frame_interval == 0:
                     self.process_frame(frame)
-                    print(f"Processed frame {frame_count}")
 
                     with self.dashboard.speed_lock:
                         if self.dashboard.slow_down:
@@ -207,8 +206,44 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.replay_video:
+        # Create detector for replay mode
+        detector = CardDetector()
+        analyzer = PokerAnalyzer()
         dashboard = Dashboard()
-        dashboard.run(lambda: {}, lambda: "Replaying", lambda: args.replay_video, dir_mode=False, video_mode=True, frame_func=None, recording_toggle_func=None, replay_mode=True, video_path=args.replay_video)
+
+        # Track current assignments for replay
+        replay_state = {'assignments': {}, 'phase': 'pre-flop'}
+
+        def get_replay_assignments():
+            return replay_state['assignments'].copy()
+
+        def get_replay_advice():
+            hole_cards = []
+            if replay_state['assignments'].get('hero_hole_1'):
+                hole_cards.append(replay_state['assignments']['hero_hole_1'][0])
+            if replay_state['assignments'].get('hero_hole_2'):
+                hole_cards.append(replay_state['assignments']['hero_hole_2'][0])
+
+            board_cards = []
+            for slot in ['flop_1', 'flop_2', 'flop_3', 'turn', 'river']:
+                if replay_state['assignments'].get(slot):
+                    board_cards.append(replay_state['assignments'][slot][0])
+
+            return analyzer.get_advice(hole_cards, board_cards, replay_state['phase'])
+
+        def process_replay_frame(frame):
+            replay_state['assignments'] = detector.detect_cards(frame)
+            board_count = sum(1 for slot in ['flop_1', 'flop_2', 'flop_3', 'turn', 'river'] if replay_state['assignments'].get(slot))
+            if board_count == 0:
+                replay_state['phase'] = 'pre-flop'
+            elif board_count <= 3:
+                replay_state['phase'] = 'flop'
+            elif board_count == 4:
+                replay_state['phase'] = 'turn'
+            else:
+                replay_state['phase'] = 'river'
+
+        dashboard.run(get_replay_assignments, get_replay_advice, lambda: args.replay_video, dir_mode=False, video_mode=True, frame_func=None, recording_toggle_func=None, replay_mode=True, video_path=args.replay_video, frame_processor=process_replay_frame)
     else:
         pilot = HoPilot(args.window_title)
         pilot.run_with_capture()
