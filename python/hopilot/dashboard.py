@@ -76,6 +76,7 @@ class ToggleAutoSaveCommand(Command):
                 # Reset states when turning off
                 self.dashboard.round_active = False
                 self.dashboard.saved_this_round = {i: False for i in range(len(self.dashboard.bboxes))}
+                self.dashboard.saved_hole_this_round = {i: False for i in range(len(self.dashboard.bboxes_hole))}
             print(f"Auto save toggled: {'ON' if self.dashboard.auto_save else 'OFF'}")
 
 class CropBBoxesCommand(Command):
@@ -108,19 +109,21 @@ class CropBBoxesCommand(Command):
                 cv2.imwrite(path, crop)
                 print(f"Saved {path}")
                 next_num += 1
-            # Find next hole number to avoid overwriting
-            hole_files = [f for f in files if f.startswith('hole_A_') and f.endswith('.png') and not '_orig' in f]
-            numbers_hole = []
-            for f in hole_files:
-                try:
-                    num = int(f[7:-4])
-                    numbers_hole.append(num)
-                except ValueError:
-                    pass
-            next_hole_num = max(numbers_hole) + 1 if numbers_hole else 1
             # Crop hole boxes using bboxes_hole
             hole_crops = []
-            for (x1, y1, x2, y2, angle) in self.dashboard.bboxes_hole:
+            hole_prefixes = ['A', 'B']  # Prefixes for each hole box
+            for i, (x1, y1, x2, y2, angle) in enumerate(self.dashboard.bboxes_hole):
+                hole_prefix = hole_prefixes[i] if i < len(hole_prefixes) else f'H{i}'
+                # Find next number for this hole prefix
+                hole_files = [f for f in files if f.startswith(f'hole_{hole_prefix}_') and f.endswith('.png') and not '_orig' in f]
+                numbers_hole = []
+                for f in hole_files:
+                    try:
+                        num = int(f[len(f'hole_{hole_prefix}_'):-4])
+                        numbers_hole.append(num)
+                    except ValueError:
+                        pass
+                next_hole_num = max(numbers_hole) + 1 if numbers_hole else 1
                 center = ((x1 + x2) / 2, (y1 + y2) / 2)
                 size = (x2 - x1, y2 - y1)
                 rect = (center, size, angle)
@@ -131,7 +134,7 @@ class CropBBoxesCommand(Command):
                 y2_bb = int(max(box[:, 1]))
                 sub = frame[y1_bb:y2_bb, x1_bb:x2_bb]
                 # Save original bounding box crop for debugging
-                orig_path = f'recordings/screenshots/hole_A_{next_hole_num}_orig.png'
+                orig_path = f'recordings/screenshots/hole_{hole_prefix}_{next_hole_num}_orig.png'
                 cv2.imwrite(orig_path, sub)
                 print(f"Saved {orig_path}")
                 rel_center = (center[0] - x1_bb, center[1] - y1_bb)
@@ -141,10 +144,9 @@ class CropBBoxesCommand(Command):
                                    int(rel_center[0] - size[0]/2):int(rel_center[0] + size[0]/2)]
                 hole_crops.append(crop)
                 # Save the cropped hole
-                path = f'recordings/screenshots/hole_A_{next_hole_num}.png'
+                path = f'recordings/screenshots/hole_{hole_prefix}_{next_hole_num}.png'
                 cv2.imwrite(path, crop)
                 print(f"Saved {path}")
-                next_hole_num += 1
 
 class ScreenshotCommand(Command):
     def __init__(self, dashboard, image_path_func):
@@ -206,20 +208,24 @@ class Dashboard:
         self.fast_speed = 1.0
         self.recording = False
         self.bboxes = [
-            (68 + 1, 416 - 1, 84 + 2, 450),   # bbox1
-            (123 + 1, 416 - 1, 139 + 4, 450), # bbox2
-            (179, 416 - 1, 195 + 3, 450), # bbox3
-            (234, 416 - 1, 250 + 3, 450), # bbox4
-            (289 + 1, 416 - 1, 305 + 4, 450)  # bbox5
+            (68 + 1, 416 - 1, 84 + 2, 450),   # flop1
+            (123 + 1, 416 - 1, 139 + 4, 450), # flop2
+            (179, 416 - 1, 195 + 3, 450), # flop3
+            (234, 416 - 1, 250 + 3, 450), # turn4
+            (289 + 1, 416 - 1, 305 + 4, 450)  # river5
         ]
         self.bboxes_hole = [
-            (25 + 2, 668, 48 - 2, 695 - 2, -5.0)  # hole_1
+            (25 + 2, 668, 48 - 2, 695 - 2, -5.0),  # hole_A
+            (64, 666, 64 + 19, 666 + 25, 5.0)  # hole_B
         ]
         self.auto_save = False
         self.round_active = False
         self.saved_this_round = {i: False for i in range(len(self.bboxes))}
+        self.saved_hole_this_round = {i: False for i in range(len(self.bboxes_hole))}
         # Suffixes for each bbox: f1, f2, f3, t, r
         self.bbox_suffixes = ['f1', 'f2', 'f3', 't', 'r']
+        # Suffixes for hole cards
+        self.bbox_hole_suffixes = ['hA', 'hB']
         # Initialize auto save counter
         auto_capture_dir = 'recordings/screenshots/auto_capture'
         os.makedirs(auto_capture_dir, exist_ok=True)
@@ -370,6 +376,7 @@ class Dashboard:
             # Start of new round (flop detected)
             self.round_active = True
             self.saved_this_round = {i: False for i in range(len(self.bboxes))}
+            self.saved_hole_this_round = {i: False for i in range(len(self.bboxes_hole))}
             self.round_start_time = time.time()
             print("New round started (flop detected)")
         elif not flop_is_steady and self.round_active:
@@ -385,6 +392,7 @@ class Dashboard:
                 print("Round timeout - resetting auto-save state")
                 self.round_active = False
                 self.saved_this_round = {i: False for i in range(len(self.bboxes))}
+                self.saved_hole_this_round = {i: False for i in range(len(self.bboxes_hole))}
 
         if self.round_active:
             # Check each bbox for saving
@@ -402,6 +410,40 @@ class Dashboard:
                     cv2.imwrite(path, crop)
                     print(f"Saved auto capture {path}")
                     self.saved_this_round[i] = True
+
+            # Check each hole bbox for saving
+            for i, (x1, y1, x2, y2, angle) in enumerate(self.bboxes_hole):
+                if self.saved_hole_this_round[i]:
+                    continue
+                # For hole cards, save immediately when round starts (don't wait for steady detection)
+                # since hole cards are usually visible throughout the hand
+                center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                size = (x2 - x1, y2 - y1)
+                rect = (center, size, angle)
+                box = cv2.boxPoints(rect)
+                x1_bb = int(min(box[:, 0]))
+                y1_bb = int(min(box[:, 1]))
+                x2_bb = int(max(box[:, 0]))
+                y2_bb = int(max(box[:, 1]))
+                sub = frame[y1_bb:y2_bb, x1_bb:x2_bb]
+                if sub.size == 0:
+                    continue
+                # Apply rotation
+                rel_center = (center[0] - x1_bb, center[1] - y1_bb)
+                M = cv2.getRotationMatrix2D(rel_center, angle, 1.0)
+                rotated_sub = cv2.warpAffine(sub, M, (x2_bb - x1_bb, y2_bb - y1_bb))
+                crop = rotated_sub[int(rel_center[1] - size[1]/2):int(rel_center[1] + size[1]/2), 
+                                   int(rel_center[0] - size[0]/2):int(rel_center[0] + size[0]/2)]
+                if crop.size == 0:
+                    continue
+                # Save immediately (hole cards are typically visible throughout the hand)
+                os.makedirs('recordings/screenshots/auto_capture', exist_ok=True)
+                suffix = self.bbox_hole_suffixes[i] if i < len(self.bbox_hole_suffixes) else f'hole{i}'
+                self.auto_save_counter += 1
+                path = f'recordings/screenshots/auto_capture/{self.auto_save_counter}_{suffix}.png'
+                cv2.imwrite(path, crop)
+                print(f"Saved auto capture {path}")
+                self.saved_hole_this_round[i] = True
 
     def draw_text(self, text, x, y, font=None, color=(255, 255, 255)):
         if font is None:
@@ -600,9 +642,13 @@ class Dashboard:
                         for x1, y1, x2, y2 in self.bboxes:
                             cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (255, 0, 0), 2)
                         # Draw hole card bounding boxes in cyan
-                            for x1, y1, x2, y2, angle in self.bboxes_hole:
-                                center = ((x1 + x2) / 2, (y1 + y2) / 2)
-                                size = (x2 - x1, y2 - y1)
+                        for x1, y1, x2, y2, angle in self.bboxes_hole:
+                            center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                            size = (x2 - x1, y2 - y1)
+                            rect = (center, size, angle)
+                            box = cv2.boxPoints(rect)
+                            box = box.astype(np.int32)
+                            cv2.drawContours(frame_copy, [box], 0, (255, 255, 0), 2)
 
                         assignments = self.card_assignments_func()
                         advice = self.advice_func()
