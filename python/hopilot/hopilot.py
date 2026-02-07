@@ -7,6 +7,8 @@ import dxcam
 import pygetwindow as gw
 import os
 import sys
+import logging
+from logging.handlers import RotatingFileHandler
 
 # Add the parent directory to the path to import hopilot modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -15,8 +17,63 @@ from hopilot.card_detector import CardDetector
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.dashboard import Dashboard
 
+
+def setup_logging(log_level=logging.INFO):
+    """
+    Set up logging configuration with console and rotating file handlers.
+
+    Args:
+        log_level: Logging level (default: INFO)
+    """
+    # Create logs directory if it doesn't exist
+    log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Configure root logger
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+
+    # Clear any existing handlers
+    logger.handlers.clear()
+
+    # Create formatters
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+    )
+    console_formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    )
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+
+    # Rotating file handler (128MB max size, keep 5 backup files)
+    log_file = os.path.join(log_dir, 'hopilot.log')
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=128 * 1024 * 1024,  # 128MB
+        backupCount=5
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+
+    # Log the setup
+    logger.info("Logging initialized")
+    logger.info(f"Log file: {log_file}")
+    logger.info(f"Log level: {logging.getLevelName(log_level)}")
+
+
+# Initialize logging
+setup_logging()
+
 def list_visible_windows():
     """Print all visible window titles to help find the correct one"""
+    logger = logging.getLogger(__name__)
+    logger.info("Listing all visible windows")
     print("Visible windows:")
     def enum_handler(hwnd, results):
         if win32gui.IsWindowVisible(hwnd):
@@ -24,6 +81,7 @@ def list_visible_windows():
             if title.strip():
                 print(f"  - {title} (HWND: {hwnd})")
     win32gui.EnumWindows(enum_handler, None)
+    logger.info("Window listing completed")
 
 
 def get_window_coords(window_title):
@@ -32,92 +90,146 @@ def get_window_coords(window_title):
     Tries exact match first, then partial via pygetwindow.
     Returns (left, top, right, bottom) or None if not found.
     """
-    # Try exact match with win32gui
-    hwnd = win32gui.FindWindow(None, window_title)
-    if hwnd:
-        rect = win32gui.GetWindowRect(hwnd)
-        print(f"Found exact match: '{window_title}'")
-        return rect  # (left, top, right, bottom)
+    logger = logging.getLogger(__name__)
+    logger.info(f"Searching for window: '{window_title}'")
 
-    # Fallback: partial match with pygetwindow
-    windows = gw.getWindowsWithTitle(window_title)
-    if windows:
-        win = windows[0]
-        left, top, width, height = win.left, win.top, win.width, win.height
-        right = left + width
-        bottom = top + height
-        print(f"Found partial match: '{win.title}'")
-        return (left, top, right, bottom)
+    if not window_title or not isinstance(window_title, str):
+        logger.error("Invalid window title provided")
+        return None
 
-    print(f"No window found matching '{window_title}'")
-    print("Tip: Run list_visible_windows() to see titles.")
-    return None
+    try:
+        # Try exact match with win32gui
+        hwnd = win32gui.FindWindow(None, window_title)
+        if hwnd:
+            rect = win32gui.GetWindowRect(hwnd)
+            logger.info(f"Found exact match: '{window_title}' at {rect}")
+            print(f"Found exact match: '{window_title}'")
+            return rect  # (left, top, right, bottom)
+
+        # Fallback: partial match with pygetwindow
+        logger.debug("Exact match failed, trying partial match with pygetwindow")
+        windows = gw.getWindowsWithTitle(window_title)
+        if windows:
+            win = windows[0]
+            left, top, width, height = win.left, win.top, win.width, win.height
+            right = left + width
+            bottom = top + height
+            rect = (left, top, right, bottom)
+            logger.info(f"Found partial match: '{win.title}' at {rect}")
+            print(f"Found partial match: '{win.title}'")
+            return rect
+
+        logger.error(f"No window found matching '{window_title}'")
+        print(f"No window found matching '{window_title}'")
+        print("Tip: Run list_visible_windows() to see titles.")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error getting window coordinates: {e}")
+        return None
 
 
 def capture_with_dxcam(region):
     """Capture using DXcam (fast, GPU-friendly)"""
+    logger = logging.getLogger(__name__)
+
     if region is None:
+        logger.warning("Capture region is None")
         return None
+
+    logger.debug(f"Starting DXcam capture for region: {region}")
 
     # DXcam expects (left, top, right, bottom)
-    camera = dxcam.create(output_idx=0, output_color="BGR")
-    if camera is None:
-        print("DXcam failed to initialize. Check GPU/drivers.")
-        return None
-
     try:
+        camera = dxcam.create(output_idx=0, output_color="BGR")
+        if camera is None:
+            logger.error("DXcam failed to initialize. Check GPU/drivers.")
+            print("DXcam failed to initialize. Check GPU/drivers.")
+            return None
+
         frame = camera.grab(region=region)
         if frame is None:
+            logger.warning("DXcam capture returned None frame")
             print("Capture returned None.")
             return None
 
-        # DXcam usually returns correct orientation (no flip needed)
-        # But if flipped, uncomment:
-        # frame = cv2.flip(frame, 0)  # vertical
-        # frame = cv2.flip(frame, 1)  # horizontal
-        # frame = cv2.flip(frame, -1) # both
-
+        logger.debug(f"Successfully captured frame of shape: {frame.shape}")
         return frame
 
+    except Exception as e:
+        logger.error(f"Error during DXcam capture: {e}")
+        return None
+
     finally:
-        camera.release()  # Important: release after each grab in loop
+        try:
+            camera.release()  # Important: release after each grab in loop
+            logger.debug("DXcam camera released")
+        except:
+            logger.warning("Failed to release DXcam camera")
 
 
 class HoPilot:
     def __init__(self, window_title):
-        self.detector = CardDetector()
-        self.analyzer = PokerAnalyzer()
-        self.dashboard = Dashboard()
-        self.window_title = window_title
-        self.region = get_window_coords(window_title)
-        if self.region is None:
-            raise ValueError(f"Window '{window_title}' not found")
-        self.current_assignments = {}
-        self.phase = 'pre-flop'  # Default phase
-        self.lock = threading.Lock()
-        self.current_frame = None
-        self.video_writer = None
+        logger = logging.getLogger(__name__)
+        logger.info(f"Initializing HoPilot for window: '{window_title}'")
+
+        try:
+            self.detector = CardDetector()
+            self.analyzer = PokerAnalyzer()
+            self.dashboard = Dashboard()
+            self.window_title = window_title
+
+            logger.info("Components initialized successfully")
+
+            self.region = get_window_coords(window_title)
+            if self.region is None:
+                logger.error(f"Window '{window_title}' not found - cannot initialize HoPilot")
+                raise ValueError(f"Window '{window_title}' not found")
+
+            logger.info(f"Window region set to: {self.region}")
+
+            self.current_assignments = {}
+            self.phase = 'pre-flop'  # Default phase
+            self.lock = threading.Lock()
+            self.current_frame = None
+            self.video_writer = None
+
+            logger.info("HoPilot initialization completed successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize HoPilot: {e}")
+            raise
 
 
     def determine_phase(self, assignments):
         """
         Determine game phase based on detected board cards.
         """
+        logger = logging.getLogger(__name__)
         board_count = sum(1 for slot in ['flop_1', 'flop_2', 'flop_3', 'turn', 'river'] if assignments.get(slot))
+
         if board_count == 0:
-            return 'pre-flop'
+            phase = 'pre-flop'
         elif board_count <= 3:
-            return 'flop'
+            phase = 'flop'
         elif board_count == 4:
-            return 'turn'
+            phase = 'turn'
         else:
-            return 'river'
+            phase = 'river'
+
+        logger.debug(f"Determined phase: {phase} (board cards detected: {board_count})")
+        return phase
 
     def get_current_assignments(self):
+        logger = logging.getLogger(__name__)
         with self.lock:
-            return self.current_assignments.copy()
+            assignments = self.current_assignments.copy()
+            logger.debug(f"Retrieved current assignments: {len(assignments)} positions")
+            return assignments
 
     def get_advice(self):
+        logger = logging.getLogger(__name__)
+
         hole_cards = []
         if self.current_assignments.get('hero_hole_1'):
             hole_cards.append(self.current_assignments['hero_hole_1'][0])
@@ -129,12 +241,24 @@ class HoPilot:
             if self.current_assignments.get(slot):
                 board_cards.append(self.current_assignments[slot][0])
 
-        return self.analyzer.get_advice(hole_cards, board_cards, self.phase)
+        logger.debug(f"Getting advice for hole_cards={hole_cards}, board_cards={board_cards}, phase={self.phase}")
+
+        try:
+            advice = self.analyzer.get_advice(hole_cards, board_cards, self.phase)
+            logger.info(f"Generated advice: {advice}")
+            return advice
+        except Exception as e:
+            logger.error(f"Error getting advice: {e}")
+            return "Error generating advice"
 
     def get_current_image_path(self):
-        return getattr(self, 'current_image_path', None)
+        logger = logging.getLogger(__name__)
+        path = getattr(self, 'current_image_path', None)
+        logger.debug(f"Retrieved current image path: {path}")
+        return path
 
     def toggle_recording(self, start):
+        logger = logging.getLogger(__name__)
         if start:
             if self.video_writer is None:
                 os.makedirs('recordings', exist_ok=True)
@@ -153,55 +277,86 @@ class HoPilot:
                 fps = 30
                 height, width = self.region[3] - self.region[1], self.region[2] - self.region[0]
                 self.video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
-                print(f"Started recording to {video_path}")
+                logger.info(f"Started recording to {video_path}")
         else:
             if self.video_writer:
                 self.video_writer.release()
                 self.video_writer = None
-                print("Stopped recording")
+                logger.info("Stopped recording")
 
     def process_frame(self, image):
-        assignments = self.detector.detect_cards(image)
-        with self.lock:
-            self.current_assignments = assignments
-            self.phase = self.determine_phase(self.current_assignments)
-            self.current_image_path = image if isinstance(image, str) else None
+        logger = logging.getLogger(__name__)
+        logger.debug("Processing frame for card detection")
+
+        try:
+            assignments = self.detector.detect_cards(image)
+            detected_count = sum(1 for v in assignments.values() if v is not None)
+            logger.debug(f"Card detection completed: {detected_count} cards detected")
+
+            with self.lock:
+                self.current_assignments = assignments
+                self.phase = self.determine_phase(self.current_assignments)
+                self.current_image_path = image if isinstance(image, str) else None
+
+            logger.debug(f"Frame processing completed - phase: {self.phase}")
+        except Exception as e:
+            logger.error(f"Error processing frame: {e}")
 
     def run_with_capture(self):
+        logger = logging.getLogger(__name__)
+        logger.info("Starting HoPilot with live capture mode")
+
         def process_frames():
             frame_delay = 0.033  # ~30fps
             frame_interval = 5
             frame_count = 0
+
             while True:
-                with self.dashboard.speed_lock:
-                    if self.dashboard.paused:
-                        time.sleep(0.1)
+                try:
+                    with self.dashboard.speed_lock:
+                        if self.dashboard.paused:
+                            time.sleep(0.1)
+                            continue
+
+                    frame = capture_with_dxcam(self.region)
+                    if frame is None:
+                        logger.warning("Capture failed - retrying in 1s...")
+                        print("Capture failed - retrying in 1s...")
+                        time.sleep(1)
                         continue
 
-                frame = capture_with_dxcam(self.region)
-                if frame is None:
-                    print("Capture failed - retrying in 1s...")
-                    time.sleep(1)
-                    continue
+                    self.current_frame = frame
+                    logger.debug(f"Captured frame of shape: {frame.shape}")
 
-                self.current_frame = frame
+                    if self.video_writer:
+                        self.video_writer.write(frame)
+                        logger.debug("Frame written to video")
 
-                if self.video_writer:
-                    self.video_writer.write(frame)
+                    frame_count += 1
+                    if frame_count % frame_interval == 0:
+                        self.process_frame(frame)
 
-                frame_count += 1
-                if frame_count % frame_interval == 0:
-                    self.process_frame(frame)
+                        with self.dashboard.speed_lock:
+                            if self.dashboard.slow_down:
+                                delay = frame_delay * frame_interval / self.dashboard.speed
+                                logger.debug(f"Slowing down processing by {delay:.3f}s")
+                                time.sleep(delay)
 
-                    with self.dashboard.speed_lock:
-                        if self.dashboard.slow_down:
-                            time.sleep(frame_delay * frame_interval / self.dashboard.speed)
+                except Exception as e:
+                    logger.error(f"Error in frame processing loop: {e}")
+                    time.sleep(1)  # Prevent tight error loops
 
-        processing_thread = threading.Thread(target=process_frames)
-        processing_thread.daemon = True
-        processing_thread.start()
+        try:
+            processing_thread = threading.Thread(target=process_frames)
+            processing_thread.daemon = True
+            processing_thread.start()
+            logger.info("Frame processing thread started")
 
-        self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False, video_mode=True, frame_func=lambda: self.current_frame, recording_toggle_func=lambda start: self.toggle_recording(start), game_mode="rush_n_cash")
+            self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False, video_mode=True, frame_func=lambda: self.current_frame, recording_toggle_func=lambda start: self.toggle_recording(start), game_mode="rush_n_cash")
+
+        except Exception as e:
+            logger.error(f"Error in run_with_capture: {e}")
+            raise
 
 if __name__ == "__main__":
     import argparse

@@ -6,6 +6,7 @@ import shutil
 import cv2
 import numpy as np
 import time
+import logging
 from .card_layout import CardLayout
 
 class Command:
@@ -194,6 +195,9 @@ class ScreenshotCommand(Command):
 
 class Dashboard:
     def __init__(self, width=900, height=600):
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Initializing Dashboard with dimensions {width}x{height}")
+
         pygame.init()
         self.width = width
         self.height = height
@@ -248,6 +252,8 @@ class Dashboard:
         self.slow_toggle_rect = (710, self.button_y + 40, self.button_width, self.button_height)
         self.screenshot_rect = (710, self.button_y + 80, self.button_width, self.button_height)
         self.recording_rect = (600, self.button_y + 80, self.button_width, self.button_height)
+
+        self.logger.info("Dashboard initialization completed")
         self.crop_rect = (600, self.button_y + 120, self.button_width, self.button_height)
         self.prev_rect = (600, self.button_y + 120, self.button_width, self.button_height)
         self.next_rect = (710, self.button_y + 120, self.button_width, self.button_height)
@@ -593,6 +599,8 @@ class Dashboard:
                 pass
 
     def run(self, card_assignments_func, advice_func, image_path_func=None, prev_func=None, next_func=None, dir_mode=False, video_mode=False, frame_func=None, recording_toggle_func=None, replay_mode=False, video_path=None, frame_processor=None, game_mode="rush_n_cash"):
+        self.logger.info(f"Starting Dashboard run with game_mode: {game_mode}, dir_mode: {dir_mode}, video_mode: {video_mode}, replay_mode: {replay_mode}")
+
         # Set up game mode and bounding boxes
         self.set_game_mode(game_mode)
         

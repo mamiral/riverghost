@@ -1,8 +1,11 @@
+import logging
 from treys import Evaluator, Card
 
 class PokerAnalyzer:
     def __init__(self):
         self.evaluator = Evaluator()
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("PokerAnalyzer initialized")
 
     def card_name_to_treys(self, card_name):
         """
@@ -66,6 +69,8 @@ class PokerAnalyzer:
         board_cards: list of up to 5 card names
         Returns hand strength score (lower is better)
         """
+        self.logger.debug(f"Evaluating hand: hole_cards={hole_cards}, board_cards={board_cards}")
+
         hole = []
         for c in hole_cards:
             card = self.card_name_to_treys(c)
@@ -79,15 +84,19 @@ class PokerAnalyzer:
                 board.append(card)
 
         if len(hole) != 2:
+            self.logger.warning(f"Invalid hole cards count: {len(hole)} (expected 2)")
             return None
 
         all_cards = hole + board
         if len(set(all_cards)) < len(all_cards):
+            self.logger.warning("Duplicate cards detected in hand evaluation")
             return None  # Duplicates not allowed
         if len(all_cards) < 5:
+            self.logger.debug(f"Insufficient cards for evaluation: {len(all_cards)} (need at least 5)")
             return None  # Need at least 5 cards for evaluation
 
         score = self.evaluator.evaluate(all_cards[:2], all_cards[2:])
+        self.logger.debug(f"Hand evaluation score: {score}")
         return score
 
     def get_hand_class(self, score):
@@ -108,19 +117,26 @@ class PokerAnalyzer:
         """
         Provide basic advice based on phase.
         """
+        self.logger.debug(f"Getting advice for phase: {phase}, hole_cards: {hole_cards}, board_cards: {board_cards}")
+
         score = self.evaluate_hand(hole_cards, board_cards)
         hand_class = self.get_hand_class(score)
 
+        advice = ""
         if phase == 'pre-flop':
             if score and score < 1000:  # Strong hand
-                return f"Strong starting hand ({hand_class}). Consider raising."
+                advice = f"Strong starting hand ({hand_class}). Consider raising."
             else:
-                return f"Weak starting hand ({hand_class}). Play cautiously."
+                advice = f"Weak starting hand ({hand_class}). Play cautiously."
         elif phase in ['flop', 'turn', 'river']:
             if score and score < 500:  # Very strong
-                return f"Very strong hand ({hand_class}). Aggressive play recommended."
+                advice = f"Very strong hand ({hand_class}). Aggressive play recommended."
             elif score and score < 2000:
-                return f"Good hand ({hand_class}). Continue betting."
+                advice = f"Good hand ({hand_class}). Continue betting."
             else:
-                return f"Weak hand ({hand_class}). Consider folding."
-        return "Insufficient information for advice."
+                advice = f"Weak hand ({hand_class}). Consider folding."
+        else:
+            advice = "Insufficient information for advice."
+
+        self.logger.info(f"Generated advice: {advice}")
+        return advice

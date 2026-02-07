@@ -5,8 +5,12 @@ Tests use the validation data moved to tests/data directory.
 
 import pytest
 import os
+import sys
 from pathlib import Path
-from python.hopilot.card_matcher import CardMatcher, detect_card_color, classify_suite
+
+# Add the python directory to the path so we can import hopilot modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
+from hopilot.card_matcher import CardMatcher, detect_card_color, classify_suite
 import cv2
 import numpy as np
 
@@ -142,7 +146,7 @@ class TestTemplateMatching:
 
     def test_correlation_matching(self, sample_templates):
         """Test correlation-based template matching"""
-        from python.hopilot.card_matcher import match_template_correlation
+        from hopilot.card_matcher import match_template_correlation
 
         # Create a test image larger than template
         test_image = np.random.rand(10, 10).astype(np.float32)
