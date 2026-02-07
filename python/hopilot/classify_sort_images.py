@@ -1,24 +1,24 @@
-import os
-import cv2
-import shutil
 from pathlib import Path
+
+import cv2
+
 
 def sort_captured_images():
     # Placeholder: Load template matching model instead of YOLO
     # model = YOLO('runs/classify/train3/weights/best.pt')
 
     # Source directory
-    source_dir = Path('recordings/screenshots/auto_capture')
+    source_dir = Path("recordings/screenshots/auto_capture")
     if not source_dir.exists():
         print(f"Source directory {source_dir} does not exist.")
         return
 
     # Destination directories
-    dataset_dir = Path('dataset')
-    train_dir = dataset_dir / 'train'
+    dataset_dir = Path("dataset")
+    train_dir = dataset_dir / "train"
 
     # Get all png files
-    image_files = list(source_dir.glob('*.png'))
+    image_files = list(source_dir.glob("*.png"))
     if not image_files:
         print("No .png files found in auto_capture directory.")
         return
@@ -63,9 +63,9 @@ def sort_captured_images():
 
             # Extract suffix from filename (e.g., _f1 from 1_f1.png)
             filename = img_path.name
-            parts = filename.split('_')
+            parts = filename.split("_")
             if len(parts) >= 2:
-                suffix_part = parts[1].split('.')[0]
+                suffix_part = parts[1].split(".")[0]
                 suffix = f"_{suffix_part}"
             else:
                 suffix = ""
@@ -78,6 +78,7 @@ def sort_captured_images():
     process_files(image_files, train_dir)
 
     print("Sorting complete.")
+
 
 if __name__ == "__main__":
     sort_captured_images()

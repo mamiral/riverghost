@@ -34,7 +34,7 @@ def main():
         ("black --check python/hopilot/ tests/", "Code formatting check with Black"),
         ("isort --check-only python/hopilot/ tests/", "Import sorting check with isort"),
         ("mypy python/hopilot/", "Type checking with mypy"),
-        ("bandit python/hopilot/", "Security scanning with bandit"),
+        ("bandit -r python/hopilot/", "Security scanning with bandit"),
         ("python -m pytest tests/ -q", "Running tests"),
     ]
 

@@ -1,13 +1,13 @@
-import pytest
-import numpy as np
-import cv2
 import os
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import numpy as np
+import pytest
 
 # Add the python directory to the path so we can import hopilot modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
-from hopilot.card_detector import CardDetector, CardDetectionError
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+from hopilot.card_detector import CardDetectionError, CardDetector
 
 
 class TestCardDetector:
@@ -28,10 +28,14 @@ class TestCardDetector:
 
     def test_init_invalid_templates_dir(self):
         """Test CardDetector initialization with invalid templates_dir"""
-        with pytest.raises(ValueError, match="templates_dir must be a non-empty string"):
+        with pytest.raises(
+            ValueError, match="templates_dir must be a non-empty string"
+        ):
             CardDetector(templates_dir="")
 
-        with pytest.raises(ValueError, match="templates_dir must be a non-empty string"):
+        with pytest.raises(
+            ValueError, match="templates_dir must be a non-empty string"
+        ):
             CardDetector(templates_dir=None)
 
     def test_classify_card_none_input(self, detector):
@@ -45,7 +49,7 @@ class TestCardDetector:
         result = detector.classify_card(empty_image)
         assert result is None
 
-    @patch('cv2.imread')
+    @patch("cv2.imread")
     def test_classify_card_invalid_path(self, mock_imread, detector):
         """Test classify_card with invalid image path"""
         mock_imread.return_value = None
@@ -57,7 +61,7 @@ class TestCardDetector:
         with pytest.raises(CardDetectionError, match="Image cannot be None"):
             detector.detect_cards(None)
 
-    @patch('cv2.imread')
+    @patch("cv2.imread")
     def test_detect_cards_invalid_path(self, mock_imread, detector):
         """Test detect_cards with invalid image path"""
         mock_imread.return_value = None
@@ -96,11 +100,11 @@ class TestCardDetector:
         for i in range(0, 100, 10):
             for j in range(0, 100, 10):
                 if (i + j) // 10 % 2 == 0:
-                    high_contrast[i:i+10, j:j+10] = 255
+                    high_contrast[i : i + 10, j : j + 10] = 255
         result = detector.is_card_like(high_contrast)
         assert result is True
 
-    @patch('cv2.imread')
+    @patch("cv2.imread")
     def test_calibrate_positions_invalid_image(self, mock_imread, detector):
         """Test calibrate_positions with invalid image"""
         mock_imread.return_value = None

@@ -1,15 +1,21 @@
-import cv2
-import numpy as np
-import os
 import argparse
+import os
 import shutil
 from pathlib import Path
+
 from card_matcher import CardMatcher
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Match card images using color-based suite detection and 1-bit template matching for ranks.')
-    parser.add_argument('directory', help='Directory containing images to match')
-    parser.add_argument('--debug-sorting', action='store_true', help='Copy images to validation directory organized by suite/rank')
+    parser = argparse.ArgumentParser(
+        description="Match card images using color-based suite detection and 1-bit template matching for ranks."
+    )
+    parser.add_argument("directory", help="Directory containing images to match")
+    parser.add_argument(
+        "--debug-sorting",
+        action="store_true",
+        help="Copy images to validation directory organized by suite/rank",
+    )
     args = parser.parse_args()
 
     # Initialize card matcher
@@ -23,7 +29,11 @@ def main():
         print(f"Image directory '{args.directory}' does not exist.")
         return
 
-    image_files = list(image_dir.glob('*.png')) + list(image_dir.glob('*.jpg')) + list(image_dir.glob('*.jpeg'))
+    image_files = (
+        list(image_dir.glob("*.png"))
+        + list(image_dir.glob("*.jpg"))
+        + list(image_dir.glob("*.jpeg"))
+    )
     if not image_files:
         print("No image files found in the specified directory.")
         return
@@ -37,14 +47,14 @@ def main():
         # Use CardMatcher to recognize the card
         result = card_matcher.recognize_card(img_path)
 
-        if result['error']:
+        if result["error"]:
             print(f"{img_path.name}: {result['error']}")
             continue
 
-        suite_name = result['suite']
-        rank_name = result['rank']
-        rank_score = result['rank_score']
-        rank_confidence = result['rank_confidence']
+        suite_name = result["suite"]
+        rank_name = result["rank"]
+        rank_score = result["rank_score"]
+        rank_confidence = result["rank_confidence"]
 
         # Format results for display
         suite_result = f"detected {suite_name} (color-based)"
@@ -52,7 +62,9 @@ def main():
         if rank_name and rank_score >= 0.6:
             rank_result = f"matched {rank_name} (score {rank_score:.2f}, conf {rank_confidence:.2f})"
         elif rank_name:
-            rank_result = f"best {rank_name} (score {rank_score:.2f}, conf {rank_confidence:.2f})"
+            rank_result = (
+                f"best {rank_name} (score {rank_score:.2f}, conf {rank_confidence:.2f})"
+            )
             unmatched_ranks.append(img_path.name)
         else:
             rank_result = "no matches"
@@ -61,7 +73,7 @@ def main():
         print(f"{img_path.name}: Suite {suite_result}, Rank {rank_result}")
 
         # Check if failed match
-        is_failed = not result['success']
+        is_failed = not result["success"]
         if is_failed:
             failed_matches.append(img_path.name)
 
@@ -85,12 +97,17 @@ def main():
     if unmatched or unmatched_ranks:
         summary = []
         if unmatched:
-            summary.append(f"{len(unmatched)} suites not matched: {', '.join(unmatched)}")
+            summary.append(
+                f"{len(unmatched)} suites not matched: {', '.join(unmatched)}"
+            )
         if unmatched_ranks:
-            summary.append(f"{len(unmatched_ranks)} ranks not matched: {', '.join(unmatched_ranks)}")
+            summary.append(
+                f"{len(unmatched_ranks)} ranks not matched: {', '.join(unmatched_ranks)}"
+            )
         print(f"\nSummary: {'; '.join(summary)}")
     else:
         print("\nSummary: All cards matched successfully.")
+
 
 if __name__ == "__main__":
     main()
