@@ -196,7 +196,7 @@ class HoPilot:
         processing_thread.daemon = True
         processing_thread.start()
 
-        self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False, video_mode=True, frame_func=lambda: self.current_frame, recording_toggle_func=lambda start: self.toggle_recording(start))
+        self.dashboard.run(self.get_current_assignments, self.get_advice, self.get_current_image_path, dir_mode=False, video_mode=True, frame_func=lambda: self.current_frame, recording_toggle_func=lambda start: self.toggle_recording(start), game_mode="rush_n_cash")
 
 if __name__ == "__main__":
     import argparse
@@ -243,7 +243,7 @@ if __name__ == "__main__":
             else:
                 replay_state['phase'] = 'river'
 
-        dashboard.run(get_replay_assignments, get_replay_advice, lambda: args.replay_video, dir_mode=False, video_mode=True, frame_func=None, recording_toggle_func=None, replay_mode=True, video_path=args.replay_video, frame_processor=process_replay_frame)
+        dashboard.run(get_replay_assignments, get_replay_advice, lambda: args.replay_video, dir_mode=False, video_mode=True, frame_func=None, recording_toggle_func=None, replay_mode=True, video_path=args.replay_video, frame_processor=process_replay_frame, game_mode="rush_n_cash")
     else:
         pilot = HoPilot(args.window_title)
         pilot.run_with_capture()

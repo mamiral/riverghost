@@ -6,6 +6,7 @@ import shutil
 import cv2
 import numpy as np
 import time
+from card_layout import CardLayout
 
 class Command:
     def execute(self):
@@ -207,21 +208,16 @@ class Dashboard:
         self.speed_lock = threading.Lock()
         self.fast_speed = 1.0
         self.recording = False
-        self.bboxes = [
-            (68 + 1, 416 - 1, 84 + 2, 450),   # flop1
-            (123 + 1, 416 - 1, 139 + 4, 450), # flop2
-            (179, 416 - 1, 195 + 3, 450), # flop3
-            (234, 416 - 1, 250 + 3, 450), # turn4
-            (289 + 1, 416 - 1, 305 + 4, 450)  # river5
-        ]
-        self.bboxes_hole = [
-            (25 + 2, 668, 48 - 2, 695 - 2, -5.0),  # hole_A
-            (64, 666, 64 + 19, 666 + 25, 5.0)  # hole_B
-        ]
+        
+        # Initialize later in run() based on game_mode
+        self.layout = None
+        self.bboxes = []
+        self.bboxes_hole = []
+        
         self.auto_save = False
         self.round_active = False
-        self.saved_this_round = {i: False for i in range(len(self.bboxes))}
-        self.saved_hole_this_round = {i: False for i in range(len(self.bboxes_hole))}
+        self.saved_this_round = {}
+        self.saved_hole_this_round = {}
         # Suffixes for each bbox: f1, f2, f3, t, r
         self.bbox_suffixes = ['f1', 'f2', 'f3', 't', 'r']
         # Suffixes for hole cards
@@ -261,6 +257,30 @@ class Dashboard:
         x, y = pos
         rx, ry, rw, rh = rect
         return rx <= x <= rx + rw and ry <= y <= ry + rh
+
+    def set_game_mode(self, game_mode):
+        """Set the game mode and update bounding boxes"""
+        self.layout = CardLayout(game_mode)
+        self.bboxes = self.layout.get_board_bboxes()
+        self.bboxes_hole = self.layout.get_hole_bboxes()
+        self.saved_this_round = {i: False for i in range(len(self.bboxes))}
+        self.saved_hole_this_round = {i: False for i in range(len(self.bboxes_hole))}
+        
+        # Re-initialize auto save counter
+        auto_capture_dir = 'recordings/screenshots/auto_capture'
+        os.makedirs(auto_capture_dir, exist_ok=True)
+        files = os.listdir(auto_capture_dir)
+        png_files = [f for f in files if f.endswith('.png')]
+        numbers = []
+        for f in png_files:
+            parts = f.split('_')
+            if parts and parts[0].isdigit():
+                try:
+                    num = int(parts[0])
+                    numbers.append(num)
+                except ValueError:
+                    pass
+        self.auto_save_counter = max(numbers) if numbers else 0
 
     def is_card_color_present(self, pixel):
         """Check if pixel matches card background colors (more lenient)"""
@@ -564,7 +584,10 @@ class Dashboard:
             except:
                 pass
 
-    def run(self, card_assignments_func, advice_func, image_path_func=None, prev_func=None, next_func=None, dir_mode=False, video_mode=False, frame_func=None, recording_toggle_func=None, replay_mode=False, video_path=None, frame_processor=None):
+    def run(self, card_assignments_func, advice_func, image_path_func=None, prev_func=None, next_func=None, dir_mode=False, video_mode=False, frame_func=None, recording_toggle_func=None, replay_mode=False, video_path=None, frame_processor=None, game_mode="rush_n_cash"):
+        # Set up game mode and bounding boxes
+        self.set_game_mode(game_mode)
+        
         self.card_assignments_func = card_assignments_func
         self.advice_func = advice_func
         self.image_path_func = image_path_func
@@ -600,6 +623,11 @@ class Dashboard:
         toggle_auto_save_cmd = ToggleAutoSaveCommand(self)
         crop_cmd = CropBBoxesCommand(self)
         screenshot_cmd = ScreenshotCommand(self, self.image_path_func)
+
+        running = True
+        self.fps = 30
+        if self.replay_mode:
+            self.fps = 30  # Use 30 FPS for replay
 
         running = True
         self.fps = 30
