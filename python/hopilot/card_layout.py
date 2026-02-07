@@ -1,39 +1,13 @@
 class CardLayout:
     def __init__(self):
-        # Fixed coordinates for card slots (x, y) - placeholders, calibrate in real use
+        # Fixed bounding boxes for card slots (x1, y1, x2, y2, angle) - calibrated to dashboard bboxes
         self.slots = {
-            'hero_hole_1': (500, 350),
-            'hero_hole_2': (525, 350),
-            'flop_1': (532, 350),
-            'flop_2': (576, 350),
-            'flop_3': (621, 350),
-            'turn': (665, 350),
-            'river': (710, 350)
+            'hero_hole_1': (27, 668, 46, 693, -5.0),  # hole_A
+            'hero_hole_2': (64, 666, 83, 691, 5.0),   # hole_B
+            'flop_1': (69, 415, 86, 449, 0.0),        # flop1
+            'flop_2': (124, 415, 143, 450, 0.0),      # flop2
+            'flop_3': (179, 415, 198, 450, 0.0),      # flop3
+            'turn': (234, 415, 253, 450, 0.0),        # turn
+            'river': (290, 415, 309, 450, 0.0)        # river
         }
         self.tolerance = 20  # pixels tolerance for assignment
-
-    def assign_cards(self, detected_cards):
-        """
-        Assign detected cards to slots based on position.
-        detected_cards: list of (name, conf, xyxy) tuples, sorted left to right.
-        Returns dict of slot -> (name, conf) or None if empty.
-        """
-        assignments = {slot: None for slot in self.slots}
-        slot_order = ['hero_hole_1', 'hero_hole_2', 'flop_1', 'flop_2', 'flop_3', 'turn', 'river']
-
-        for i, (name, conf, xyxy) in enumerate(detected_cards[:len(slot_order)]):
-            slot = slot_order[i]
-            assignments[slot] = (name, conf, xyxy)
-
-        return assignments
-
-    def update_slots_from_detections(self, detections_over_time):
-        """
-        Optional: Update slot coordinates by averaging positions over multiple frames.
-        detections_over_time: list of lists of (x, y) for each slot.
-        """
-        for slot in self.slots:
-            if detections_over_time[slot]:
-                avg_x = sum(x for x, y in detections_over_time[slot]) / len(detections_over_time[slot])
-                avg_y = sum(y for x, y in detections_over_time[slot]) / len(detections_over_time[slot])
-                self.slots[slot] = (avg_x, avg_y)

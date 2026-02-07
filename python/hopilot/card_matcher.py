@@ -229,7 +229,7 @@ class CardMatcher:
             rank_1bit.astype(np.float32), self.rank_templates
         )
 
-        if rank_top and rank_top[0][1] >= 0.6:  # Using correlation score threshold
+        if rank_top and rank_top[0][1] >= 0.5:  # More reasonable threshold
             rank_match, rank_score, confidence = rank_top[0]
             return {"rank": rank_match, "score": rank_score, "confidence": confidence}
         else:

@@ -465,11 +465,13 @@ class Dashboard:
         hole1 = assignments.get('hero_hole_1')
         hole2 = assignments.get('hero_hole_2')
         if hole1:
-            self.draw_text(f"{hole1[0]} (conf: {hole1[1]:.2f})", 50, 110)
+            name, conf = hole1[0], hole1[1]
+            self.draw_text(f"{name} (conf: {conf:.2f})", 50, 110)
         else:
             self.draw_text("Not detected", 50, 110)
         if hole2:
-            self.draw_text(f"{hole2[0]} (conf: {hole2[1]:.2f})", 50, 140)
+            name, conf = hole2[0], hole2[1]
+            self.draw_text(f"{name} (conf: {conf:.2f})", 50, 140)
         else:
             self.draw_text("Not detected", 50, 140)
 
@@ -480,7 +482,8 @@ class Dashboard:
         for slot in board_slots:
             card = assignments.get(slot)
             if card:
-                self.draw_text(f"{slot}: {card[0]} (conf: {card[1]:.2f})", 50, y)
+                name, conf = card[0], card[1]
+                self.draw_text(f"{slot}: {name} (conf: {conf:.2f})", 50, y)
             else:
                 self.draw_text(f"{slot}: Not detected", 50, y)
             y += 30
@@ -637,6 +640,9 @@ class Dashboard:
                     if ret:
                         self.current_frame = frame
                         self.check_auto_save(frame)
+                        # Process frame for card detection if processor provided
+                        if self.frame_processor:
+                            self.frame_processor(frame)
                         frame_copy = frame.copy()
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
@@ -661,6 +667,9 @@ class Dashboard:
                 else:
                     # When paused, still display the last frame
                     if hasattr(self, 'current_frame') and self.current_frame is not None:
+                        # Process frame for card detection if processor provided (even when paused)
+                        if self.frame_processor and self.replay_mode:
+                            self.frame_processor(self.current_frame)
                         frame_copy = self.current_frame.copy()
                         # Draw fixed bounding boxes
                         for x1, y1, x2, y2 in self.bboxes:
@@ -673,7 +682,7 @@ class Dashboard:
                             box = cv2.boxPoints(rect)
                             box = box.astype(np.int32)
                             cv2.drawContours(frame_copy, [box], 0, (255, 255, 0), 2)
-                        assignments = {}
+                        assignments = self.card_assignments_func()
                         advice = "Replaying video (Paused)"
                         image_path = self.video_path
                         self.display_cards(assignments, advice, image_path)

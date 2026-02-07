@@ -2,187 +2,50 @@ import os
 import cv2
 import numpy as np
 from card_layout import CardLayout
+from card_matcher import CardMatcher
 
 class CardDetector:
-    def __init__(self, templates_dir='../../templates'):
+    def __init__(self, templates_dir='templates'):
         self.layout = CardLayout()
         self.templates_dir = templates_dir
-        self.suite_templates = {}
-        self.rank_templates = {}
-        self._load_templates()
-
-    def _load_templates(self):
-        """Load suite and rank templates for template matching"""
-        # Load suite templates
-        suites_dir = os.path.join(self.templates_dir, 'suites')
-        if os.path.exists(suites_dir):
-            red_suites = ['hearts', 'diamonds']
-            black_suites = ['spades', 'clubs_orig']
-            red_templates = {}
-            black_templates = {}
-            for file in os.listdir(suites_dir):
-                if file.endswith(('.png', '.jpg', '.jpeg')):
-                    template_path = os.path.join(suites_dir, file)
-                    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-                    if template is not None:
-                        name = os.path.splitext(file)[0]
-                        if name in red_suites:
-                            red_templates[name] = template
-                        elif name in black_suites:
-                            # Map clubs_orig to clubs
-                            suite_name = 'clubs' if name == 'clubs_orig' else name
-                            black_templates[suite_name] = template
-            self.suite_templates = {'red': red_templates, 'black': black_templates}
-            print(f"Loaded suite templates - Red: {list(red_templates.keys())}, Black: {list(black_templates.keys())}")
-
-        # Load rank templates
-        ranks_dir = os.path.join(self.templates_dir, 'ranks')
-        if os.path.exists(ranks_dir):
-            normal_templates = {}
-            edge_templates = {}
-            contour_templates = {}
-            for file in os.listdir(ranks_dir):
-                if file.endswith(('.png', '.jpg', '.jpeg')):
-                    template_path = os.path.join(ranks_dir, file)
-                    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-                    if template is not None:
-                        name = os.path.splitext(file)[0]
-                        # Store normal
-                        normal_templates[name] = template
-                        # Apply Canny edge detection
-                        edges = cv2.Canny(template, 100, 200)
-                        edge_templates[name] = edges
-                        # Find contours
-                        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        if contours:
-                            # Take the largest contour
-                            main_contour = max(contours, key=cv2.contourArea)
-                            contour_templates[name] = main_contour
-            self.rank_templates = {
-                'normal': normal_templates,
-                'edges': edge_templates,
-                'contours': contour_templates
-            }
-            print(f"Loaded rank templates: {len(normal_templates)} normal, {len(edge_templates)} edges, {len(contour_templates)} contours")
-
-    def match_template(self, image, template, method=cv2.TM_CCOEFF_NORMED):
-        """Template matching helper"""
-        res = cv2.matchTemplate(image, template, method)
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        return max_val, max_loc
-
-    def match_shapes(self, contour1, contour2):
-        """Shape matching helper"""
-        return cv2.matchShapes(contour1, contour2, cv2.CONTOURS_MATCH_I1, 0)
-
-    def get_top_matches(self, gray_image, templates, n=3):
-        """Get top template matches"""
-        matches = []
-        for name, template in templates.items():
-            if template.shape[0] > gray_image.shape[0] or template.shape[1] > gray_image.shape[1]:
-                continue  # Skip if template is larger than image
-            score, loc = self.match_template(gray_image, template)
-            matches.append((name, score))
-        matches.sort(key=lambda x: x[1], reverse=True)
-        return matches[:n]
-
-    def is_red_color(self, bgr_value):
-        """Check if color is red"""
-        b, g, r = bgr_value
-        return r > 50 and r > g and r > b
+        self.card_matcher = CardMatcher()
+        print(f"CardDetector initialized with CardMatcher. Rank templates loaded: {len(self.card_matcher.rank_templates)}")
 
     def classify_card(self, card_image):
-        """Classify a single card image using template matching"""
+        """Classify a single card image using CardMatcher"""
         if isinstance(card_image, str):
             card_image = cv2.imread(card_image)
             if card_image is None:
                 return None
 
         if card_image.size == 0:
+            print("  Card image is empty")
             return None
 
         # Ensure we have 3 channels
         if len(card_image.shape) == 2:
             card_image = cv2.cvtColor(card_image, cv2.COLOR_GRAY2BGR)
 
-        # Crop rank: y=0 to 18, full width
-        rank_crop = card_image[0:18, :]
+        print(f"  Classifying card image of shape {card_image.shape}")
 
-        # Crop suite: y=20 to bottom, full width
-        suite_crop = card_image[20:, :]
+        # Use CardMatcher methods
+        from card_matcher import classify_suite
+        
+        # Classify suite
+        suite_name, rank_crop = classify_suite(card_image)
+        
+        # Match rank
+        rank_result = self.card_matcher._match_rank(rank_crop)
 
-        # Determine if red or black
-        h, w = suite_crop.shape[:2]
-        center_y, center_x = h // 2, w // 2
-        is_red = False
-        if h >= 5 and w >= 5:
-            y1 = max(0, center_y - 2)
-            y2 = min(h, center_y + 3)
-            x1 = max(0, center_x - 2)
-            x2 = min(w, center_x + 3)
-            patch = suite_crop[y1:y2, x1:x2]
-            red_votes = 0
-            total_pixels = (y2 - y1) * (x2 - x1)
-            for i in range(y2 - y1):
-                for j in range(x2 - x1):
-                    pixel_bgr = patch[i, j]
-                    if self.is_red_color(pixel_bgr):
-                        red_votes += 1
-            is_red = red_votes > total_pixels // 2
-
-        # Convert suite to grayscale
-        if len(suite_crop.shape) == 3:
-            suite_gray = cv2.cvtColor(suite_crop, cv2.COLOR_BGR2GRAY)
-        else:
-            suite_gray = suite_crop
-
-        # Match suite
-        suite_templates = self.suite_templates['red'] if is_red else self.suite_templates['black']
-        suite_top = self.get_top_matches(suite_gray, suite_templates)
-        suite_name = None
-        if suite_top and suite_top[0][1] >= 0.8:
-            suite_name = suite_top[0][0]
-
-        # Convert rank_crop to gray
-        if len(rank_crop.shape) == 3:
-            rank_gray = cv2.cvtColor(rank_crop, cv2.COLOR_BGR2GRAY)
-        else:
-            rank_gray = rank_crop
-
-        # Match rank with fallbacks
-        rank_name = None
-        rank_top = self.get_top_matches(rank_gray, self.rank_templates['normal'])
-        if rank_top and rank_top[0][1] >= 0.6:
-            rank_name = rank_top[0][0]
-        else:
-            # Try with edges
-            rank_edges_img = cv2.Canny(rank_gray, 100, 200)
-            rank_top_edges = self.get_top_matches(rank_edges_img, self.rank_templates['edges'])
-            if rank_top_edges and rank_top_edges[0][1] >= 0.6:
-                rank_name = rank_top_edges[0][0]
-            else:
-                # Try with contours
-                contours, _ = cv2.findContours(rank_edges_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if contours:
-                    main_contour = max(contours, key=cv2.contourArea)
-                    best_match = None
-                    best_score = float('inf')
-                    for name, template_contour in self.rank_templates['contours'].items():
-                        score = self.match_shapes(main_contour, template_contour)
-                        if score < best_score:
-                            best_score = score
-                            best_match = name
-                    if best_score < 0.5:
-                        rank_name = best_match
-
-        if suite_name and rank_name:
-            return f"{rank_name}{suite_name[0]}"  # e.g., "As", "Qh"
+        if suite_name and suite_name != "unknown" and rank_result["rank"]:
+            card_name = f"{rank_result['rank']}{suite_name[0]}"  # e.g., "As", "Qh"
+            return card_name
         return None
 
     def detect_cards(self, image, conf=0.1):
         """
         Detect cards in an image (path or numpy array).
-        Returns dict of slot -> (name, conf) or None
+        Returns dict of slot -> (name, conf, xyxy) or None
         """
         if isinstance(image, str):
             image = cv2.imread(image)
@@ -190,34 +53,87 @@ class CardDetector:
                 print("ERROR: Failed to load image")
                 return {}
 
-        detected_cards = []
-        card_size = (17, 34)  # width, height based on template_matcher
+        assignments = {slot: None for slot in self.layout.slots}
 
-        for slot, (x, y) in self.layout.slots.items():
-            # Check bounds first
-            x1 = max(0, x - card_size[0] // 2)
-            y1 = max(0, y - card_size[1] // 2)
-            x2 = min(image.shape[1], x1 + card_size[0])
-            y2 = min(image.shape[0], y1 + card_size[1])
+        print(f"Detecting cards in image of shape {image.shape}")
 
-            if x2 - x1 < 5 or y2 - y1 < 10:  # Too small
+        for slot, bbox in self.layout.slots.items():
+            if len(bbox) == 5:
+                x1, y1, x2, y2, angle = bbox
+            else:
+                x1, y1, x2, y2 = bbox
+                angle = 0.0
+            
+            if 'hole' in slot:
+                print(f"Checking slot {slot} at bbox ({x1},{y1},{x2},{y2}) angle {angle}")
+            
+            # Check bounds
+            if x1 >= image.shape[1] or y1 >= image.shape[0] or x2 <= x1 or y2 <= y1:
                 continue
 
-            if x1 >= image.shape[1] or y1 >= image.shape[0]:  # Outside bounds
-                continue
+            if angle == 0.0:
+                # Normal crop
+                card_crop = image[y1:y2, x1:x2]
+            else:
+                # Rotated crop, similar to CropBBoxesCommand
+                center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                size = (x2 - x1, y2 - y1)
+                rect = (center, size, angle)
+                box = cv2.boxPoints(rect)
+                x1_bb = int(min(box[:, 0]))
+                y1_bb = int(min(box[:, 1]))
+                x2_bb = int(max(box[:, 0]))
+                y2_bb = int(max(box[:, 1]))
+                sub = image[y1_bb:y2_bb, x1_bb:x2_bb]
+                if sub.size == 0:
+                    continue
+                rel_center = (center[0] - x1_bb, center[1] - y1_bb)
+                M = cv2.getRotationMatrix2D(rel_center, angle, 1.0)
+                rotated_sub = cv2.warpAffine(sub, M, (x2_bb - x1_bb, y2_bb - y1_bb))
+                card_crop = rotated_sub[int(rel_center[1] - size[1]/2):int(rel_center[1] + size[1]/2), 
+                                       int(rel_center[0] - size[0]/2):int(rel_center[0] + size[0]/2)]
+                if card_crop.size == 0:
+                    continue
 
-            card_crop = image[y1:y2, x1:x2]
+            # Basic validation: check if crop has card-like properties
+            # Skip validation for hole cards as they may be rotated
+            if 'hole' not in slot and not self.is_card_like(card_crop):
+                continue
 
             card_name = self.classify_card(card_crop)
+            
+            if 'hole' in slot:
+                print(f"  {slot} classified as: {card_name}")
 
             if card_name:
-                # Create bounding box for compatibility
+                # Use the bbox for xyxy
                 xyxy = [x1, y1, x2, y2]
-                detected_cards.append((card_name, 0.9, xyxy))  # High confidence for template matches
+                assignments[slot] = (card_name, 0.9, xyxy)  # High confidence for template matches
 
-        # Assign to slots
-        assignments = self.layout.assign_cards(detected_cards)
+        print(f"Detected {sum(1 for v in assignments.values() if v is not None)} cards")
+        
         return assignments
+
+    def is_card_like(self, image):
+        """Check if an image region looks like it contains a card"""
+        if image.size == 0:
+            return False
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        # Check contrast (standard deviation)
+        contrast = np.std(gray)
+        if contrast < 30:  # Too low contrast
+            return False
+            
+        # Check for edges (cards should have structure)
+        edges = cv2.Canny(gray, 100, 200)
+        edge_ratio = np.sum(edges > 0) / image.size
+        if edge_ratio < 0.01:  # Too few edges
+            return False
+            
+        return True
 
     def calibrate_positions(self, image_path, manual_coords=None):
         """
