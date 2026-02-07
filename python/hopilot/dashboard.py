@@ -6,7 +6,7 @@ import shutil
 import cv2
 import numpy as np
 import time
-from card_layout import CardLayout
+from .card_layout import CardLayout
 
 class Command:
     def execute(self):
@@ -281,6 +281,14 @@ class Dashboard:
                 except ValueError:
                     pass
         self.auto_save_counter = max(numbers) if numbers else 0
+
+    def set_game_mode(self, game_mode):
+        """Set up the game mode and initialize bounding boxes"""
+        from .card_layout import CardLayout
+        self.layout = CardLayout(game_mode)
+        # Convert coordinates to integers for OpenCV
+        self.bboxes = [[int(coord) for coord in bbox] for bbox in self.layout.get_board_bboxes()]
+        self.bboxes_hole = [[int(coord) for coord in bbox] for bbox in self.layout.get_hole_bboxes()]
 
     def is_card_color_present(self, pixel):
         """Check if pixel matches card background colors (more lenient)"""

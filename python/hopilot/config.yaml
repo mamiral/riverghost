@@ -1,0 +1,23 @@
+game_modes:
+  rush_n_cash:
+    slots:
+      hero_hole_1: [27, 668, 46, 693, -5.0]
+      hero_hole_2: [64, 666, 83, 691, 5.0]
+      flop_1: [69, 415, 86, 449, 0.0]
+      flop_2: [124, 415, 143, 450, 0.0]
+      flop_3: [179, 415, 198, 450, 0.0]
+      turn: [234, 415, 253, 450, 0.0]
+      river: [290, 415, 309, 450, 0.0]
+
+detection:
+  confidence_threshold: 0.1
+  template_dir: "templates"
+  max_image_dimension: 1000
+
+capture:
+  fps: 30
+  region_buffer: 20
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

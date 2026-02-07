@@ -1,27 +1,23 @@
-class CardLayout:
-    def __init__(self, game_mode="rush_n_cash"):
-        # Game mode configurations with bounding boxes (x1, y1, x2, y2, angle)
-        self.game_modes = {
-            "rush_n_cash": {
-                'hero_hole_1': (27, 668, 46, 693, -5.0),  # hole_A
-                'hero_hole_2': (64, 666, 83, 691, 5.0),   # hole_B
-                'flop_1': (69, 415, 86, 449, 0.0),        # flop1
-                'flop_2': (124, 415, 143, 450, 0.0),      # flop2
-                'flop_3': (179, 415, 198, 450, 0.0),      # flop3
-                'turn': (234, 415, 253, 450, 0.0),        # turn
-                'river': (290, 415, 309, 450, 0.0)        # river
-            }
-        }
-        
-        self.set_game_mode(game_mode)
-        self.tolerance = 20  # pixels tolerance for assignment
+from .config import AppConfig, load_config
+from typing import Dict, List, Optional
 
-    def set_game_mode(self, game_mode):
-        """Set the current game mode"""
-        if game_mode not in self.game_modes:
-            raise ValueError(f"Unknown game mode: {game_mode}")
+
+class CardLayout:
+    def __init__(self, game_mode: str = "rush_n_cash", config: Optional[AppConfig] = None):
+        if config is None:
+            try:
+                config = load_config()
+            except FileNotFoundError:
+                from config import DEFAULT_CONFIG
+                config = DEFAULT_CONFIG
+
+        if game_mode not in config.game_modes:
+            available_modes = list(config.game_modes.keys())
+            raise ValueError(f"Unknown game mode: {game_mode}. Available modes: {available_modes}")
+
         self.game_mode = game_mode
-        self.slots = self.game_modes[game_mode]
+        self.slots = config.game_modes[game_mode].slots.copy()
+        self.tolerance = 20  # pixels tolerance for assignment
 
     def get_board_bboxes(self):
         """Get list of board card bounding boxes (x1,y1,x2,y2)"""

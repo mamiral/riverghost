@@ -6,9 +6,14 @@ import numpy as np
 import dxcam
 import pygetwindow as gw
 import os
-from card_detector import CardDetector
-from poker_analyzer import PokerAnalyzer
-from dashboard import Dashboard
+import sys
+
+# Add the parent directory to the path to import hopilot modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from hopilot.card_detector import CardDetector
+from hopilot.poker_analyzer import PokerAnalyzer
+from hopilot.dashboard import Dashboard
 
 def list_visible_windows():
     """Print all visible window titles to help find the correct one"""

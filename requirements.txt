@@ -1,0 +1,23 @@
+# HoPilot Requirements
+# Core dependencies
+opencv-python==4.8.0
+numpy==1.24.0
+pygame==2.5.0
+streamlit==1.25.0
+treys==0.1.8
+Pillow==10.0.0
+pygetwindow==0.0.9
+pathlib2==2.3.7
+
+# Windows-specific dependencies
+dxcam==0.0.4; sys_platform == "win32"
+pywin32==306; sys_platform == "win32"
+
+# Development dependencies
+pytest==7.4.0
+pytest-mock==3.11.1
+pydantic==2.5.0
+pyyaml==6.0
+black==23.7.0
+flake8==6.0.0
+mypy==1.5.1
