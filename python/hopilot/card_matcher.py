@@ -3,6 +3,7 @@ Card recognition and matching functionality for poker cards.
 Provides color-based suite detection and template-based rank matching.
 """
 
+import logging
 import os
 from pathlib import Path
 
@@ -12,13 +13,14 @@ import numpy as np
 
 def load_rank_templates(templates_dir):
     """Load rank templates and normalize to 0-1 range like test_template_matching.py"""
+    logger = logging.getLogger(__name__)
     templates = {}
     for file in os.listdir(templates_dir):
         if file.endswith((".png", ".jpg", ".jpeg")):
             template_path = os.path.join(templates_dir, file)
             template = cv2.imread(template_path)
             if template is None:
-                print(f"Error: Failed to load template {template_path}")
+                logger.error(f"Failed to load template {template_path}")
                 continue
 
             # Convert to grayscale if needed
@@ -32,7 +34,7 @@ def load_rank_templates(templates_dir):
 
             name = os.path.splitext(file)[0]
             templates[name] = template_norm
-            print(
+            logger.debug(
                 f"Loaded rank template: {name} {template.shape} -> {template_norm.shape}"
             )
 

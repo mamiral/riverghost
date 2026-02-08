@@ -21,7 +21,7 @@ class TogglePauseCommand(Command):
     def execute(self):
         with self.dashboard.speed_lock:
             self.dashboard.paused = not self.dashboard.paused
-            print(f"Pause toggled: {'Paused' if self.dashboard.paused else 'Playing'}")
+            self.dashboard.logger.info(f"Pause toggled: {'Paused' if self.dashboard.paused else 'Playing'}")
 
 
 class SpeedUpCommand(Command):
@@ -56,7 +56,7 @@ class ToggleSlowCommand(Command):
                     self.dashboard.speed = self.dashboard.fast_speed
                 else:
                     self.dashboard.speed = 1.0
-                print(f"Replay speed toggled to {self.dashboard.speed:.1f}x")
+                self.dashboard.logger.info(f"Replay speed toggled to {self.dashboard.speed:.1f}x")
             else:
                 # In live, toggle slow_down
                 self.dashboard.slow_down = not self.dashboard.slow_down
@@ -89,7 +89,7 @@ class ToggleAutoSaveCommand(Command):
                 self.dashboard.saved_hole_this_round = {
                     i: False for i in range(len(self.dashboard.bboxes_hole))
                 }
-            print(f"Auto save toggled: {'ON' if self.dashboard.auto_save else 'OFF'}")
+            self.dashboard.logger.info(f"Auto save toggled: {'ON' if self.dashboard.auto_save else 'OFF'}")
 
 
 class CropBBoxesCommand(Command):
@@ -123,7 +123,7 @@ class CropBBoxesCommand(Command):
             for i, crop in enumerate(crops, start=next_num):
                 path = f"recordings/screenshots/bbox{i}.png"
                 cv2.imwrite(path, crop)
-                print(f"Saved {path}")
+                self.dashboard.logger.info(f"Saved {path}")
                 next_num += 1
             # Crop hole boxes using bboxes_hole
             hole_crops = []
@@ -158,7 +158,7 @@ class CropBBoxesCommand(Command):
                 # Save original bounding box crop for debugging
                 orig_path = f"recordings/screenshots/hole_{hole_prefix}_{next_hole_num}_orig.png"
                 cv2.imwrite(orig_path, sub)
-                print(f"Saved {orig_path}")
+                self.dashboard.logger.info(f"Saved {orig_path}")
                 rel_center = (center[0] - x1_bb, center[1] - y1_bb)
                 M = cv2.getRotationMatrix2D(rel_center, angle, 1.0)
                 rotated_sub = cv2.warpAffine(sub, M, (x2_bb - x1_bb, y2_bb - y1_bb))
@@ -170,7 +170,7 @@ class CropBBoxesCommand(Command):
                 # Save the cropped hole
                 path = f"recordings/screenshots/hole_{hole_prefix}_{next_hole_num}.png"
                 cv2.imwrite(path, crop)
-                print(f"Saved {path}")
+                self.dashboard.logger.info(f"Saved {path}")
 
 
 class ScreenshotCommand(Command):
@@ -196,7 +196,7 @@ class ScreenshotCommand(Command):
                 next_num = max(numbers) + 1 if numbers else 1
                 screenshot_path = os.path.join(screenshots_dir, f"{next_num}.png")
                 cv2.imwrite(screenshot_path, frame)
-                print(f"Screenshot saved to {screenshot_path}")
+                self.dashboard.logger.info(f"Screenshot saved to {screenshot_path}")
         else:
             current_image_path = (
                 self.image_path_func() if self.image_path_func else None
@@ -216,7 +216,7 @@ class ScreenshotCommand(Command):
                 next_num = max(numbers) + 1 if numbers else 1
                 screenshot_path = os.path.join(screenshots_dir, f"{next_num}.png")
                 shutil.copy(current_image_path, screenshot_path)
-                print(f"Screenshot saved to {screenshot_path}")
+                self.dashboard.logger.info(f"Screenshot saved to {screenshot_path}")
 
 
 class Dashboard:
@@ -477,18 +477,18 @@ class Dashboard:
                 i: False for i in range(len(self.bboxes_hole))
             }
             self.round_start_time = time.time()
-            print("New round started (flop detected)")
+            self.logger.info("New round started (flop detected)")
         elif not flop_is_steady and self.round_active:
             # Round ended (flop no longer steady - likely new hand/shuffle)
             self.round_active = False
-            print("Round ended")
+            self.logger.info("Round ended")
 
         # Add timeout mechanism to prevent getting stuck (5 minutes)
         current_time = time.time()
         if self.round_active and hasattr(self, "round_start_time"):
             round_duration = current_time - self.round_start_time
             if round_duration > 300:  # 5 minutes timeout
-                print("Round timeout - resetting auto-save state")
+                self.logger.warning("Round timeout - resetting auto-save state")
                 self.round_active = False
                 self.saved_this_round = {i: False for i in range(len(self.bboxes))}
                 self.saved_hole_this_round = {
@@ -513,7 +513,7 @@ class Dashboard:
                     self.auto_save_counter += 1
                     path = f"recordings/screenshots/auto_capture/{self.auto_save_counter}_{suffix}.png"
                     cv2.imwrite(path, crop)
-                    print(f"Saved auto capture {path}")
+                    self.logger.info(f"Saved auto capture {path}")
                     self.saved_this_round[i] = True
 
             # Check each hole bbox for saving
@@ -553,7 +553,7 @@ class Dashboard:
                 self.auto_save_counter += 1
                 path = f"recordings/screenshots/auto_capture/{self.auto_save_counter}_{suffix}.png"
                 cv2.imwrite(path, crop)
-                print(f"Saved auto capture {path}")
+                self.logger.info(f"Saved auto capture {path}")
                 self.saved_hole_this_round[i] = True
 
     def draw_text(self, text, x, y, font=None, color=(255, 255, 255)):

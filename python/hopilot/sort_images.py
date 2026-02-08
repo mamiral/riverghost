@@ -1,16 +1,18 @@
 from pathlib import Path
 
 import cv2
+import logging
 
 
 def sort_captured_images():
+    logger = logging.getLogger(__name__)
     # Placeholder: Load template matching model instead of YOLO
     # model = YOLO('models/playing-cards.pt')
 
     # Source directory
     source_dir = Path("recordings/screenshots/auto_capture")
     if not source_dir.exists():
-        print(f"Source directory {source_dir} does not exist.")
+        logger.error(f"Source directory {source_dir} does not exist.")
         return
 
     # Destination directories
@@ -20,7 +22,7 @@ def sort_captured_images():
     # Get all png files
     image_files = list(source_dir.glob("*.png"))
     if not image_files:
-        print("No .png files found in auto_capture directory.")
+        logger.error("No .png files found in auto_capture directory.")
         return
 
     # Process all files to train
@@ -30,7 +32,7 @@ def sort_captured_images():
             # Read image
             img = cv2.imread(str(img_path))
             if img is None:
-                print(f"Failed to read {img_path}")
+                logger.error(f"Failed to read {img_path}")
                 continue
 
             # Placeholder: Predict with template matching instead of YOLO
@@ -74,11 +76,11 @@ def sort_captured_images():
             # Save as PNG with preserved suffix
             dest_path = class_dir / f"{counters[class_name]:04d}{suffix}.png"
             cv2.imwrite(str(dest_path), img)
-            print(f"Saved {img_path} to {dest_path}")
+            logger.info(f"Saved {img_path} to {dest_path}")
 
     process_files(image_files, train_dir)
 
-    print("Sorting complete.")
+    logger.info("Sorting complete.")
 
 
 if __name__ == "__main__":

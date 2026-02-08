@@ -71,13 +71,13 @@ def list_visible_windows():
     """Print all visible window titles to help find the correct one"""
     logger = logging.getLogger(__name__)
     logger.info("Listing all visible windows")
-    print("Visible windows:")
+    logger.info("Visible windows:")
 
     def enum_handler(hwnd, results):
         if win32gui.IsWindowVisible(hwnd):
             title = win32gui.GetWindowText(hwnd)
             if title.strip():
-                print(f"  - {title} (HWND: {hwnd})")
+                logger.info(f"  - {title} (HWND: {hwnd})")
 
     win32gui.EnumWindows(enum_handler, None)
     logger.info("Window listing completed")
@@ -102,7 +102,6 @@ def get_window_coords(window_title):
         if hwnd:
             rect = win32gui.GetWindowRect(hwnd)
             logger.info(f"Found exact match: '{window_title}' at {rect}")
-            print(f"Found exact match: '{window_title}'")
             return rect  # (left, top, right, bottom)
 
         # Fallback: partial match with pygetwindow
@@ -115,12 +114,10 @@ def get_window_coords(window_title):
             bottom = top + height
             rect = (left, top, right, bottom)
             logger.info(f"Found partial match: '{win.title}' at {rect}")
-            print(f"Found partial match: '{win.title}'")
             return rect
 
         logger.error(f"No window found matching '{window_title}'")
-        print(f"No window found matching '{window_title}'")
-        print("Tip: Run list_visible_windows() to see titles.")
+        logger.info("Tip: Run list_visible_windows() to see titles.")
         return None
 
     except Exception as e:
@@ -143,13 +140,11 @@ def capture_with_dxcam(region):
         camera = dxcam.create(output_idx=0, output_color="BGR")
         if camera is None:
             logger.error("DXcam failed to initialize. Check GPU/drivers.")
-            print("DXcam failed to initialize. Check GPU/drivers.")
             return None
 
         frame = camera.grab(region=region)
         if frame is None:
             logger.warning("DXcam capture returned None frame")
-            print("Capture returned None.")
             return None
 
         logger.debug(f"Successfully captured frame of shape: {frame.shape}")
@@ -251,7 +246,7 @@ class HoPilot:
 
         try:
             advice = self.analyzer.get_advice(hole_cards, board_cards, self.phase)
-            logger.info(f"Generated advice: {advice}")
+            logger.debug(f"Generated advice: {advice}")
             return advice
         except Exception as e:
             logger.error(f"Error getting advice: {e}")
@@ -332,7 +327,6 @@ class HoPilot:
                     frame = capture_with_dxcam(self.region)
                     if frame is None:
                         logger.warning("Capture failed - retrying in 1s...")
-                        print("Capture failed - retrying in 1s...")
                         time.sleep(1)
                         continue
 

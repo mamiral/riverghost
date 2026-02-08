@@ -163,5 +163,5 @@ class PokerAnalyzer:
         else:
             advice = "Insufficient information for advice."
 
-        self.logger.info(f"Generated advice: {advice}")
+        self.logger.debug(f"Generated advice: {advice}")
         return advice

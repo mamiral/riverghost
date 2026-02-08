@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -7,6 +8,7 @@ from card_matcher import CardMatcher
 
 
 def main():
+    logger = logging.getLogger(__name__)
     parser = argparse.ArgumentParser(
         description="Match card images using color-based suite detection and 1-bit template matching for ranks."
     )
@@ -21,12 +23,12 @@ def main():
     # Initialize card matcher
     card_matcher = CardMatcher()
     if not card_matcher.rank_templates:
-        print("No rank templates found.")
+        logger.error("No rank templates found.")
         return
 
     image_dir = Path(args.directory)
     if not image_dir.exists():
-        print(f"Image directory '{args.directory}' does not exist.")
+        logger.error(f"Image directory '{args.directory}' does not exist.")
         return
 
     image_files = (
@@ -35,20 +37,20 @@ def main():
         + list(image_dir.glob("*.jpeg"))
     )
     if not image_files:
-        print("No image files found in the specified directory.")
+        logger.error("No image files found in the specified directory.")
         return
 
     failed_matches = []
     unmatched = []
     unmatched_ranks = []
     for img_path in image_files:
-        print(f"Processing {img_path.name}:")
+        logger.info(f"Processing {img_path.name}:")
 
         # Use CardMatcher to recognize the card
         result = card_matcher.recognize_card(img_path)
 
         if result["error"]:
-            print(f"{img_path.name}: {result['error']}")
+            logger.error(f"{img_path.name}: {result['error']}")
             continue
 
         suite_name = result["suite"]
@@ -70,7 +72,7 @@ def main():
             rank_result = "no matches"
             unmatched_ranks.append(img_path.name)
 
-        print(f"{img_path.name}: Suite {suite_result}, Rank {rank_result}")
+        logger.info(f"{img_path.name}: Suite {suite_result}, Rank {rank_result}")
 
         # Check if failed match
         is_failed = not result["success"]
@@ -86,13 +88,13 @@ def main():
 
             os.makedirs(dest_dir, exist_ok=True)
             shutil.copy(str(img_path), dest_dir)
-            print(f"Copied {img_path.name} to {dest_dir}")
+            logger.info(f"Copied {img_path.name} to {dest_dir}")
 
     # Output failed matches report
     if failed_matches:
-        print(f"\nFailed matches ({len(failed_matches)}): {', '.join(failed_matches)}")
+        logger.warning(f"\nFailed matches ({len(failed_matches)}): {', '.join(failed_matches)}")
     else:
-        print("\nAll matches successful.")
+        logger.info("\nAll matches successful.")
 
     if unmatched or unmatched_ranks:
         summary = []
@@ -104,9 +106,9 @@ def main():
             summary.append(
                 f"{len(unmatched_ranks)} ranks not matched: {', '.join(unmatched_ranks)}"
             )
-        print(f"\nSummary: {'; '.join(summary)}")
+        logger.info(f"\nSummary: {'; '.join(summary)}")
     else:
-        print("\nSummary: All cards matched successfully.")
+        logger.info("\nSummary: All cards matched successfully.")
 
 
 if __name__ == "__main__":

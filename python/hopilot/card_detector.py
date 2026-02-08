@@ -184,7 +184,7 @@ class CardDetector:
                     card_name = self.classify_card(card_crop)
 
                     if "hole" in slot:
-                        logger.info(f"  {slot} classified as: {card_name}")
+                        logger.debug(f"  {slot} classified as: {card_name}")
 
                     if card_name:
                         # Use the bbox for xyxy
@@ -200,7 +200,7 @@ class CardDetector:
                     continue
 
             detected_count = sum(1 for v in assignments.values() if v is not None)
-            logger.info(f"Detected {detected_count} cards")
+            logger.debug(f"Detected {detected_count} cards")
 
             return assignments
 
@@ -377,11 +377,11 @@ if __name__ == "__main__":
 
             detector.calibrate_positions(args.image, manual_coords)
         else:
-            print("Usage:")
-            print(
+            logger.info("Usage:")
+            logger.info(
                 "  python card_detector.py --image path/to/screenshot.png [--coords hero_hole_1=100,200 ...]"
             )
-            print("  python card_detector.py --test-hopilot")
+            logger.info("  python card_detector.py --test-hopilot")
 
     except Exception as e:
         logger.error(f"Error in main: {e}")
