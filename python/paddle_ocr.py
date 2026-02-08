@@ -1,38 +1,46 @@
 from paddleocr import PaddleOCR
-from PIL import Image, ImageDraw
-import cv2  # For optional image loading if needed
+import os
 
-# Initialize PaddleOCR with PP-OCRv3 settings
-# - lang='en' for English-focused model (uses en_PP-OCRv3_det for detection)
-# - ocr_version='PP-OCRv3': Force v3 models (if not default in your version)
-ocr = PaddleOCR(lang='en',
-                ocr_version='PP-OCRv3')  # Specify v3 explicitly
+os.environ["FLAGS_enable_pir_api"] = "0"
+os.environ["FLAGS_use_mkldnn"] = "0"
 
-# Path to your image
-img_path = 'recordings/screenshots/1.jpeg'  # Replace with your image file
+# Initialize PaddleOCR with English language
+ocr = PaddleOCR(lang='en')
 
-# Run OCR
-result = ocr.ocr(img_path)
+# List of specific image files to process
+image_files = [
+    'recordings/screenshots/J3.png',
+    'recordings/screenshots/10.png'
+]
 
-# Print OCR results
-print("Detected text regions:")
-res = result[0]
-for i in range(len(res['rec_texts'])):
-    text = res['rec_texts'][i]
-    score = res['rec_scores'][i]
-    box = res['dt_polys'][i]
-    print(f"Box: {box.tolist()}, Text: {text}, Confidence: {score}")
+# Process each image
+for img_path in image_files:
+    print(f"\nProcessing: {img_path}")
+    print("=" * 50)
 
-# Optional: Visualize the bounding boxes
-image = Image.open(img_path).convert('RGB')
-draw = ImageDraw.Draw(image)
+    try:
+        # Run OCR
+        result = ocr.predict(img_path)
 
-res = result[0]
-for i in range(len(res['rec_texts'])):
-    box = res['dt_polys'][i]
-    # Convert to integers and draw polygon
-    points = [(int(p[0]), int(p[1])) for p in box]
-    draw.polygon(points, outline='red', width=3)
+        # Print detailed results
+        if result and 'rec_texts' in result[0] and result[0]['rec_texts']:
+            detections = list(zip(result[0]['rec_polys'], result[0]['rec_texts'], result[0]['rec_scores']))
+            print(f"Found {len(detections)} text detection(s):")
+            for i, (bbox, text, confidence) in enumerate(detections, 1):
+                print(f"\nDetection {i}:")
+                print(f"  Text: '{text}'")
+                print(f"  Confidence: {confidence:.4f}")
+                print(f"  Bounding Box: {bbox}")
+                # Calculate bounding box dimensions
+                x_coords = [point[0] for point in bbox]
+                y_coords = [point[1] for point in bbox]
+                width = max(x_coords) - min(x_coords)
+                height = max(y_coords) - min(y_coords)
+                print(f"  Dimensions: {width:.1f} x {height:.1f} pixels")
+        else:
+            print("No text detected.")
 
-image.save('detected_boxes_v3.jpg')
-print("Image with detected boxes saved as 'detected_boxes_v3.jpg'")
+    except Exception as e:
+        print(f"Error processing {img_path}: {str(e)}")
+
+print("\nOCR analysis completed.")
