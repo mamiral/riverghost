@@ -5,9 +5,39 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 
+import colorama
+from colorama import Fore, Back, Style
 import cv2
 import dxcam
 import pygetwindow as gw
+
+
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter that adds colors to log levels"""
+
+    COLORS = {
+        'DEBUG': Fore.CYAN,
+        'INFO': Fore.GREEN,
+        'WARNING': Fore.YELLOW,
+        'ERROR': Fore.RED,
+        'CRITICAL': Fore.RED + Back.WHITE + Style.BRIGHT,
+    }
+
+    def format(self, record):
+        # Save the original levelname
+        original_levelname = record.levelname
+
+        # Add color to levelname
+        if record.levelname in self.COLORS:
+            record.levelname = f"{self.COLORS[record.levelname]}{record.levelname}{Style.RESET_ALL}"
+
+        # Format the message
+        result = super().format(record)
+
+        # Restore original levelname for other handlers
+        record.levelname = original_levelname
+
+        return result
 import win32gui
 
 # Add the parent directory to the path to import hopilot modules
@@ -20,11 +50,14 @@ from hopilot.poker_analyzer import PokerAnalyzer
 
 def setup_logging(log_level=logging.INFO):
     """
-    Set up logging configuration with console and rotating file handlers.
+    Set up logging configuration with colored console and rotating file handlers.
 
     Args:
         log_level: Logging level (default: INFO)
     """
+    # Initialize colorama for Windows support
+    colorama.init()
+
     # Create logs directory if it doesn't exist
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -40,9 +73,9 @@ def setup_logging(log_level=logging.INFO):
     file_formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
     )
-    console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    console_formatter = ColoredFormatter("%(asctime)s - %(levelname)s - %(message)s")
 
-    # Console handler
+    # Console handler with colors
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(console_formatter)

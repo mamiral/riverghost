@@ -325,6 +325,10 @@ class CardDetector:
 
 if __name__ == "__main__":
     import argparse
+    import colorama
+
+    # Initialize colorama for colored output
+    colorama.init()
 
     try:
         parser = argparse.ArgumentParser(
