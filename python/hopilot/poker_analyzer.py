@@ -2,11 +2,13 @@ import logging
 
 from treys import Card, Evaluator
 
+from hopilot.logging_config import get_logger
+
 
 class PokerAnalyzer:
     def __init__(self):
         self.evaluator = Evaluator()
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.logger.info("PokerAnalyzer initialized")
 
     def card_name_to_treys(self, card_name):

@@ -10,10 +10,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from hopilot.logging_config import get_logger
+
 
 def load_rank_templates(templates_dir):
     """Load rank templates and normalize to 0-1 range like test_template_matching.py"""
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     templates = {}
     for file in os.listdir(templates_dir):
         if file.endswith((".png", ".jpg", ".jpeg")):

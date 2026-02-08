@@ -3,106 +3,31 @@ import os
 import sys
 import threading
 import time
-from logging.handlers import RotatingFileHandler
 
-import colorama
-from colorama import Fore, Back, Style
 import cv2
 import dxcam
 import pygetwindow as gw
 
-
-class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log levels"""
-
-    COLORS = {
-        'DEBUG': Fore.CYAN,
-        'INFO': Fore.GREEN,
-        'WARNING': Fore.YELLOW,
-        'ERROR': Fore.RED,
-        'CRITICAL': Fore.RED + Back.WHITE + Style.BRIGHT,
-    }
-
-    def format(self, record):
-        # Save the original levelname
-        original_levelname = record.levelname
-
-        # Add color to levelname
-        if record.levelname in self.COLORS:
-            record.levelname = f"{self.COLORS[record.levelname]}{record.levelname}{Style.RESET_ALL}"
-
-        # Format the message
-        result = super().format(record)
-
-        # Restore original levelname for other handlers
-        record.levelname = original_levelname
-
-        return result
-import win32gui
-
 # Add the parent directory to the path to import hopilot modules
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from hopilot.logging_config import get_logger
+import win32gui
 
 from hopilot.card_detector import CardDetector
 from hopilot.dashboard import Dashboard
 from hopilot.poker_analyzer import PokerAnalyzer
 
 
-def setup_logging(log_level=logging.INFO):
-    """
-    Set up logging configuration with colored console and rotating file handlers.
-
-    Args:
-        log_level: Logging level (default: INFO)
-    """
-    # Initialize colorama for Windows support
-    colorama.init()
-
-    # Create logs directory if it doesn't exist
-    log_dir = os.path.join(os.path.dirname(__file__), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    # Configure root logger
-    logger = logging.getLogger()
-    logger.setLevel(log_level)
-
-    # Clear any existing handlers
-    logger.handlers.clear()
-
-    # Create formatters
-    file_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
-    )
-    console_formatter = ColoredFormatter("%(asctime)s - %(levelname)s - %(message)s")
-
-    # Console handler with colors
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-
-    # Rotating file handler (128MB max size, keep 5 backup files)
-    log_file = os.path.join(log_dir, "hopilot.log")
-    file_handler = RotatingFileHandler(
-        log_file, maxBytes=128 * 1024 * 1024, backupCount=5  # 128MB
-    )
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(file_formatter)
-    logger.addHandler(file_handler)
-
-    # Log the setup
-    logger.info("Logging initialized")
-    logger.info(f"Log file: {log_file}")
-    logger.info(f"Log level: {logging.getLevelName(log_level)}")
-
-
-# Initialize logging
-setup_logging()
+# Logging is initialized automatically when logging_config is imported
 
 
 def list_visible_windows():
     """Print all visible window titles to help find the correct one"""
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     logger.info("Listing all visible windows")
     logger.info("Visible windows:")
 
@@ -122,7 +47,7 @@ def get_window_coords(window_title):
     Tries exact match first, then partial via pygetwindow.
     Returns (left, top, right, bottom) or None if not found.
     """
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     logger.info(f"Searching for window: '{window_title}'")
 
     if not window_title or not isinstance(window_title, str):
@@ -160,7 +85,7 @@ def get_window_coords(window_title):
 
 def capture_with_dxcam(region):
     """Capture using DXcam (fast, GPU-friendly)"""
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
 
     if region is None:
         logger.warning("Capture region is None")
@@ -197,7 +122,7 @@ def capture_with_dxcam(region):
 
 class HoPilot:
     def __init__(self, window_title):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         logger.info(f"Initializing HoPilot for window: '{window_title}'")
 
         try:
@@ -233,7 +158,7 @@ class HoPilot:
         """
         Determine game phase based on detected board cards.
         """
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         board_count = sum(
             1
             for slot in ["flop_1", "flop_2", "flop_3", "turn", "river"]
@@ -253,14 +178,14 @@ class HoPilot:
         return phase
 
     def get_current_assignments(self):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         with self.lock:
             assignments = self.current_assignments.copy()
             logger.debug(f"Retrieved current assignments: {len(assignments)} positions")
             return assignments
 
     def get_advice(self):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
 
         hole_cards = []
         if self.current_assignments.get("hero_hole_1"):
@@ -286,13 +211,13 @@ class HoPilot:
             return "Error generating advice"
 
     def get_current_image_path(self):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         path = getattr(self, "current_image_path", None)
         logger.debug(f"Retrieved current image path: {path}")
         return path
 
     def toggle_recording(self, start):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         if start:
             if self.video_writer is None:
                 os.makedirs("recordings", exist_ok=True)
@@ -324,7 +249,7 @@ class HoPilot:
                 logger.info("Stopped recording")
 
     def process_frame(self, image):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         logger.debug("Processing frame for card detection")
 
         try:
@@ -342,7 +267,7 @@ class HoPilot:
             logger.error(f"Error processing frame: {e}")
 
     def run_with_capture(self):
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
         logger.info("Starting HoPilot with live capture mode")
 
         def process_frames():

@@ -5,10 +5,11 @@ from typing import Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
-from .card_layout import CardLayout
-from .card_matcher import CardMatcher
+from hopilot.card_layout import CardLayout
+from hopilot.card_matcher import CardMatcher
+from hopilot.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CardDetectionError(Exception):
@@ -58,7 +59,7 @@ class CardDetector:
             logger.debug(f"Classifying card image of shape {image_array.shape}")
 
             # Use CardMatcher methods
-            from .card_matcher import classify_suite
+            from hopilot.card_matcher import classify_suite
 
             # Classify suite
             suite_name, rank_crop = classify_suite(image_array)
@@ -325,10 +326,6 @@ class CardDetector:
 
 if __name__ == "__main__":
     import argparse
-    import colorama
-
-    # Initialize colorama for colored output
-    colorama.init()
 
     try:
         parser = argparse.ArgumentParser(

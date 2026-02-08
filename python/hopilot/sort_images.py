@@ -3,9 +3,11 @@ from pathlib import Path
 import cv2
 import logging
 
+from hopilot.logging_config import get_logger
+
 
 def sort_captured_images():
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     # Placeholder: Load template matching model instead of YOLO
     # model = YOLO('models/playing-cards.pt')
 

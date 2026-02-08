@@ -4,15 +4,12 @@ import os
 import shutil
 from pathlib import Path
 
-import colorama
 from card_matcher import CardMatcher
+from hopilot.logging_config import get_logger
 
 
 def main():
-    # Initialize colorama for colored output
-    colorama.init()
-
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     parser = argparse.ArgumentParser(
         description="Match card images using color-based suite detection and 1-bit template matching for ranks."
     )

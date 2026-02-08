@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import pygame
 
+from hopilot.logging_config import get_logger
+
 
 class Command:
     def execute(self):
@@ -221,7 +223,7 @@ class ScreenshotCommand(Command):
 
 class Dashboard:
     def __init__(self, width=900, height=600):
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.logger.info(f"Initializing Dashboard with dimensions {width}x{height}")
 
         pygame.init()
