@@ -52,12 +52,8 @@ class PokerAnalyzer:
             card = self.card_name_to_treys(card_name)
             if card is None:
                 return card_name  # Fallback to original if invalid
-            # Convert back to string format: e.g., 'As', '10h'
-            rank_int = Card.get_rank_int(card)
-            suit_int = Card.get_suit_int(card)
-            rank_char = Card.STR_RANKS[rank_int]
-            suit_char = Card.STR_SUITS[suit_int].lower()
-            return f"{rank_char}{suit_char}"
+            # Convert back to string format: e.g., 'As', 'Th'
+            return Card.int_to_str(card)
 
         # Normalize and sort hero and board cards
         hero_normalized = [normalize_card(c) for c in hero_hole_cards]
@@ -384,15 +380,16 @@ class PokerAnalyzer:
             return "Unknown"
         hand_class = self.evaluator.get_rank_class(score)
         class_names = [
-            "High Card",
-            "Pair",
-            "Two Pair",
-            "Three of a Kind",
-            "Straight",
-            "Flush",
-            "Full House",
-            "Four of a Kind",
             "Straight Flush",
+            "Four of a Kind",
+            "Four of a Kind",
+            "Full House",
+            "Flush",
+            "Straight",
+            "Three of a Kind",
+            "Two Pair",
+            "Pair",
+            "High Card",
         ]
         return class_names[hand_class] if hand_class < len(class_names) else "Unknown"
 
@@ -486,10 +483,10 @@ class PokerAnalyzer:
             full_board = board + remaining_board
             
             # Evaluate hero hand
-            hero_score = self.evaluator.evaluate(full_board, hero_hole)
+            hero_score = self.evaluator.evaluate(hero_hole, full_board)
             
             # Evaluate opponent hands
-            opp_scores = [self.evaluator.evaluate(full_board, opp_hole) for opp_hole in opponent_holes]
+            opp_scores = [self.evaluator.evaluate(opp_hole, full_board) for opp_hole in opponent_holes]
             
             # Determine if hero wins, ties, or loses
             hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
