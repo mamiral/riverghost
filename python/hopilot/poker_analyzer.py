@@ -456,6 +456,14 @@ class PokerAnalyzer:
             self.logger.error("Invalid card names provided")
             return None
         
+        # Validate input lengths
+        if len(hero_hole) != 2:
+            self.logger.error(f"Hero must have exactly 2 hole cards, got {len(hero_hole)}")
+            return None
+        if any(len(opp) != 2 for opp in opponent_holes):
+            self.logger.error("All opponents must have exactly 2 hole cards")
+            return None
+        
         # All known cards
         known_cards = hero_hole + [c for opp in opponent_holes for c in opp] + board
         if len(set(known_cards)) < len(known_cards):
