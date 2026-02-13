@@ -46,9 +46,25 @@ class PokerAnalyzer:
 
     def _generate_cache_key(self, hero_hole_cards: List[str], board_cards: List[str], num_opponents: int) -> str:
         """Generate a string key for caching."""
-        # Sort hero and board
-        hero_sorted = ','.join(sorted(hero_hole_cards))
-        board_sorted = ','.join(sorted(board_cards))
+        # Normalize card names to canonical format for consistent keys
+        def normalize_card(card_name: str) -> str:
+            """Convert any card format to canonical 'RS' format (Rank + Suit)."""
+            card = self.card_name_to_treys(card_name)
+            if card is None:
+                return card_name  # Fallback to original if invalid
+            # Convert back to string format: e.g., 'As', '10h'
+            rank_int = Card.get_rank_int(card)
+            suit_int = Card.get_suit_int(card)
+            rank_char = Card.STR_RANKS[rank_int]
+            suit_char = Card.STR_SUITS[suit_int].lower()
+            return f"{rank_char}{suit_char}"
+
+        # Normalize and sort hero and board cards
+        hero_normalized = [normalize_card(c) for c in hero_hole_cards]
+        board_normalized = [normalize_card(c) for c in board_cards]
+
+        hero_sorted = ','.join(sorted(hero_normalized))
+        board_sorted = ','.join(sorted(board_normalized))
         return f"{hero_sorted}#{board_sorted}#{num_opponents}"
 
     def load_cache(self) -> None:
