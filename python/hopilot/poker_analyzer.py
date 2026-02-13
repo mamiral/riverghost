@@ -1,11 +1,22 @@
-import json
 import os
-from collections import defaultdict
 import sqlite3
+from typing import List, Dict, Optional, Any
+from dataclasses import dataclass
 
 from treys import Card, Deck, Evaluator
 
 from hopilot.logging_config import get_logger
+
+
+@dataclass
+class OddsResult:
+    """Result of odds calculation."""
+    win_probability: float
+    tie_probability: float
+    loss_probability: float
+    total_simulations: int
+    cached: bool = False
+    valid_simulations: Optional[int] = None
 
 
 class PokerAnalyzer:
@@ -21,7 +32,7 @@ class PokerAnalyzer:
         self._init_db()
         self.load_cache()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize the database table."""
         self.cache_db.execute('''
             CREATE TABLE IF NOT EXISTS odds_cache (
@@ -33,14 +44,14 @@ class PokerAnalyzer:
         ''')
         self.cache_db.commit()
 
-    def _generate_cache_key(self, hero_hole_cards, board_cards, num_opponents):
+    def _generate_cache_key(self, hero_hole_cards: List[str], board_cards: List[str], num_opponents: int) -> str:
         """Generate a string key for caching."""
         # Sort hero and board
         hero_sorted = ','.join(sorted(hero_hole_cards))
         board_sorted = ','.join(sorted(board_cards))
         return f"{hero_sorted}#{board_sorted}#{num_opponents}"
 
-    def load_cache(self):
+    def load_cache(self) -> None:
         """Load cache from database."""
         try:
             cursor = self.cache_db.execute('SELECT key, wins, ties, sims FROM odds_cache')
@@ -50,7 +61,7 @@ class PokerAnalyzer:
             self.logger.error(f"Failed to load cache: {e}")
             self.odds_cache = {}
 
-    def save_cache(self):
+    def save_cache(self) -> None:
         """Save cache to database."""
         try:
             data = [(k, v['wins'], v['ties'], v['sims']) for k, v in self.odds_cache.items()]
@@ -60,7 +71,14 @@ class PokerAnalyzer:
         except Exception as e:
             self.logger.error(f"Failed to save cache: {e}")
 
-    def calculate_odds_cached(self, hero_hole_cards, board_cards, num_opponents=1, num_simulations=10000, accumulate=True):
+    def calculate_odds_cached(
+        self, 
+        hero_hole_cards: List[str], 
+        board_cards: List[str], 
+        num_opponents: int = 1, 
+        num_simulations: int = 10000, 
+        accumulate: bool = True
+    ) -> Optional[OddsResult]:
         """
         Cached version of calculate_odds. Simulates against random opponent hands.
         
@@ -72,7 +90,7 @@ class PokerAnalyzer:
             accumulate: accumulate results.
         
         Returns:
-            dict with probabilities.
+            OddsResult with probabilities.
         """
         key = self._generate_cache_key(hero_hole_cards, board_cards, num_opponents)
         
@@ -83,13 +101,13 @@ class PokerAnalyzer:
                 win_prob = cached['wins'] / cached['sims']
                 tie_prob = cached['ties'] / cached['sims']
                 loss_prob = 1 - win_prob - tie_prob
-                result = {
-                    'win_probability': win_prob,
-                    'tie_probability': tie_prob,
-                    'loss_probability': loss_prob,
-                    'total_simulations': cached['sims'],
-                    'cached': True
-                }
+                result = OddsResult(
+                    win_probability=win_prob,
+                    tie_probability=tie_prob,
+                    loss_probability=loss_prob,
+                    total_simulations=cached['sims'],
+                    cached=True
+                )
                 self.logger.info(f"Used cached odds: {result}")
                 return result
             else:
@@ -99,9 +117,13 @@ class PokerAnalyzer:
                     return None
                 self.odds_cache[key] = {'wins': int(new_result['win_probability'] * num_simulations), 'ties': int(new_result['tie_probability'] * num_simulations), 'sims': num_simulations}
                 self.save_cache()
-                result = new_result.copy()
-                result['total_simulations'] = num_simulations
-                result['cached'] = False
+                result = OddsResult(
+                    win_probability=new_result['win_probability'],
+                    tie_probability=new_result['tie_probability'],
+                    loss_probability=new_result['loss_probability'],
+                    total_simulations=num_simulations,
+                    cached=False
+                )
                 self.logger.info(f"Saved new odds: {result}")
                 return result
         else:
@@ -123,17 +145,23 @@ class PokerAnalyzer:
             win_prob = total_wins / total_sims
             tie_prob = total_ties / total_sims
             loss_prob = 1 - win_prob - tie_prob
-            result = {
-                'win_probability': win_prob,
-                'tie_probability': tie_prob,
-                'loss_probability': loss_prob,
-                'total_simulations': total_sims,
-                'cached': False
-            }
+            result = OddsResult(
+                win_probability=win_prob,
+                tie_probability=tie_prob,
+                loss_probability=loss_prob,
+                total_simulations=total_sims,
+                cached=False
+            )
             self.logger.info(f"Updated cached odds: {result}")
             return result
 
-    def calculate_odds_random_opponents(self, hero_hole_cards, board_cards, num_opponents, num_simulations=10000):
+    def calculate_odds_random_opponents(
+        self, 
+        hero_hole_cards: List[str], 
+        board_cards: List[str], 
+        num_opponents: int, 
+        num_simulations: int = 10000
+    ) -> Optional[Dict[str, float]]:
         """
         Calculate odds against random opponent hands.
         
@@ -204,118 +232,30 @@ class PokerAnalyzer:
         self.logger.info(f"Odds result: {result}")
         return result
 
-    def build_cache_offline(self, scenarios, total_simulations_per_scenario=10000):
+    def build_cache_offline(
+        self, 
+        scenarios: List[Dict[str, Any]], 
+        total_simulations_per_scenario: int = 10000
+    ) -> None:
         """
         Offline dry run to build cache for multiple scenarios.
         
         Args:
-            scenarios: List of dicts with 'hero', 'opponents', 'board' keys.
+            scenarios: List of dicts with 'hero', 'board', 'num_opponents' keys.
             total_simulations_per_scenario: Sims per scenario.
         """
         self.logger.info(f"Building cache for {len(scenarios)} scenarios")
         for scenario in scenarios:
             self.calculate_odds_cached(
                 scenario['hero'], 
-                scenario['opponents'], 
                 scenario['board'], 
+                scenario['num_opponents'],
                 total_simulations_per_scenario, 
                 accumulate=True
             )
         self.logger.info("Cache build complete")
 
-    def calculate_odds_cached(self, hero_hole_cards, board_cards, num_opponents=1, num_simulations=10000, accumulate=True):
-        """
-        Cached version of calculate_odds. Simulates against random opponent hands.
-        
-        Args:
-            hero_hole_cards: list of 2 card names.
-            board_cards: list of known community cards.
-            num_opponents: number of opponents (assumes random hands).
-            num_simulations: sims per call.
-            accumulate: accumulate results.
-        
-        Returns:
-            dict with probabilities.
-        """
-        key = self._generate_cache_key(hero_hole_cards, board_cards, num_opponents)
-        
-        cached = self.odds_cache.get(key, {'wins': 0, 'ties': 0, 'sims': 0})
-        
-        if not accumulate:
-            if cached['sims'] >= num_simulations:
-                win_prob = cached['wins'] / cached['sims']
-                tie_prob = cached['ties'] / cached['sims']
-                loss_prob = 1 - win_prob - tie_prob
-                result = {
-                    'win_probability': win_prob,
-                    'tie_probability': tie_prob,
-                    'loss_probability': loss_prob,
-                    'total_simulations': cached['sims'],
-                    'cached': True
-                }
-                self.logger.info(f"Used cached odds: {result}")
-                return result
-            else:
-                # Run simulations and save
-                new_result = self.calculate_odds_random_opponents(hero_hole_cards, board_cards, num_opponents, num_simulations)
-                if new_result is None:
-                    return None
-                self.odds_cache[key] = {'wins': int(new_result['win_probability'] * num_simulations), 'ties': int(new_result['tie_probability'] * num_simulations), 'sims': num_simulations}
-                self.save_cache()
-                result = new_result.copy()
-                result['total_simulations'] = num_simulations
-                result['cached'] = False
-                self.logger.info(f"Saved new odds: {result}")
-                return result
-        else:
-            # Accumulate: always run and add to cache
-            new_result = self.calculate_odds_random_opponents(hero_hole_cards, board_cards, num_opponents, num_simulations)
-            if new_result is None:
-                return None
-            
-            # Accumulate
-            total_wins = cached['wins'] + int(new_result['win_probability'] * num_simulations)
-            total_ties = cached['ties'] + int(new_result['tie_probability'] * num_simulations)
-            total_sims = cached['sims'] + num_simulations
-            
-            # Update cache
-            self.odds_cache[key] = {'wins': total_wins, 'ties': total_ties, 'sims': total_sims}
-            self.save_cache()
-            
-            # Return final probabilities
-            win_prob = total_wins / total_sims
-            tie_prob = total_ties / total_sims
-            loss_prob = 1 - win_prob - tie_prob
-            result = {
-                'win_probability': win_prob,
-                'tie_probability': tie_prob,
-                'loss_probability': loss_prob,
-                'total_simulations': total_sims,
-                'cached': False
-            }
-            self.logger.info(f"Updated cached odds: {result}")
-            return result
-
-    def build_cache_offline(self, scenarios, total_simulations_per_scenario=10000):
-        """
-        Offline dry run to build cache for multiple scenarios.
-        
-        Args:
-            scenarios: List of dicts with 'hero', 'opponents', 'board' keys.
-            total_simulations_per_scenario: Sims per scenario.
-        """
-        self.logger.info(f"Building cache for {len(scenarios)} scenarios")
-        for scenario in scenarios:
-            self.calculate_odds_cached(
-                scenario['hero'], 
-                scenario['opponents'], 
-                scenario['board'], 
-                total_simulations_per_scenario, 
-                accumulate=True
-            )
-        self.logger.info("Cache build complete")
-
-    def card_name_to_treys(self, card_name):
+    def card_name_to_treys(self, card_name: str) -> Optional[Card]:
         """
         Convert card name like 'AS' or 'ace_of_hearts' to treys format.
         """
@@ -379,7 +319,7 @@ class PokerAnalyzer:
                 return None
             return Card.new(rank + suit)
 
-    def evaluate_hand(self, hole_cards, board_cards):
+    def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """
         Evaluate hand strength.
         hole_cards: list of 2 card names
@@ -420,7 +360,7 @@ class PokerAnalyzer:
         self.logger.debug(f"Hand evaluation score: {score}")
         return score
 
-    def get_hand_class(self, score):
+    def get_hand_class(self, score: Optional[int]) -> str:
         """
         Get hand class from score.
         """
@@ -440,7 +380,7 @@ class PokerAnalyzer:
         ]
         return class_names[hand_class] if hand_class < len(class_names) else "Unknown"
 
-    def get_advice(self, hole_cards, board_cards, phase):
+    def get_advice(self, hole_cards: List[str], board_cards: List[str], phase: str) -> str:
         """
         Provide basic advice based on phase.
         """
@@ -472,7 +412,13 @@ class PokerAnalyzer:
         self.logger.debug(f"Generated advice: {advice}")
         return advice
 
-    def calculate_odds(self, hero_hole_cards, opponent_hole_cards_list, board_cards, num_simulations=10000):
+    def calculate_odds(
+        self, 
+        hero_hole_cards: List[str], 
+        opponent_hole_cards_list: List[List[str]], 
+        board_cards: List[str], 
+        num_simulations: int = 10000
+    ) -> Optional[Dict[str, float]]:
         """
         Calculate win/tie probabilities for hero against opponents using Monte Carlo simulation.
         
@@ -551,7 +497,11 @@ class PokerAnalyzer:
         self.logger.info(f"Odds calculation result: {result}")
         return result
 
-    def calculate_pot_odds(self, pot_size, bet_amount):
+    def calculate_pot_odds(
+        self, 
+        pot_size: float, 
+        bet_amount: float
+    ) -> Optional[Dict[str, float]]:
         """
         Calculate pot odds as a decimal (e.g., 0.25 for 1:3 odds).
         
@@ -588,7 +538,12 @@ class PokerAnalyzer:
         self.logger.info(f"Pot odds: {result}")
         return result
 
-    def calculate_ev_index(self, win_probability, pot_size, bet_amount):
+    def calculate_ev_index(
+        self, 
+        win_probability: float, 
+        pot_size: float, 
+        bet_amount: float
+    ) -> Optional[Dict[str, Any]]:
         """
         Calculate Expected Value (EV) for a call decision.
         
@@ -628,7 +583,13 @@ class PokerAnalyzer:
         self.logger.info(f"EV calculation: {result}")
         return result
 
-    def calculate_odds_optimized(self, hero_hole_cards, opponent_hole_cards_list, board_cards, num_simulations=10000):
+    def calculate_odds_optimized(
+        self, 
+        hero_hole_cards: List[str], 
+        opponent_hole_cards_list: List[List[str]], 
+        board_cards: List[str], 
+        num_simulations: int = 10000
+    ) -> Optional[Dict[str, float]]:
         """
         Optimized Monte Carlo simulation that ignores flush possibilities for speed.
         Uses rank-based deck (13 ranks) and assigns random suits, skipping flush outcomes.
@@ -739,22 +700,3 @@ class PokerAnalyzer:
         
         self.logger.info(f"Optimized odds result: {result}")
         return result
-
-    def build_cache_offline(self, scenarios, total_simulations_per_scenario=10000):
-        """
-        Offline dry run to build cache for multiple scenarios.
-        
-        Args:
-            scenarios: List of dicts with 'hero', 'board', 'num_opponents' keys.
-            total_simulations_per_scenario: Sims per scenario.
-        """
-        self.logger.info(f"Building cache for {len(scenarios)} scenarios")
-        for scenario in scenarios:
-            self.calculate_odds_cached(
-                scenario['hero'], 
-                scenario['board'], 
-                scenario['num_opponents'],
-                total_simulations_per_scenario, 
-                accumulate=True
-            )
-        self.logger.info("Cache build complete")
