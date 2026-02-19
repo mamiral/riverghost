@@ -15,12 +15,21 @@ class BoardSlot:
         self.x = x
         self.y = y
         self.name = name
-        self.card = card  # Card name or None
         self.board_cards = board_cards  # Reference to gui's board_cards
         self.index = index  # Index in board_cards
         self.width = 60
         self.height = 80
         self.font = pygame.font.SysFont(None, 16)
+
+    @property
+    def card(self):
+        """Get the current card from board_cards."""
+        return self.board_cards[self.index]
+    
+    @card.setter
+    def card(self, value):
+        """Set the card in board_cards."""
+        self.board_cards[self.index] = value
 
     def draw(self):
         """Draw the board slot."""

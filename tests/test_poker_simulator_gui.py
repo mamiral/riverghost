@@ -393,6 +393,167 @@ class TestPokerSimulatorGUI:
         # The test passes if no exceptions occur and the picker is properly configured
         assert gui_app.card_picker.current_card == "As"
 
+    def test_simulation_panel_button_interactions(self, gui_app):
+        """Test simulation panel button clicks."""
+        # Test run simulation button
+        mock_run_event = MagicMock()
+        mock_run_event.type = pygame.MOUSEBUTTONDOWN
+        mock_run_event.pos = (825, 155)  # Run button position (x=800+20+5, y=100+50+5)
+        
+        result = gui_app.simulation_panel.handle_event(mock_run_event)
+        assert result == "run_simulation"
+        
+        # Test add villain button
+        mock_add_event = MagicMock()
+        mock_add_event.type = pygame.MOUSEBUTTONDOWN
+        mock_add_event.pos = (945, 155)  # Add villain button position (x=800+140+5, y=100+50+5)
+        
+        result = gui_app.simulation_panel.handle_event(mock_add_event)
+        assert result == "add_villain"
+        
+        # Test remove villain button
+        mock_remove_event = MagicMock()
+        mock_remove_event.type = pygame.MOUSEBUTTONDOWN
+        mock_remove_event.pos = (1065, 155)  # Remove villain button position (x=800+260+5, y=100+50+5)
+        
+        result = gui_app.simulation_panel.handle_event(mock_remove_event)
+        assert result == "remove_villain"
+
+    def test_simulation_controls_functionality(self, gui_app):
+        """Test simulation number increment/decrement controls."""
+        initial_sims = gui_app.num_simulations
+        assert initial_sims == 10000
+        
+        # Test increment button
+        mock_inc_event = MagicMock()
+        mock_inc_event.type = pygame.MOUSEBUTTONDOWN
+        mock_inc_event.pos = (825, 195)  # Inc button position (x=800+20+5, y=100+90+5)
+        
+        result = gui_app.simulation_panel.handle_event(mock_inc_event)
+        assert result is True
+        assert gui_app.num_simulations == initial_sims * 2  # Should double
+        
+        # Test decrement button
+        mock_dec_event = MagicMock()
+        mock_dec_event.type = pygame.MOUSEBUTTONDOWN
+        mock_dec_event.pos = (865, 195)  # Dec button position (x=800+60+5, y=100+90+5)
+        
+        result = gui_app.simulation_panel.handle_event(mock_dec_event)
+        assert result is True
+        assert gui_app.num_simulations == initial_sims  # Should be back to original
+
+    def test_component_layout_positions(self, gui_app):
+        """Test that GUI components are positioned correctly."""
+        # Hero seat position
+        hero_seat = gui_app.player_seats[0]
+        assert hero_seat.x == 100
+        assert hero_seat.y == 500
+        
+        # Villain seat position
+        villain_seat = gui_app.player_seats[1]
+        assert villain_seat.x == 250  # 100 + 150
+        assert villain_seat.y == 500
+        
+        # Board slots positions
+        expected_board_positions = [(300, 300), (400, 300), (500, 300), (600, 300), (700, 300)]
+        for i, slot in enumerate(gui_app.board_slots):
+            assert slot.x == expected_board_positions[i][0]
+            assert slot.y == expected_board_positions[i][1]
+        
+        # Simulation panel position
+        assert gui_app.simulation_panel.x == 800
+        assert gui_app.simulation_panel.y == 100
+
+    def test_gui_drawing_without_errors(self, gui_app):
+        """Test that all GUI components can draw without errors."""
+        # This should not raise any exceptions
+        gui_app.draw()
+        
+        # Test individual component drawing
+        for seat in gui_app.player_seats:
+            seat.draw()
+        
+        for slot in gui_app.board_slots:
+            slot.draw()
+        
+        gui_app.simulation_panel.draw()
+
+    def test_event_handling_edge_cases(self, gui_app):
+        """Test event handling for edge cases and invalid inputs."""
+        # Test non-mouse events
+        mock_key_event = MagicMock()
+        mock_key_event.type = pygame.KEYDOWN
+        mock_key_event.key = pygame.K_SPACE
+        
+        result = gui_app.handle_event(mock_key_event)
+        assert result is True  # Should be handled gracefully
+        
+        # Test mouse events outside any component
+        mock_outside_event = MagicMock()
+        mock_outside_event.type = pygame.MOUSEBUTTONDOWN
+        mock_outside_event.pos = (0, 0)  # Top-left corner
+        
+        result = gui_app.handle_event(mock_outside_event)
+        assert result is True  # Should be handled gracefully
+
+    def test_card_assignment_edge_cases(self, gui_app):
+        """Test card assignment edge cases."""
+        # Test assigning None (should work)
+        gui_app.hero_cards[0] = None
+        assert gui_app.hero_cards[0] is None
+        
+        # Test board cards
+        gui_app.board_cards[0] = "As"
+        assert gui_app.board_cards[0] == "As"
+        
+        # Test villain cards
+        gui_app.villain_cards[0][0] = "Kh"
+        assert gui_app.villain_cards[0][0] == "Kh"
+
+    def test_minimum_villain_constraint(self, gui_app):
+        """Test that at least one villain is always maintained."""
+        initial_villain_count = len(gui_app.villain_cards)
+        assert initial_villain_count >= 1
+        
+        # Try to remove villains until we hit the minimum
+        for i in range(initial_villain_count - 1):
+            gui_app.remove_villain()
+        
+        # Should still have at least 1 villain
+        assert len(gui_app.villain_cards) >= 1
+        
+        # Try to remove one more - should not work
+        gui_app.remove_villain()
+        assert len(gui_app.villain_cards) >= 1
+
+    def test_simulation_error_handling(self, gui_app):
+        """Test simulation error handling with invalid setups."""
+        # Clear all cards - should handle gracefully
+        gui_app.hero_cards = [None, None]
+        gui_app.villain_cards = [[None, None]]
+        gui_app.board_cards = [None, None, None, None, None]
+        
+        # Run simulation - should not crash
+        gui_app.run_simulation()
+        # Results should indicate error or be empty
+        assert gui_app.simulation_results is not None
+
+    def test_component_state_synchronization(self, gui_app):
+        """Test that component states stay synchronized with GUI state."""
+        # Set hero cards
+        gui_app.hero_cards[0] = "As"
+        gui_app.hero_cards[1] = "Kh"
+        
+        # Check that player seat reflects this
+        hero_seat = gui_app.player_seats[0]
+        assert hero_seat.cards[0] == "As"
+        assert hero_seat.cards[1] == "Kh"
+        
+        # Set board cards
+        gui_app.board_cards[0] = "Qd"
+        board_slot = gui_app.board_slots[0]
+        assert board_slot.card == "Qd"
+
 
 # PyAutoGUI-based integration tests (run separately)
 def run_pyautogui_tests():
