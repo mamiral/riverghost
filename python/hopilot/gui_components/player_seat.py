@@ -58,11 +58,12 @@ class PlayerSeat:
                         self.cards[i] = None
                     
                     def on_cancel():
-                        self.cards[i] = None
+                        # Do nothing - keep current card
+                        pass
                     
                     assigned_cards = gui.get_assigned_cards()
                     if self.cards[i]:  # If currently assigned, allow re-selecting it
                         assigned_cards.discard(self.cards[i])
-                    gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, assigned_cards)
+                    gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, assigned_cards, self.cards[i])
                     return True
         return False

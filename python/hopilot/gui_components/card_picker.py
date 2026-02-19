@@ -8,12 +8,13 @@ class CardPicker:
     Shows all available cards and allows selection.
     """
 
-    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], assigned_cards: set):
+    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], assigned_cards: set, current_card: Optional[str] = None):
         self.screen = screen
         self.on_select = on_select
         self.on_random = on_random
         self.on_cancel = on_cancel
         self.assigned_cards = assigned_cards  # Set of already assigned card names
+        self.current_card = current_card  # Currently selected card for this position
         self.width = 600
         self.height = 400
         self.x = (screen.get_width() - self.width) // 2
@@ -60,14 +61,22 @@ class CardPicker:
                 card_x = start_x + col * (card_size + 5)
                 card_y = start_y + row * (card_size + 5)
 
-                # Check if card is assigned
-                if card_name in self.assigned_cards:
+                # Check card status
+                if card_name == self.current_card:
+                    color = (255, 255, 0)  # Yellow highlight for current card
+                    border_color = (255, 165, 0)  # Orange border
+                    border_width = 3
+                elif card_name in self.assigned_cards:
                     color = (128, 128, 128)  # Gray out assigned cards
+                    border_color = (0, 0, 0)
+                    border_width = 1
                 else:
-                    color = (255, 255, 255)
+                    color = (255, 255, 255)  # White for available cards
+                    border_color = (0, 0, 0)
+                    border_width = 1
 
                 pygame.draw.rect(self.screen, color, (card_x, card_y, card_size, card_size))
-                pygame.draw.rect(self.screen, (0, 0, 0), (card_x, card_y, card_size, card_size), 1)
+                pygame.draw.rect(self.screen, border_color, (card_x, card_y, card_size, card_size), border_width)
 
                 # Draw rank and suit
                 rank_text = self.font.render(rank, True, self.suit_colors[suit])

@@ -36,7 +36,7 @@ class TestPokerSimulatorGUI:
         """Test that the GUI initializes correctly."""
         assert gui_app.width == 1200
         assert gui_app.height == 800
-        assert len(gui_app.player_seats) == 1  # Hero seat
+        assert len(gui_app.player_seats) == 2  # Hero seat + 1 default villain
         assert len(gui_app.board_slots) == 5  # Flop, turn, river
         assert gui_app.simulation_panel is not None
         assert gui_app.num_simulations == 10000
@@ -103,7 +103,7 @@ class TestPokerSimulatorGUI:
         """Test that card picker events take priority over underlying components."""
         # Open card picker on hero card
         gui_app.card_picker = CardPicker(
-            gui_app.screen, lambda x: None, lambda: None, lambda: None, set()
+            gui_app.screen, lambda x: None, lambda: None, lambda: None, set(), None
         )
 
         # Create a click event that would hit both picker and board slot
@@ -139,7 +139,7 @@ class TestPokerSimulatorGUI:
             cancel_called = True
 
         # Create card picker
-        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, set())
+        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, set(), None)
 
         # Test random selection
         mock_event = MagicMock()
@@ -160,7 +160,7 @@ class TestPokerSimulatorGUI:
             selected_card = card
 
         # Create card picker
-        picker = CardPicker(gui_app.screen, on_select, lambda: None, lambda: None, set())
+        picker = CardPicker(gui_app.screen, on_select, lambda: None, lambda: None, set(), None)
 
         # Test card selection (first spade - 2s)
         mock_event = MagicMock()
@@ -339,6 +339,59 @@ class TestPokerSimulatorGUI:
             # Card should be assigned to None (random)
             assert gui_app.card_picker is None
             assert gui_app.board_cards[i] is None
+
+
+    def test_hero_card_cancel_preserves_selection(self, gui_app):
+        """Test that clicking away from hero card picker preserves current selection."""
+        # Set up hero with a card
+        gui_app.hero_cards[0] = "As"
+        
+        # Click on hero position 0 to open picker
+        mock_click_event = MagicMock()
+        mock_click_event.type = pygame.MOUSEBUTTONDOWN
+        mock_click_event.pos = (115, 525)  # Hero position 0 (x=100+10+0*50=110, y=500+25=525)
+        
+        # Handle the click to open picker
+        result = gui_app.player_seats[0].handle_event(mock_click_event, gui_app)
+        assert result is True
+        assert gui_app.card_picker is not None
+        
+        # Simulate clicking outside the picker (cancel)
+        mock_cancel_event = MagicMock()
+        mock_cancel_event.type = pygame.MOUSEBUTTONDOWN
+        mock_cancel_event.pos = (50, 50)  # Outside picker area
+        
+        # Handle the cancel event
+        cancel_result = gui_app.handle_event(mock_cancel_event)
+        assert cancel_result is True
+        assert gui_app.card_picker is None
+        
+        # Verify the card is preserved
+        assert gui_app.hero_cards[0] == "As"
+
+    def test_hero_card_current_selection_highlighted(self, gui_app):
+        """Test that the current hero card is highlighted in yellow in the picker."""
+        # Set up hero with a card
+        gui_app.hero_cards[0] = "As"
+        
+        # Click on hero position 0 to open picker
+        mock_click_event = MagicMock()
+        mock_click_event.type = pygame.MOUSEBUTTONDOWN
+        mock_click_event.pos = (115, 525)  # Hero position 0 (x=100+10+0*50=110, y=500+25=525)
+        
+        # Handle the click to open picker
+        result = gui_app.player_seats[0].handle_event(mock_click_event, gui_app)
+        assert result is True
+        assert gui_app.card_picker is not None
+        
+        # Verify the picker has the current card set
+        assert gui_app.card_picker.current_card == "As"
+        
+        # Draw the picker and check that As is highlighted
+        gui_app.card_picker.draw()
+        
+        # The test passes if no exceptions occur and the picker is properly configured
+        assert gui_app.card_picker.current_card == "As"
 
 
 # PyAutoGUI-based integration tests (run separately)

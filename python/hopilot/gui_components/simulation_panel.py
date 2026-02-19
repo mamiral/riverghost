@@ -62,7 +62,7 @@ class SimulationPanel:
         # Parameters
         params_y = self.y + 100
         num_sims_text = self.font.render(f"Simulations: {self.num_simulations}", True, (255, 255, 255))
-        self.screen.blit(num_sims_text, (self.x + 20, params_y))
+        self.screen.blit(num_sims_text, (self.x + 100, params_y - 10))
 
         # Inc/dec buttons
         pygame.draw.rect(self.screen, (0, 255, 0), self.inc_sims_rect)
@@ -74,7 +74,7 @@ class SimulationPanel:
         self.screen.blit(dec_text, (self.dec_sims_rect[0] + 10, self.dec_sims_rect[1] + 5))
 
         randomize_text = self.font.render(f"Randomize Unset: {self.randomize_unset}", True, (255, 255, 255))
-        self.screen.blit(randomize_text, (self.x + 20, params_y + 40))
+        self.screen.blit(randomize_text, (self.x + 20, params_y + 30))
 
         # Results
         if self.results:
