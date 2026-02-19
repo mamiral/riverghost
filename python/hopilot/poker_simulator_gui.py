@@ -26,7 +26,7 @@ class PokerSimulatorGUI:
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Poker Simulator")
-        self.font = pygame.font.SysFont(None, 24)
+        self.font = pygame.font.SysFont("arial", 24)
         self.clock = pygame.time.Clock()
 
         # Initialize PokerAnalyzer
@@ -68,6 +68,9 @@ class PokerSimulatorGUI:
         # Simulation panel
         self.simulation_panel = SimulationPanel(self.screen, self.analyzer, 800, 100, self)
 
+        # Add default villain
+        self.add_villain()
+
     def add_villain(self):
         """Add a new villain seat."""
         villain_index = len(self.villain_cards)
@@ -79,7 +82,7 @@ class PokerSimulatorGUI:
 
     def remove_villain(self):
         """Remove the last villain seat."""
-        if self.villain_cards:
+        if len(self.villain_cards) > 1:  # Keep at least one villain
             self.villain_cards.pop()
             self.player_seats.pop()
 

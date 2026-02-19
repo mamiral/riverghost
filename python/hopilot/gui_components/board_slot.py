@@ -19,7 +19,10 @@ class BoardSlot:
         self.index = index  # Index in board_cards
         self.width = 60
         self.height = 80
-        self.font = pygame.font.SysFont(None, 16)
+        self.font = pygame.font.SysFont("arial", 16, bold=True)  # Bold font for cards
+        
+        # Suit colors for backgrounds
+        self.suit_bg_colors = {'s': (0, 0, 0), 'h': (255, 0, 0), 'd': (0, 0, 255), 'c': (0, 128, 0)}
 
     @property
     def card(self):
@@ -33,23 +36,48 @@ class BoardSlot:
 
     def draw(self):
         """Draw the board slot."""
-        # Draw slot background
-        pygame.draw.rect(self.screen, (0, 0, 0), (self.x, self.y, self.width, self.height), 2)
+        # Draw slot background (extended upward to include label area)
+        pygame.draw.rect(self.screen, (0, 0, 0), (self.x, self.y - 20, self.width, self.height + 20), 2)
 
-        # Draw name
+        # Draw name (moved up to avoid overlap)
         name_text = self.font.render(self.name, True, (255, 255, 255))
-        self.screen.blit(name_text, (self.x + 5, self.y + 5))
+        self.screen.blit(name_text, (self.x + 5, self.y - 5))
 
         # Draw card
         card_y = self.y + 20
         if self.card:
-            pygame.draw.rect(self.screen, (255, 255, 255), (self.x + 10, card_y, 40, 50))
-            card_text = self.font.render(self.card, True, (0, 0, 0))
-            self.screen.blit(card_text, (self.x + 15, card_y + 15))
+            # Parse card to get rank and suit
+            rank = self.card[0]
+            suit = self.card[1]
+            bg_color = self.suit_bg_colors.get(suit, (255, 255, 255))
+            
+            pygame.draw.rect(self.screen, bg_color, (self.x + 10, card_y, 40, 50))
+            # Draw rank and suit together with white text
+            card_text = self.font.render(self.card, True, (255, 255, 255))
+            self.screen.blit(card_text, (self.x + 12, card_y + 2))
         else:
             pygame.draw.rect(self.screen, (128, 128, 128), (self.x + 10, card_y, 40, 50), 2)
-            random_text = self.font.render("Random", True, (128, 128, 128))
-            self.screen.blit(random_text, (self.x + 15, card_y + 15))
+            # Draw diagonal hatch pattern for random cards (parallel 45-degree lines)
+            card_x = self.x + 10
+            for i in range(-40, 50, 8):
+                # Draw diagonal lines from top-left to bottom-right
+                start_x = card_x
+                start_y = card_y + i
+                end_x = card_x + 40
+                end_y = card_y + i + 40
+                
+                # Clip the line to the card boundaries
+                if start_y < card_y:
+                    # Line starts above card, clip to top
+                    start_x = card_x + (card_y - start_y)
+                    start_y = card_y
+                if end_y > card_y + 50:
+                    # Line ends below card, clip to bottom
+                    end_x = card_x + 40 - (end_y - (card_y + 50))
+                    end_y = card_y + 50
+                
+                if start_x < end_x and start_y >= card_y and start_y <= card_y + 50 and end_y >= card_y and end_y <= card_y + 50:
+                    pygame.draw.line(self.screen, (128, 128, 128), (start_x, start_y), (end_x, end_y), 1)
 
     def handle_event(self, event, gui) -> bool:
         """Handle mouse clicks on the card."""

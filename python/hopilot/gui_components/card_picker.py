@@ -19,13 +19,16 @@ class CardPicker:
         self.height = 400
         self.x = (screen.get_width() - self.width) // 2
         self.y = (screen.get_height() - self.height) // 2
-        self.font = pygame.font.SysFont(None, 20)
+        # Use Arial for better crispness and readability
+        self.font = pygame.font.SysFont("arial", 16, bold=True)
 
         # Card ranks and suits
         self.ranks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
         self.suits = ['s', 'h', 'd', 'c']  # Spades, hearts, diamonds, clubs
-        self.suit_symbols = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
-        self.suit_colors = {'s': (0, 0, 0), 'h': (255, 0, 0), 'd': (255, 0, 0), 'c': (0, 0, 0)}
+        # Use letter representations instead of symbols
+        self.suit_letters = {'s': 's', 'h': 'h', 'd': 'd', 'c': 'c'}
+        # Color backgrounds by suit with white text
+        self.suit_bg_colors = {'s': (0, 0, 0), 'h': (255, 0, 0), 'd': (0, 0, 255), 'c': (0, 128, 0)}
 
     def draw(self):
         """Draw the card picker dialog."""
@@ -66,23 +69,24 @@ class CardPicker:
                     color = (255, 255, 0)  # Yellow highlight for current card
                     border_color = (255, 165, 0)  # Orange border
                     border_width = 3
+                    text_color = (0, 0, 0)  # Black text for highlighted card
                 elif card_name in self.assigned_cards:
                     color = (128, 128, 128)  # Gray out assigned cards
                     border_color = (0, 0, 0)
                     border_width = 1
+                    text_color = (255, 255, 255)  # White text for gray cards
                 else:
-                    color = (255, 255, 255)  # White for available cards
+                    color = self.suit_bg_colors[suit]  # Suit-colored background for available cards
                     border_color = (0, 0, 0)
                     border_width = 1
+                    text_color = (255, 255, 255)  # White text
 
                 pygame.draw.rect(self.screen, color, (card_x, card_y, card_size, card_size))
                 pygame.draw.rect(self.screen, border_color, (card_x, card_y, card_size, card_size), border_width)
 
-                # Draw rank and suit
-                rank_text = self.font.render(rank, True, self.suit_colors[suit])
-                suit_text = self.font.render(self.suit_symbols[suit], True, self.suit_colors[suit])
-                self.screen.blit(rank_text, (card_x + 5, card_y + 5))
-                self.screen.blit(suit_text, (card_x + 20, card_y + 20))
+                # Draw rank and suit together
+                card_text = self.font.render(card_name, True, text_color)
+                self.screen.blit(card_text, (card_x + 2, card_y + 2))
 
     def handle_event(self, event) -> bool:
         """Handle events in the card picker."""

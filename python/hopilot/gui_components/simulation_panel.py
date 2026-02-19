@@ -18,7 +18,7 @@ class SimulationPanel:
         self.gui = gui
         self.width = 350
         self.height = 600
-        self.font = pygame.font.SysFont(None, 20)
+        self.font = pygame.font.SysFont("arial", 20)
 
         # Parameters - use gui's values if available
         self.num_simulations = gui.num_simulations if gui else 10000
