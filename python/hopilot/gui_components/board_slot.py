@@ -54,9 +54,17 @@ class BoardSlot:
                     self.card = card
                     self.board_cards[self.index] = card
                 
+                def on_random():
+                    self.card = None
+                    self.board_cards[self.index] = None
+                
+                def on_cancel():
+                    # Do nothing - keep current card
+                    pass
+                
                 assigned_cards = gui.get_assigned_cards()
                 if self.card:  # If currently assigned, allow re-selecting it
                     assigned_cards.discard(self.card)
-                gui.card_picker = CardPicker(gui.screen, on_select, assigned_cards)
+                gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, assigned_cards)
                 return True
         return False

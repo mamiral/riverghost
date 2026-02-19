@@ -176,6 +176,12 @@ class PokerSimulatorGUI:
         if event.type == pygame.QUIT:
             return False
 
+        # Handle card picker if active (check first for modal priority)
+        if self.card_picker:
+            if self.card_picker.handle_event(event):
+                self.card_picker = None
+                return True
+
         # Handle component events
         for seat in self.player_seats:
             if seat.handle_event(event, self):
@@ -197,12 +203,6 @@ class PokerSimulatorGUI:
                 self.remove_villain()
                 return True
             elif panel_result:
-                return True
-
-        # Handle card picker if active
-        if self.card_picker:
-            if self.card_picker.handle_event(event):
-                self.card_picker = None
                 return True
 
         return True

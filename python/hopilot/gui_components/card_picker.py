@@ -8,9 +8,11 @@ class CardPicker:
     Shows all available cards and allows selection.
     """
 
-    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], assigned_cards: set):
+    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], assigned_cards: set):
         self.screen = screen
         self.on_select = on_select
+        self.on_random = on_random
+        self.on_cancel = on_cancel
         self.assigned_cards = assigned_cards  # Set of already assigned card names
         self.width = 600
         self.height = 400
@@ -81,7 +83,7 @@ class CardPicker:
             # Check random button
             if (self.x + 20 <= mouse_x <= self.x + 120 and
                 self.y + 50 <= mouse_y <= self.y + 80):
-                self.on_select(None)  # Random
+                self.on_random()  # Random
                 return True
 
             # Check card grid
@@ -104,7 +106,7 @@ class CardPicker:
             # Click outside to cancel
             if not (self.x <= mouse_x <= self.x + self.width and
                     self.y <= mouse_y <= self.y + self.height):
-                self.on_select(None)  # Cancel
+                self.on_cancel()  # Cancel
                 return True
 
         return False

@@ -103,7 +103,7 @@ class TestPokerSimulatorGUI:
         """Test that card picker events take priority over underlying components."""
         # Open card picker on hero card
         gui_app.card_picker = CardPicker(
-            gui_app.screen, lambda x: None, set()
+            gui_app.screen, lambda x: None, lambda: None, lambda: None, set()
         )
 
         # Create a click event that would hit both picker and board slot
@@ -117,28 +117,39 @@ class TestPokerSimulatorGUI:
         # Event should be handled (return True)
         assert result is True
 
-        # Card picker should still be active (not closed by the event)
-        assert gui_app.card_picker is not None
+        # Card picker should be closed after selecting a card
+        assert gui_app.card_picker is None
 
     def test_card_picker_selection(self, gui_app):
         """Test card picker selection logic."""
         selected_card = None
+        random_called = False
+        cancel_called = False
 
         def on_select(card):
             nonlocal selected_card
             selected_card = card
 
+        def on_random():
+            nonlocal random_called
+            random_called = True
+
+        def on_cancel():
+            nonlocal cancel_called
+            cancel_called = True
+
         # Create card picker
-        picker = CardPicker(gui_app.screen, on_select, set())
+        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, set())
 
         # Test random selection
         mock_event = MagicMock()
         mock_event.type = pygame.MOUSEBUTTONDOWN
-        mock_event.pos = (30, 55)  # Random button position
+        mock_event.pos = (370, 265)  # Random button center position
 
         result = picker.handle_event(mock_event)
         assert result is True
-        assert selected_card is None  # Random selection
+        assert random_called is True
+        assert selected_card is None
 
     def test_card_picker_card_selection(self, gui_app):
         """Test selecting a specific card from picker."""
@@ -149,7 +160,7 @@ class TestPokerSimulatorGUI:
             selected_card = card
 
         # Create card picker
-        picker = CardPicker(gui_app.screen, on_select, set())
+        picker = CardPicker(gui_app.screen, on_select, lambda: None, lambda: None, set())
 
         # Test card selection (first spade - 2s)
         mock_event = MagicMock()
