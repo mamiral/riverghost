@@ -231,8 +231,8 @@ class Dashboard:
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("HoPilot - Poker Hold'em Copilot")
-        self.font = pygame.font.SysFont(None, 24)
-        self.large_font = pygame.font.SysFont(None, 36)
+        self.font = pygame.font.SysFont("arial", 24)
+        self.large_font = pygame.font.SysFont("arial", 36)
         self.clock = pygame.time.Clock()
         self.speed = 1.0
         self.slow_down = True

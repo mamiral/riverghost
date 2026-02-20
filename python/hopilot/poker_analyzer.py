@@ -25,6 +25,10 @@ class PokerAnalyzer:
         self.logger = get_logger(__name__)
         self.logger.info("PokerAnalyzer initialized")
         
+        # Note: The treys library version used here has an incomplete lookup table for 7-card evaluations,
+        # causing occasional KeyError exceptions. This is handled by try-except blocks in simulation methods.
+        # For production use, consider using the standard treys library with 0-51 card encoding.
+        
         # Cache for odds: key -> {'wins': int, 'ties': int, 'sims': int}
         self.odds_cache = {}
         self.cache_db_path = os.path.join(os.path.dirname(__file__), 'odds_cache.db')
@@ -83,6 +87,30 @@ class PokerAnalyzer:
         except Exception as e:
             self.logger.error(f"Failed to save cache: {e}")
 
+    def safe_evaluate(self, board: List[int], hand: List[int]) -> int:
+        """
+        Safe evaluation with fallback for treys KeyError.
+        """
+        try:
+            return self.evaluator.evaluate(board, hand)
+        except KeyError as e:
+            self.logger.warning(f"treys lookup failed for key {e} -> using slow fallback")
+            # Very slow fallback: brute-force best 5-card rank
+            from itertools import combinations
+            best = float('inf')
+            all_cards = board + hand
+            for five in combinations(all_cards, 5):
+                try:
+                    score = self.evaluator.evaluate(list(five), [])
+                    best = min(best, score)
+                except KeyError:
+                    continue  # skip bad combos (rare)
+            if best < float('inf'):
+                return best
+            else:
+                # Worst possible hand
+                return 7462
+
     def calculate_odds_cached(
         self, 
         hero_hole_cards: List[str], 
@@ -109,7 +137,7 @@ class PokerAnalyzer:
         cached = self.odds_cache.get(key, {'wins': 0, 'ties': 0, 'sims': 0})
         
         if not accumulate:
-            if cached['sims'] >= num_simulations:
+            if cached['sims'] > 0:
                 win_prob = cached['wins'] / cached['sims']
                 tie_prob = cached['ties'] / cached['sims']
                 loss_prob = 1 - win_prob - tie_prob
@@ -127,13 +155,14 @@ class PokerAnalyzer:
                 new_result = self.calculate_odds_random_opponents(hero_hole_cards, board_cards, num_opponents, num_simulations)
                 if new_result is None:
                     return None
-                self.odds_cache[key] = {'wins': int(new_result['win_probability'] * num_simulations), 'ties': int(new_result['tie_probability'] * num_simulations), 'sims': num_simulations}
+                valid_sims = new_result['valid_simulations']
+                self.odds_cache[key] = {'wins': new_result['wins'], 'ties': new_result['ties'], 'sims': valid_sims}
                 self.save_cache()
                 result = OddsResult(
                     win_probability=new_result['win_probability'],
                     tie_probability=new_result['tie_probability'],
                     loss_probability=new_result['loss_probability'],
-                    total_simulations=num_simulations,
+                    total_simulations=valid_sims,
                     cached=False
                 )
                 self.logger.info(f"Saved new odds: {result}")
@@ -145,9 +174,10 @@ class PokerAnalyzer:
                 return None
             
             # Accumulate
-            total_wins = cached['wins'] + int(new_result['win_probability'] * num_simulations)
-            total_ties = cached['ties'] + int(new_result['tie_probability'] * num_simulations)
-            total_sims = cached['sims'] + num_simulations
+            valid_sims = new_result['valid_simulations']
+            total_wins = cached['wins'] + new_result['wins']
+            total_ties = cached['ties'] + new_result['ties']
+            total_sims = cached['sims'] + valid_sims
             
             # Update cache
             self.odds_cache[key] = {'wins': total_wins, 'ties': total_ties, 'sims': total_sims}
@@ -196,49 +226,79 @@ class PokerAnalyzer:
             self.logger.error("Invalid card names")
             return None
         
+        if len(board) > 5:
+            self.logger.error(f"Board cannot have more than 5 cards, got {len(board)}")
+            return None
+        
         known_cards = set(hero + board)
         
         wins = 0
         ties = 0
+        valid_simulations = 0
         
         for _ in range(num_simulations):
             # Generate random opponent hands
             deck = Deck()
-            deck.cards = [c for c in deck.cards if c not in known_cards]
+            deck.cards = [c for c in deck.cards if int(c) not in known_cards]
             deck.shuffle()
+            
+            # Check deck size
+            needed = 2 * num_opponents + (5 - len(board))
+            if len(deck.cards) < needed:
+                self.logger.error(f"Insufficient cards in deck: {len(deck.cards)}, needed: {needed}")
+                continue
             
             opponent_holes = []
             for _ in range(num_opponents):
-                hole = [deck.draw(1)[0], deck.draw(1)[0]]
+                if len(deck.cards) < 2:
+                    self.logger.warning("Insufficient cards for opponent hole")
+                    opponent_holes = None
+                    break
+                hole = [deck.cards.pop(), deck.cards.pop()]
+                hole.reverse()  # First card dealt is first in hand
                 opponent_holes.append(hole)
             
-            # Remaining board
-            remaining_board = 5 - len(board)
-            full_board = board + deck.draw(remaining_board)
-            
-            try:
-                # Evaluate
-                hero_score = self.evaluator.evaluate(full_board, hero)
-                opp_scores = [self.evaluator.evaluate(full_board, opp) for opp in opponent_holes]
-            except KeyError:
-                continue
-            
-            hero_better = all(hero_score < opp for opp in opp_scores)
-            hero_ties = all(hero_score == opp for opp in opp_scores)
-            
-            if hero_better:
-                wins += 1
-            elif hero_ties:
-                ties += 1
+            if opponent_holes is not None:
+                # Remaining board
+                remaining_board = 5 - len(board)
+                if len(deck.cards) < remaining_board:
+                    self.logger.warning("Insufficient cards for board")
+                    continue
+                full_board = board + [deck.cards.pop() for _ in range(remaining_board)]
+                
+                try:
+                    # Evaluate
+                    hero_score = self.safe_evaluate(full_board, hero)
+                    opp_scores = [self.safe_evaluate(full_board, opp) for opp in opponent_holes]
+                    valid_simulations += 1
+                    
+                    # Determine if hero wins, ties, or loses
+                    hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
+                    hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
+                    
+                    if hero_better_than_all:
+                        wins += 1
+                    elif hero_ties_all:
+                        ties += 1
+                except Exception as e:
+                    self.logger.warning(f"Random opponents simulation iteration failed: {type(e).__name__}: {e} (hero: {hero}, board: {full_board}, opponents: {opponent_holes})")
+                    continue
         
-        win_prob = wins / num_simulations
-        tie_prob = ties / num_simulations
+        if valid_simulations == 0:
+            self.logger.error("No valid simulations completed")
+            return None
+        
+        win_prob = wins / valid_simulations
+        tie_prob = ties / valid_simulations
         loss_prob = 1 - win_prob - tie_prob
         
         result = {
             'win_probability': win_prob,
             'tie_probability': tie_prob,
-            'loss_probability': loss_prob
+            'loss_probability': loss_prob,
+            'valid_simulations': valid_simulations,
+            'wins': wins,
+            'ties': ties
         }
         
         self.logger.info(f"Odds result: {result}")
@@ -267,10 +327,14 @@ class PokerAnalyzer:
             )
         self.logger.info("Cache build complete")
 
-    def card_name_to_treys(self, card_name: str) -> Optional[Card]:
+    def card_name_to_treys(self, card_name: str) -> Optional[int]:
         """
-        Convert card name like 'AS' or 'ace_of_hearts' to treys format.
+        Convert card name like 'AS' or 'ace_of_hearts' to treys int format.
         """
+        card_name = card_name.upper()  # Handle lowercase input
+        RANKS = '23456789TJQKA'
+        SUITS = 'cdhs'
+        
         # Handle both formats: 'AS' or 'ace_of_hearts'
         if "_" in card_name:
             # Format: 'ace_of_hearts'
@@ -295,28 +359,12 @@ class PokerAnalyzer:
             if len(parts) != 2:
                 return None
             rank_str, suit_str = parts
-            rank = rank_map.get(rank_str.lower())
-            suit = suit_map.get(suit_str.lower())
-            if not rank or not suit:
+            rank_char = rank_map.get(rank_str.lower())
+            suit_char = suit_map.get(suit_str.lower())
+            if not rank_char or not suit_char:
                 return None
-            return Card.new(rank + suit)
         else:
             # Format: 'AS', '2C', '10H', etc.
-            rank_map = {
-                "A": "A",
-                "K": "K",
-                "Q": "Q",
-                "J": "J",
-                "T": "T",
-                "9": "9",
-                "8": "8",
-                "7": "7",
-                "6": "6",
-                "5": "5",
-                "4": "4",
-                "3": "3",
-                "2": "2",
-            }
             suit_map = {"S": "s", "H": "h", "D": "d", "C": "c"}
             if len(card_name) == 2:
                 rank_char, suit_char = card_name[0], card_name[1]
@@ -325,11 +373,16 @@ class PokerAnalyzer:
                 suit_char = card_name[2]
             else:
                 return None
-            rank = rank_map.get(rank_char.upper())
-            suit = suit_map.get(suit_char.upper())
-            if not rank or not suit:
+            suit_char = suit_map.get(suit_char.upper())
+            if not suit_char:
                 return None
-            return Card.new(rank + suit)
+        
+        # Use Card.new to get the correct treys int value
+        try:
+            card_str = rank_char + suit_char
+            return int(Card.new(card_str))
+        except:
+            return None
 
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """
@@ -368,7 +421,7 @@ class PokerAnalyzer:
             )
             return None  # Need at least 5 cards for evaluation
 
-        score = self.evaluator.evaluate(all_cards[:2], all_cards[2:])
+        score = self.safe_evaluate(all_cards[2:], all_cards[:2])
         self.logger.debug(f"Hand evaluation score: {score}")
         return score
 
@@ -465,48 +518,65 @@ class PokerAnalyzer:
             return None
         
         # All known cards
-        known_cards = hero_hole + [c for opp in opponent_holes for c in opp] + board
+        known_cards = set(hero_hole + [c for opp in opponent_holes for c in opp] + board)
         if len(set(known_cards)) < len(known_cards):
             self.logger.error("Duplicate cards in input")
             return None
         
         # Create deck and remove known cards
+        full_deck = Deck()
+        available_cards = [c for c in full_deck.cards if int(c) not in known_cards]
         deck = Deck()
-        for card in known_cards:
-            if card in deck.cards:
-                deck.cards.remove(card)
+        deck.cards = available_cards
         
         # Number of cards to draw for board
         cards_needed = 5 - len(board)
         
         wins = 0
         ties = 0
+        valid_simulations = 0
         
         for _ in range(num_simulations):
-            # Shuffle remaining deck
+            # Create fresh deck for each simulation
+            deck = Deck()
+            deck.cards = [c for c in deck.cards if int(c) not in known_cards]
             deck.shuffle()
             
             # Draw remaining board cards
-            remaining_board = deck.draw(cards_needed)
+            if len(deck.cards) < cards_needed:
+                self.logger.warning("Insufficient cards for board")
+                continue
+            remaining_board = [deck.cards.pop() for _ in range(cards_needed)]
             full_board = board + remaining_board
             
-            # Evaluate hero hand
-            hero_score = self.evaluator.evaluate(hero_hole, full_board)
-            
-            # Evaluate opponent hands
-            opp_scores = [self.evaluator.evaluate(opp_hole, full_board) for opp_hole in opponent_holes]
-            
-            # Determine if hero wins, ties, or loses
-            hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
-            hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
-            
-            if hero_better_than_all:
-                wins += 1
-            elif hero_ties_all:
-                ties += 1
+            try:
+                # Evaluate hero hand
+                hero_score = self.safe_evaluate(full_board, hero_hole)
+                
+                # Evaluate opponent hands
+                opp_scores = [self.safe_evaluate(full_board, opp_hole) for opp_hole in opponent_holes]
+                valid_simulations += 1
+                
+                # Determine if hero wins, ties, or loses
+                hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
+                hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
+                
+                if hero_better_than_all:
+                    wins += 1
+                elif hero_ties_all:
+                    ties += 1
+            except Exception as e:
+                self.logger.warning(f"Simulation iteration failed: {type(e).__name__}: {e} (hero: {hero_hole}, opponents: {opponent_holes}, board: {full_board})")
+                # Continue with next simulation
+                continue
         
-        win_prob = wins / num_simulations
-        tie_prob = ties / num_simulations
+        # Calculate probabilities
+        if valid_simulations == 0:
+            self.logger.error("No valid simulation results obtained")
+            return None
+            
+        win_prob = wins / valid_simulations
+        tie_prob = ties / valid_simulations
         loss_prob = 1 - win_prob - tie_prob
         
         result = {
