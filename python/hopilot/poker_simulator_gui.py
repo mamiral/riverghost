@@ -133,12 +133,12 @@ class PokerSimulatorGUI:
                 result = self.analyzer.calculate_odds_random_opponents(hero_hole, board, 1, self.num_simulations)
 
             self.simulation_results = result
-            self.simulation_panel.results = result  # Update panel results
+            self.simulation_panel.set_results(result)  # Update panel results and convergence plot
             self.logger.info(f"Simulation completed: {result}")
         except Exception as e:
             self.logger.error(f"Simulation failed: {e}")
             self.simulation_results = {"error": f"Simulation failed: {str(e)}"}
-            self.simulation_panel.results = None
+            self.simulation_panel.set_results({"error": f"Simulation failed: {str(e)}"})
 
     def draw(self):
         """Draw the GUI."""

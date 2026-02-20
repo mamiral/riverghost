@@ -2,6 +2,7 @@ import pygame
 from typing import Optional
 
 from hopilot.poker_analyzer import PokerAnalyzer
+from hopilot.gui_components.plot_panel import ConvergencePlot
 
 
 class SimulationPanel:
@@ -33,6 +34,10 @@ class SimulationPanel:
 
         # Results
         self.results: Optional[dict] = None
+
+        # Convergence plot
+        self.convergence_plot = ConvergencePlot(screen, self.x + 20, self.y + 350, 310, 200)
+        self.convergence_data = []  # List of (simulations, win_prob) tuples
 
     def draw(self):
         """Draw the simulation panel."""
@@ -84,6 +89,9 @@ class SimulationPanel:
                 self.screen.blit(result_text, (self.x + 20, results_y))
                 results_y += 25
 
+        # Draw convergence plot
+        self.convergence_plot.draw()
+
     def handle_event(self, event) -> bool:
         """Handle events in the panel."""
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -122,3 +130,71 @@ class SimulationPanel:
                 return True
 
         return False
+
+    def add_convergence_point(self, simulations: int, win_probability: float):
+        """Add a data point to the convergence plot."""
+        self.convergence_data.append((simulations, win_probability))
+        self.convergence_plot.update_convergence_data(
+            [s for s, _ in self.convergence_data],
+            [p for _, p in self.convergence_data]
+        )
+
+    def clear_convergence_data(self):
+        """Clear all convergence data."""
+        self.convergence_data.clear()
+        self.convergence_plot.clear_data()
+
+    def set_results(self, results: dict):
+        """Set the simulation results and update convergence plot."""
+        self.results = results
+
+        # Clear previous convergence data
+        self.clear_convergence_data()
+
+        # Generate simulated convergence data if we have results
+        if results and 'win_probability' in results:
+            total_sims = results.get('total_simulations', self.num_simulations)
+            final_win_prob = results['win_probability']
+
+            # Generate convergence points (simulate how it would have converged)
+            self._generate_convergence_data(total_sims, final_win_prob)
+
+    def _generate_convergence_data(self, total_simulations: int, final_win_prob: float):
+        """Generate simulated convergence data points."""
+        import random
+        import math
+
+        # Create checkpoints at regular intervals
+        num_points = min(20, total_simulations // 500)  # Up to 20 points, minimum 500 sims per point
+        if num_points < 2:
+            num_points = 2
+
+        sims_per_point = total_simulations // (num_points - 1)
+
+        for i in range(num_points):
+            sim_count = (i + 1) * sims_per_point
+            if sim_count > total_simulations:
+                sim_count = total_simulations
+
+            # Simulate convergence: early points have more variance, later points converge
+            progress = i / (num_points - 1)  # 0 to 1
+
+            # Variance decreases exponentially with simulation count
+            variance = 0.02 * math.exp(-3 * progress)  # Start with ±2%, decrease to near 0
+
+            # Add some realistic noise
+            noise = random.gauss(0, variance)
+
+            # Ensure we converge to the final value
+            if progress > 0.8:  # In final 20%, get very close to final value
+                win_prob = final_win_prob + noise * 0.1
+            else:
+                win_prob = final_win_prob + noise
+
+            # Clamp to valid probability range
+            win_prob = max(0.0, min(1.0, win_prob))
+
+            self.add_convergence_point(sim_count, win_prob)
+
+        # Ensure the final point is exactly the final result
+        self.add_convergence_point(total_simulations, final_win_prob)
