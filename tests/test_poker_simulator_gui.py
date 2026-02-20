@@ -45,38 +45,42 @@ class TestPokerSimulatorGUI:
 
     def test_add_remove_villain(self, gui_app):
         """Test adding and removing villains."""
-        initial_villain_count = len(gui_app.villain_cards)
+        initial_villain_count = len(gui_app.card_manager.villain_cards)
 
         # Add a villain
         gui_app.add_villain()
-        assert len(gui_app.villain_cards) == initial_villain_count + 1
+        assert len(gui_app.card_manager.villain_cards) == initial_villain_count + 1
         assert len(gui_app.player_seats) == initial_villain_count + 2  # Hero + villains
 
         # Remove a villain
         gui_app.remove_villain()
-        assert len(gui_app.villain_cards) == initial_villain_count
+        assert len(gui_app.card_manager.villain_cards) == initial_villain_count
         assert len(gui_app.player_seats) == initial_villain_count + 1
 
     def test_card_assignment(self, gui_app):
         """Test assigning cards to hero."""
         # Initially no cards assigned
-        assert gui_app.hero_cards == [None, None]
+        hero_state = gui_app.card_manager.get_hero_state()
+        assert hero_state['cards'] == [None, None]
 
         # Assign a card to first position
-        gui_app.hero_cards[0] = "As"
-        assert gui_app.hero_cards[0] == "As"
+        gui_app.card_manager.set_hero_card(0, "As")
+        hero_state = gui_app.card_manager.get_hero_state()
+        assert hero_state['cards'][0] == "As"
 
         # Clear the card
-        gui_app.hero_cards[0] = None
-        assert gui_app.hero_cards[0] is None
+        gui_app.card_manager.set_hero_card(0, None)
+        hero_state = gui_app.card_manager.get_hero_state()
+        assert hero_state['cards'][0] is None
 
     def test_duplicate_card_detection(self, gui_app):
         """Test that duplicate cards are detected."""
         # Set up hero with As Kh
-        gui_app.hero_cards = ["As", "Kh"]
+        gui_app.card_manager.set_hero_card(0, "As")
+        gui_app.card_manager.set_hero_card(1, "Kh")
 
         # Try to set board card to As (duplicate)
-        gui_app.board_cards[0] = "As"
+        gui_app.card_manager.set_board_card(0, "As")
 
         # Run simulation - should detect duplicate
         gui_app.run_simulation()
@@ -87,9 +91,12 @@ class TestPokerSimulatorGUI:
 
     def test_simulation_with_valid_cards(self, gui_app):
         """Test running simulation with valid card setup."""
-        # Set up valid cards
-        gui_app.hero_cards = ["As", "Kh"]
-        gui_app.board_cards = ["Qd", "Jc", "Th"]
+        # Set up valid cards using card manager
+        gui_app.card_manager.set_hero_card(0, "As")
+        gui_app.card_manager.set_hero_card(1, "Kh")
+        gui_app.card_manager.set_board_card(0, "Qd")
+        gui_app.card_manager.set_board_card(1, "Jc")
+        gui_app.card_manager.set_board_card(2, "Th")
 
         # Run simulation
         gui_app.run_simulation()
@@ -198,6 +205,35 @@ class TestPokerSimulatorGUI:
         assert result is True
         assert random_called is True
         assert selected_card is None  # on_select should not be called
+
+    def test_card_blocking_after_range_to_specific_conversion(self, gui_app):
+        """Test that cards selected after range conversion are properly blocked in other positions."""
+        # Set hero range to "33"
+        gui_app.card_manager.set_hero_range("33")
+        
+        # Verify all 3's are blocked
+        blocked_cards = gui_app.card_manager.get_blocked_cards()
+        assert "3s" in blocked_cards
+        assert "3h" in blocked_cards
+        assert "3d" in blocked_cards
+        assert "3c" in blocked_cards
+        
+        # Now set a specific hero card "3s" - this should clear the range
+        gui_app.card_manager.set_hero_card(0, "3s")
+        
+        # Verify range is cleared
+        hero_state = gui_app.card_manager.get_hero_state()
+        assert hero_state['range'] is None
+        assert hero_state['cards'][0] == "3s"
+        
+        # Verify "3s" is still blocked (now by the specific card assignment)
+        blocked_cards = gui_app.card_manager.get_blocked_cards()
+        assert "3s" in blocked_cards
+        
+        # Verify other 3's are now available (since range was cleared)
+        assert "3h" not in blocked_cards
+        assert "3d" not in blocked_cards
+        assert "3c" not in blocked_cards
         """Test the event handling structure without actual events."""
         # Create a mock event
         mock_event = MagicMock()
@@ -216,7 +252,8 @@ class TestPokerSimulatorGUI:
     def test_board_card_assignment_flop1(self, gui_app):
         """Test assigning a card to flop 1 position."""
         # Initially no board cards assigned
-        assert gui_app.board_cards[0] is None
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[0] is None
         
         # Simulate clicking on flop 1 slot
         mock_event = MagicMock()
@@ -240,11 +277,13 @@ class TestPokerSimulatorGUI:
         
         # Card picker should be closed and card assigned
         assert gui_app.card_picker is None
-        assert gui_app.board_cards[0] == "As"
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[0] == "As"
 
     def test_board_card_assignment_flop2(self, gui_app):
         """Test assigning a card to flop 2 position."""
-        assert gui_app.board_cards[1] is None
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[1] is None
         
         # Click on flop 2
         mock_event = MagicMock()
@@ -264,11 +303,13 @@ class TestPokerSimulatorGUI:
         assert picker_result is True
         
         assert gui_app.card_picker is None
-        assert gui_app.board_cards[1] == "Kh"
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[1] == "Kh"
 
     def test_board_card_assignment_flop3(self, gui_app):
         """Test assigning a card to flop 3 position."""
-        assert gui_app.board_cards[2] is None
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[2] is None
         
         # Click on flop 3
         mock_event = MagicMock()
@@ -288,11 +329,13 @@ class TestPokerSimulatorGUI:
         assert picker_result is True
         
         assert gui_app.card_picker is None
-        assert gui_app.board_cards[2] == "Qc"
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[2] == "Qc"
 
     def test_board_card_assignment_turn(self, gui_app):
         """Test assigning a card to turn position."""
-        assert gui_app.board_cards[3] is None
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[3] is None
         
         # Click on turn
         mock_event = MagicMock()
@@ -312,11 +355,13 @@ class TestPokerSimulatorGUI:
         assert picker_result is True
         
         assert gui_app.card_picker is None
-        assert gui_app.board_cards[3] == "Js"
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[3] == "Js"
 
     def test_board_card_assignment_river(self, gui_app):
         """Test assigning a card to river position."""
-        assert gui_app.board_cards[4] is None
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[4] is None
         
         # Click on river
         mock_event = MagicMock()
@@ -336,13 +381,15 @@ class TestPokerSimulatorGUI:
         assert picker_result is True
         
         assert gui_app.card_picker is None
-        assert gui_app.board_cards[4] == "Th"
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[4] == "Th"
 
     def test_board_card_random_assignment(self, gui_app):
         """Test assigning random cards to all board positions."""
         # Assign random to all board positions
         for i, slot in enumerate(gui_app.board_slots):
-            assert gui_app.board_cards[i] is None
+            board_state = gui_app.card_manager.get_board_state()
+            assert board_state[i] is None
             
             mock_event = MagicMock()
             mock_event.type = pygame.MOUSEBUTTONDOWN
@@ -364,13 +411,14 @@ class TestPokerSimulatorGUI:
             
             # Card should be assigned to None (random)
             assert gui_app.card_picker is None
-            assert gui_app.board_cards[i] is None
+            board_state = gui_app.card_manager.get_board_state()
+            assert board_state[i] is None
 
 
     def test_hero_card_cancel_preserves_selection(self, gui_app):
         """Test that clicking away from hero card picker preserves current selection."""
         # Set up hero with a card
-        gui_app.hero_cards[0] = "As"
+        gui_app.card_manager.set_hero_card(0, "As")
         
         # Click on hero position 0 to open picker
         mock_click_event = MagicMock()
@@ -393,12 +441,13 @@ class TestPokerSimulatorGUI:
         assert gui_app.range_picker is None
         
         # Verify the card is preserved
-        assert gui_app.hero_cards[0] == "As"
+        hero_state = gui_app.card_manager.get_hero_state()
+        assert hero_state['cards'][0] == "As"
 
     def test_hero_card_current_selection_highlighted(self, gui_app):
         """Test that the current hero card is highlighted in yellow in the picker."""
         # Set up hero with a card
-        gui_app.hero_cards[0] = "As"
+        gui_app.card_manager.set_hero_card(0, "As")
         
         # Click on hero position 0 to open picker
         mock_click_event = MagicMock()
@@ -524,20 +573,23 @@ class TestPokerSimulatorGUI:
     def test_card_assignment_edge_cases(self, gui_app):
         """Test card assignment edge cases."""
         # Test assigning None (should work)
-        gui_app.hero_cards[0] = None
-        assert gui_app.hero_cards[0] is None
+        gui_app.card_manager.set_hero_card(0, None)
+        hero_state = gui_app.card_manager.get_hero_state()
+        assert hero_state['cards'][0] is None
         
         # Test board cards
-        gui_app.board_cards[0] = "As"
-        assert gui_app.board_cards[0] == "As"
+        gui_app.card_manager.set_board_card(0, "As")
+        board_state = gui_app.card_manager.get_board_state()
+        assert board_state[0] == "As"
         
         # Test villain cards
-        gui_app.villain_cards[0][0] = "Kh"
-        assert gui_app.villain_cards[0][0] == "Kh"
+        gui_app.card_manager.set_villain_card(0, 0, "Kh")
+        villain_state = gui_app.card_manager.get_villain_state(0)
+        assert villain_state['cards'][0] == "Kh"
 
     def test_minimum_villain_constraint(self, gui_app):
         """Test that at least one villain is always maintained."""
-        initial_villain_count = len(gui_app.villain_cards)
+        initial_villain_count = len(gui_app.card_manager.villain_cards)
         assert initial_villain_count >= 1
         
         # Try to remove villains until we hit the minimum
@@ -545,18 +597,24 @@ class TestPokerSimulatorGUI:
             gui_app.remove_villain()
         
         # Should still have at least 1 villain
-        assert len(gui_app.villain_cards) >= 1
+        assert len(gui_app.card_manager.villain_cards) >= 1
         
         # Try to remove one more - should not work
         gui_app.remove_villain()
-        assert len(gui_app.villain_cards) >= 1
+        assert len(gui_app.card_manager.villain_cards) >= 1
 
     def test_simulation_error_handling(self, gui_app):
         """Test simulation error handling with invalid setups."""
         # Clear all cards - should handle gracefully
-        gui_app.hero_cards = [None, None]
-        gui_app.villain_cards = [[None, None]]
-        gui_app.board_cards = [None, None, None, None, None]
+        gui_app.card_manager.set_hero_card(0, None)
+        gui_app.card_manager.set_hero_card(1, None)
+        gui_app.card_manager.set_villain_card(0, 0, None)
+        gui_app.card_manager.set_villain_card(0, 1, None)
+        gui_app.card_manager.set_board_card(0, None)
+        gui_app.card_manager.set_board_card(1, None)
+        gui_app.card_manager.set_board_card(2, None)
+        gui_app.card_manager.set_board_card(3, None)
+        gui_app.card_manager.set_board_card(4, None)
         
         # Run simulation - should not crash
         gui_app.run_simulation()
@@ -566,8 +624,8 @@ class TestPokerSimulatorGUI:
     def test_component_state_synchronization(self, gui_app):
         """Test that component states stay synchronized with GUI state."""
         # Set hero cards
-        gui_app.hero_cards[0] = "As"
-        gui_app.hero_cards[1] = "Kh"
+        gui_app.card_manager.set_hero_card(0, "As")
+        gui_app.card_manager.set_hero_card(1, "Kh")
         
         # Check that player seat reflects this
         hero_seat = gui_app.player_seats[0]
@@ -575,7 +633,7 @@ class TestPokerSimulatorGUI:
         assert hero_seat.cards[1] == "Kh"
         
         # Set board cards
-        gui_app.board_cards[0] = "Qd"
+        gui_app.card_manager.set_board_card(0, "Qd")
         board_slot = gui_app.board_slots[0]
         assert board_slot.card == "Qd"
 

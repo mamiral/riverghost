@@ -10,13 +10,14 @@ class BoardSlot:
     Handles card assignment and display.
     """
 
-    def __init__(self, screen: pygame.Surface, x: int, y: int, name: str, card: Optional[str], board_cards: list, index: int):
+    def __init__(self, screen: pygame.Surface, x: int, y: int, name: str, card: Optional[str], board_cards: list, index: int, card_update_callback=None):
         self.screen = screen
         self.x = x
         self.y = y
         self.name = name
         self.board_cards = board_cards  # Reference to gui's board_cards
         self.index = index  # Index in board_cards
+        self.card_update_callback = card_update_callback  # Callback to update the card
         self.width = 60
         self.height = 80
         self.font = pygame.font.SysFont("arial", 16, bold=True)  # Bold font for cards
@@ -88,12 +89,14 @@ class BoardSlot:
             if card_x <= mouse_x <= card_x + 40 and card_y <= mouse_y <= card_y + 50:
                 # Open card picker for this card
                 def on_select(card):
+                    if self.card_update_callback:
+                        self.card_update_callback(self.index, card)
                     self.card = card
-                    self.board_cards[self.index] = card
                 
                 def on_random():
+                    if self.card_update_callback:
+                        self.card_update_callback(self.index, None)
                     self.card = None
-                    self.board_cards[self.index] = None
                 
                 def on_cancel():
                     # Do nothing - keep current card

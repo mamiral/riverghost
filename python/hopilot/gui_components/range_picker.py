@@ -13,11 +13,12 @@ class RangePicker:
     Shows a grid of hand combinations with suited/offsuit options.
     """
 
-    def __init__(self, screen: pygame.Surface, on_select: Callable[[str], None], on_cancel: Callable[[], None], initial_range: Optional[str] = None, on_switch_to_cards: Optional[Callable[[], None]] = None):
+    def __init__(self, screen: pygame.Surface, on_select: Callable[[str], None], on_cancel: Callable[[], None], initial_range: Optional[str] = None, on_switch_to_cards: Optional[Callable[[], None]] = None, can_assign_range: Optional[Callable[[str], bool]] = None):
         self.screen = screen
         self.on_select = on_select
         self.on_cancel = on_cancel
         self.on_switch_to_cards = on_switch_to_cards
+        self.can_assign_range = can_assign_range or (lambda r: True)  # Default to always allow
         self.width = 700
         self.height = 620  # Increased height to accommodate larger cells
         self.x = (screen.get_width() - self.width) // 2
@@ -148,7 +149,9 @@ class RangePicker:
                 # Convert selected ranges to a combined range string
                 if self.selected_ranges:
                     combined_range = "+".join(sorted(self.selected_ranges))
-                    self.on_select(combined_range)
+                    if self.can_assign_range(combined_range):
+                        self.on_select(combined_range)
+                    # If range cannot be assigned, do nothing (could show error message)
                 else:
                     # No ranges selected - clear the range (go back to random)
                     self.on_select("")

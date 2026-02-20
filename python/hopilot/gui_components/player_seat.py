@@ -1,5 +1,5 @@
 import pygame
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 from .card_picker import CardPicker
 from .range_picker import RangePicker
@@ -11,13 +11,16 @@ class PlayerSeat:
     Handles card assignment and display.
     """
 
-    def __init__(self, screen: pygame.Surface, x: int, y: int, name: str, cards: List[Optional[str]], range_str: Optional[str] = None):
+    def __init__(self, screen: pygame.Surface, x: int, y: int, name: str, cards: List[Optional[str]], range_str: Optional[str] = None, range_update_callback: Optional[Callable[[Optional[str]], None]] = None, can_assign_range: Optional[Callable[[str], bool]] = None, card_update_callback: Optional[Callable[[int, Optional[str]], None]] = None):
         self.screen = screen
         self.x = x
         self.y = y
         self.name = name
         self.cards = cards  # List of 2 card names or None
         self.range_str = range_str  # Range string like "AKs" or None
+        self.range_update_callback = range_update_callback  # Callback to update the GUI's range
+        self.can_assign_range = can_assign_range or (lambda r: True)  # Callback to check if range can be assigned
+        self.card_update_callback = card_update_callback  # Callback to update individual cards
         self.width = 120
         self.height = 80
         self.font = pygame.font.SysFont("arial", 20, bold=True)  # Bold font for cards
@@ -90,7 +93,8 @@ class PlayerSeat:
             if self.range_str and self.x + 10 <= mouse_x <= self.x + 110 and self.y + 35 <= mouse_y <= self.y + 65:
                 # Re-open range picker for range editing
                 def on_range_select(range_str):
-                    self.range_str = range_str if range_str else None
+                    if self.range_update_callback:
+                        self.range_update_callback(range_str)
                     gui.range_picker = None
                 
                 def on_range_cancel():
@@ -101,10 +105,16 @@ class PlayerSeat:
                     gui.range_picker = None
                     
                     def on_select(card):
+                        if self.card_update_callback:
+                            self.card_update_callback(0, card)
+                            self.card_update_callback(1, None)
                         self.cards = [card, None] if card else [None, None]
                         self.range_str = None
                     
                     def on_random():
+                        if self.card_update_callback:
+                            self.card_update_callback(0, None)
+                            self.card_update_callback(1, None)
                         self.cards = [None, None]
                         self.range_str = None
                     
@@ -128,6 +138,8 @@ class PlayerSeat:
                 if card_x <= mouse_x <= card_x + 40 and card_y <= mouse_y <= card_y + 50:
                     # Open range picker by default
                     def on_range_select(range_str):
+                        if self.range_update_callback:
+                            self.range_update_callback(range_str)
                         self.range_str = range_str if range_str else None
                         self.cards = [None, None]  # Clear specific cards when range is set
                         gui.range_picker = None
@@ -140,10 +152,14 @@ class PlayerSeat:
                         gui.range_picker = None  # Close range picker
                         
                         def on_select(card):
+                            if self.card_update_callback:
+                                self.card_update_callback(i, card)
                             self.cards[i] = card
                             self.range_str = None  # Clear range when setting specific card
                         
                         def on_random():
+                            if self.card_update_callback:
+                                self.card_update_callback(i, None)
                             self.cards[i] = None
                         
                         def on_cancel():
@@ -152,13 +168,13 @@ class PlayerSeat:
                         def on_select_range():
                             # Re-open range picker
                             gui.card_picker = None
-                            gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards)
+                            gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards, self.can_assign_range)
                         
                         assigned_cards = gui.get_assigned_cards()
                         if self.cards[i]:  # If currently assigned, allow re-selecting it
                             assigned_cards.discard(self.cards[i])
                         gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, self.cards[i])
                     
-                    gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards)
+                    gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards, self.can_assign_range)
                     return True
         return False
