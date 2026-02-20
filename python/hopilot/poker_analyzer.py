@@ -3,7 +3,8 @@ import sqlite3
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 
-from treys import Card, Deck, Evaluator
+from pokerkit.hands import StandardHighHand
+from pokerkit.utilities import Card as PokerkitCard, Deck as PokerkitDeck
 
 from hopilot.logging_config import get_logger
 
@@ -21,7 +22,7 @@ class OddsResult:
 
 class PokerAnalyzer:
     def __init__(self):
-        self.evaluator = Evaluator()
+        self.evaluator = StandardHighHand
         self.logger = get_logger(__name__)
         self.logger.info("PokerAnalyzer initialized")
         
@@ -53,11 +54,11 @@ class PokerAnalyzer:
         # Normalize card names to canonical format for consistent keys
         def normalize_card(card_name: str) -> str:
             """Convert any card format to canonical 'RS' format (Rank + Suit)."""
-            card = self.card_name_to_treys(card_name)
+            card = self.card_name_to_pokerkit(card_name)
             if card is None:
                 return card_name  # Fallback to original if invalid
             # Convert back to string format: e.g., 'As', 'Th'
-            return Card.int_to_str(card)
+            return repr(card)
 
         # Normalize and sort hero and board cards
         hero_normalized = [normalize_card(c) for c in hero_hole_cards]
@@ -218,9 +219,15 @@ class PokerAnalyzer:
         """
         self.logger.info(f"Calculating odds with random opponents: hero={hero_hole_cards}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
         
+        # Check for duplicates in input
+        all_input_cards = hero_hole_cards + board_cards
+        if len(set(all_input_cards)) < len(all_input_cards):
+            self.logger.error("Duplicate cards in input")
+            return None
+        
         # Convert hero and board
-        hero = [self.card_name_to_treys(c) for c in hero_hole_cards]
-        board = [self.card_name_to_treys(c) for c in board_cards]
+        hero = [self.card_name_to_pokerkit(c) for c in hero_hole_cards]
+        board = [self.card_name_to_pokerkit(c) for c in board_cards]
         
         if any(c is None for c in hero + board):
             self.logger.error("Invalid card names")
@@ -238,38 +245,43 @@ class PokerAnalyzer:
         
         for _ in range(num_simulations):
             # Generate random opponent hands
-            deck = Deck()
-            deck.cards = [c for c in deck.cards if int(c) not in known_cards]
-            deck.shuffle()
+            deck_cards = list(PokerkitDeck.STANDARD)
+            # Remove known cards
+            deck_cards = [c for c in deck_cards if c not in known_cards]
+            # Shuffle
+            import random
+            random.shuffle(deck_cards)
             
             # Check deck size
             needed = 2 * num_opponents + (5 - len(board))
-            if len(deck.cards) < needed:
-                self.logger.error(f"Insufficient cards in deck: {len(deck.cards)}, needed: {needed}")
+            if len(deck_cards) < needed:
+                self.logger.error(f"Insufficient cards in deck: {len(deck_cards)}, needed: {needed}")
                 continue
             
             opponent_holes = []
             for _ in range(num_opponents):
-                if len(deck.cards) < 2:
+                if len(deck_cards) < 2:
                     self.logger.warning("Insufficient cards for opponent hole")
                     opponent_holes = None
                     break
-                hole = [deck.cards.pop(), deck.cards.pop()]
+                hole = [deck_cards.pop(), deck_cards.pop()]
                 hole.reverse()  # First card dealt is first in hand
                 opponent_holes.append(hole)
             
             if opponent_holes is not None:
                 # Remaining board
                 remaining_board = 5 - len(board)
-                if len(deck.cards) < remaining_board:
+                if len(deck_cards) < remaining_board:
                     self.logger.warning("Insufficient cards for board")
                     continue
-                full_board = board + [deck.cards.pop() for _ in range(remaining_board)]
+                full_board = board + [deck_cards.pop() for _ in range(remaining_board)]
                 
                 try:
                     # Evaluate
-                    hero_score = self.safe_evaluate(full_board, hero)
-                    opp_scores = [self.safe_evaluate(full_board, opp) for opp in opponent_holes]
+                    hero_hand = StandardHighHand.from_game(hero, full_board)
+                    opp_hands = [StandardHighHand.from_game(opp, full_board) for opp in opponent_holes]
+                    hero_score = -hero_hand.entry.index  # Negative so higher index = stronger = lower score
+                    opp_scores = [-h.entry.index for h in opp_hands]
                     valid_simulations += 1
                     
                     # Determine if hero wins, ties, or loses
@@ -397,13 +409,13 @@ class PokerAnalyzer:
 
         hole = []
         for c in hole_cards:
-            card = self.card_name_to_treys(c)
+            card = self.card_name_to_pokerkit(c)
             if card is not None:
                 hole.append(card)
 
         board = []
         for c in board_cards:
-            card = self.card_name_to_treys(c)
+            card = self.card_name_to_pokerkit(c)
             if card is not None:
                 board.append(card)
 
@@ -421,30 +433,33 @@ class PokerAnalyzer:
             )
             return None  # Need at least 5 cards for evaluation
 
-        score = self.safe_evaluate(all_cards[2:], all_cards[:2])
+        score = -StandardHighHand(all_cards).entry.index
         self.logger.debug(f"Hand evaluation score: {score}")
         return score
 
-    def get_hand_class(self, score: Optional[int]) -> str:
+    def get_hand_class(self, hole_cards: List[str], board_cards: List[str]) -> str:
         """
-        Get hand class from score.
+        Get hand class from cards.
         """
-        if score is None:
+        try:
+            hand = StandardHighHand.from_game(
+                [self.card_name_to_pokerkit(c) for c in hole_cards],
+                [self.card_name_to_pokerkit(c) for c in board_cards]
+            )
+            label = str(hand.entry.label)
+            # Capitalize first letter of each word, but keep 'of' lowercase and 'a' lowercase after 'of'
+            words = label.split()
+            capitalized = []
+            for i, word in enumerate(words):
+                if word.lower() == 'of':
+                    capitalized.append('of')
+                elif word.lower() == 'a' and i > 0 and words[i-1].lower() == 'of':
+                    capitalized.append('a')
+                else:
+                    capitalized.append(word.capitalize())
+            return ' '.join(capitalized)
+        except:
             return "Unknown"
-        hand_class = self.evaluator.get_rank_class(score)
-        class_names = [
-            "Straight Flush",
-            "Four of a Kind",
-            "Four of a Kind",
-            "Full House",
-            "Flush",
-            "Straight",
-            "Three of a Kind",
-            "Two Pair",
-            "Pair",
-            "High Card",
-        ]
-        return class_names[hand_class] if hand_class < len(class_names) else "Unknown"
 
     def get_advice(self, hole_cards: List[str], board_cards: List[str], phase: str) -> str:
         """
@@ -499,10 +514,16 @@ class PokerAnalyzer:
         """
         self.logger.info(f"Calculating odds: hero={hero_hole_cards}, opponents={len(opponent_hole_cards_list)}, board={board_cards}, sims={num_simulations}")
         
+        # Check for duplicates in input
+        all_input_cards = hero_hole_cards + [c for opp in opponent_hole_cards_list for c in opp] + board_cards
+        if len(set(all_input_cards)) < len(all_input_cards):
+            self.logger.error("Duplicate cards in input")
+            return None
+        
         # Convert card names to treys format
-        hero_hole = [self.card_name_to_treys(c) for c in hero_hole_cards]
-        opponent_holes = [[self.card_name_to_treys(c) for c in opp] for opp in opponent_hole_cards_list]
-        board = [self.card_name_to_treys(c) for c in board_cards]
+        hero_hole = [self.card_name_to_pokerkit(c) for c in hero_hole_cards]
+        opponent_holes = [[self.card_name_to_pokerkit(c) for c in opp] for opp in opponent_hole_cards_list]
+        board = [self.card_name_to_pokerkit(c) for c in board_cards]
         
         # Check for None values
         if any(c is None for c in hero_hole + [c for opp in opponent_holes for c in opp] + board):
@@ -524,10 +545,9 @@ class PokerAnalyzer:
             return None
         
         # Create deck and remove known cards
-        full_deck = Deck()
-        available_cards = [c for c in full_deck.cards if int(c) not in known_cards]
-        deck = Deck()
-        deck.cards = available_cards
+        available_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
+        import random
+        random.shuffle(available_cards)
         
         # Number of cards to draw for board
         cards_needed = 5 - len(board)
@@ -538,23 +558,23 @@ class PokerAnalyzer:
         
         for _ in range(num_simulations):
             # Create fresh deck for each simulation
-            deck = Deck()
-            deck.cards = [c for c in deck.cards if int(c) not in known_cards]
-            deck.shuffle()
+            deck_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
+            import random
+            random.shuffle(deck_cards)
             
             # Draw remaining board cards
-            if len(deck.cards) < cards_needed:
+            if len(deck_cards) < cards_needed:
                 self.logger.warning("Insufficient cards for board")
                 continue
-            remaining_board = [deck.cards.pop() for _ in range(cards_needed)]
+            remaining_board = [deck_cards.pop() for _ in range(cards_needed)]
             full_board = board + remaining_board
             
             try:
                 # Evaluate hero hand
-                hero_score = self.safe_evaluate(full_board, hero_hole)
-                
-                # Evaluate opponent hands
-                opp_scores = [self.safe_evaluate(full_board, opp_hole) for opp_hole in opponent_holes]
+                hero_hand = StandardHighHand.from_game(hero_hole, full_board)
+                opp_hands = [StandardHighHand.from_game(opp_hole, full_board) for opp_hole in opponent_holes]
+                hero_score = -hero_hand.entry.index
+                opp_scores = [-h.entry.index for h in opp_hands]
                 valid_simulations += 1
                 
                 # Determine if hero wins, ties, or loses
@@ -697,10 +717,12 @@ class PokerAnalyzer:
         
         # Convert to ranks only (ignore suits for known cards)
         def card_to_rank(card_name):
-            card = self.card_name_to_treys(card_name)
+            card = self.card_name_to_pokerkit(card_name)
             if card is None:
                 return None
-            return Card.get_rank_int(card)  # 0-12 for 2-A
+            # Convert rank to numeric value (2=0, 3=1, ..., A=12)
+            rank_values = {'2': 0, '3': 1, '4': 2, '5': 3, '6': 4, '7': 5, '8': 6, '9': 7, 'T': 8, 'J': 9, 'Q': 10, 'K': 11, 'A': 12}
+            return rank_values.get(card.rank)
         
         hero_ranks = [card_to_rank(c) for c in hero_hole_cards]
         opp_ranks = [[card_to_rank(c) for c in opp] for opp in opponent_hole_cards_list]
@@ -747,7 +769,7 @@ class PokerAnalyzer:
             
             # Create treys cards for board
             full_board_ranks = board_ranks + drawn_ranks
-            full_board_suits = [self.card_name_to_treys(board_cards[i])[1] for i in range(len(board_cards))] + assigned_suits
+            full_board_suits = [self.card_name_to_treys(board_cards[i]).suit for i in range(len(board_cards))] + assigned_suits
             full_board = [Card.new(f"{Card.STR_RANKS[r]}{s}") for r, s in zip(full_board_ranks, full_board_suits)]
             
             # Check for flush (skip if any)
@@ -791,3 +813,65 @@ class PokerAnalyzer:
         
         self.logger.info(f"Optimized odds result: {result}")
         return result
+
+    def card_name_to_pokerkit(self, card_name: str) -> Optional[PokerkitCard]:
+        """
+        Convert card name to pokerkit Card object.
+        Supports formats: 'AS', 'A S', 'ace of spades', etc.
+        Returns None if invalid.
+        """
+        if not card_name:
+            return None
+        
+        card_name = card_name.strip().lower()
+        
+        # Handle long format: "ace of spades" or "ace_of_spades"
+        if ' of ' in card_name or '_of_' in card_name:
+            separator = ' of ' if ' of ' in card_name else '_of_'
+            parts = card_name.split(separator)
+            if len(parts) != 2:
+                return None
+            rank_str, suit_str = parts
+        else:
+            # Handle short format: "AS" or "A S"
+            card_name = card_name.replace(' ', '')
+            if len(card_name) < 2:
+                return None
+            rank_str = card_name[:-1]
+            suit_str = card_name[-1]
+        
+        # Map rank
+        rank_map = {
+            'a': 'A', 'ace': 'A',
+            'k': 'K', 'king': 'K',
+            'q': 'Q', 'queen': 'Q',
+            'j': 'J', 'jack': 'J',
+            't': 'T', '10': 'T', 'ten': 'T',
+            '9': '9', 'nine': '9',
+            '8': '8', 'eight': '8',
+            '7': '7', 'seven': '7',
+            '6': '6', 'six': '6',
+            '5': '5', 'five': '5',
+            '4': '4', 'four': '4',
+            '3': '3', 'three': '3',
+            '2': '2', 'two': '2',
+        }
+        rank = rank_map.get(rank_str)
+        if rank is None:
+            return None
+        
+        # Map suit
+        suit_map = {
+            's': 's', 'spades': 's',
+            'h': 'h', 'hearts': 'h',
+            'd': 'd', 'diamonds': 'd',
+            'c': 'c', 'clubs': 'c',
+        }
+        suit = suit_map.get(suit_str)
+        if suit is None:
+            return None
+        
+        try:
+            return PokerkitCard(rank, suit)
+        except:
+            return None

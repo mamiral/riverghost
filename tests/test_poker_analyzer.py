@@ -13,6 +13,53 @@ from hopilot.poker_analyzer import PokerAnalyzer, OddsResult
 class TestPokerAnalyzer:
     """Comprehensive test suite for PokerAnalyzer."""
 
+    @pytest.mark.parametrize("hero, villain, expected_min, expected_max, description", [
+        # Pair vs. two higher cards (coin flip)
+        (["4d", "4s"], ["Jh", "Th"], 0.44, 0.48, "Pair vs. two higher cards (low pair)"),
+        (["Qh", "Qd"], ["As", "Kd"], 0.55, 0.58, "Pair vs. two higher cards (high pair)"),
+        # Pair vs. higher and lower card
+        (["6h", "6d"], ["7s", "5s"], 0.64, 0.68, "Pair vs. higher and lower card (low pair)"),
+        (["Qh", "Qd"], ["Kc", "2s"], 0.71, 0.74, "Pair vs. higher and lower card (high pair)"),
+        # Pair vs. two lower cards
+        (["Ks", "Kh"], ["8d", "7d"], 0.76, 0.79, "Pair vs. two lower cards (mid)"),
+        (["Ks", "Kh"], ["7s", "2h"], 0.87, 0.90, "Pair vs. two lower cards (extreme)"),
+        # Pair vs. higher and equal rank
+        (["4h", "4s"], ["5c", "4c"], 0.57, 0.61, "Pair vs. higher and equal rank (low)"),
+        (["8h", "8d"], ["Ks", "8c"], 0.68, 0.71, "Pair vs. higher and equal rank (high)"),
+        # Pair vs. equal and lower rank
+        (["5h", "5s"], ["5c", "4c"], 0.78, 0.82, "Pair vs. equal and lower rank (low)"),
+        (["Ks", "Kc"], ["Kh", "2d"], 0.93, 0.96, "Pair vs. equal and lower rank (high)"),
+        # Two higher vs. two lower cards
+        (["Kc", "8s"], ["5d", "4d"], 0.56, 0.60, "Two higher vs. two lower cards (mid)"),
+        (["Js", "Ts"], ["7h", "2d"], 0.69, 0.72, "Two higher vs. two lower cards (high)"),
+        # High and low vs. two inbetween
+        (["Ks", "2h"], ["8d", "7d"], 0.50, 0.55, "High and low vs. two inbetween (mid)"),
+        (["As", "2s"], ["8c", "3h"], 0.61, 0.64, "High and low vs. two inbetween (high)"),
+        # Same high card, different kicker
+        (["Ah", "3h"], ["Ac", "2c"], 0.30, 0.35, "Same high card, different kicker (low)"),
+        (["Kh", "Qh"], ["Kd", "2c"], 0.73, 0.76, "Same high card, different kicker (high)"),
+        # Interlocked cards
+        (["Kc", "8s"], ["9h", "7h"], 0.54, 0.58, "Interlocked cards (mid)"),
+        (["Ah", "9h"], ["Ts", "4c"], 0.64, 0.67, "Interlocked cards (high)"),
+    ])
+    def test_preflop_matchup_probabilities(self, analyzer, hero, villain, expected_min, expected_max, description):
+        """
+        Test preflop all-in probabilities for common Texas Hold'em hand matchups.
+        Simulates hero vs. villain, no board cards, 10,000+ simulations.
+        Asserts hero's win probability is within expected range.
+        """
+        # Use a high number of simulations for stability
+        num_simulations = 15000
+        # Simulate hero vs. villain (1 opponent)
+        result = analyzer.calculate_odds(hero, [villain], [], num_simulations)
+        assert result is not None, f"Simulation failed for {description}"
+        win_prob = result['win_probability']
+        assert expected_min <= win_prob <= expected_max, (
+            f"{description}: Win probability {win_prob:.3f} not in expected range [{expected_min:.3f}, {expected_max:.3f}] for {hero} vs {villain}"
+        )
+        # Optionally print for documentation
+        print(f"{description}: {hero} vs {villain} => win probability: {win_prob:.3f}")
+
     @pytest.fixture
     def analyzer(self):
         """Create a fresh PokerAnalyzer instance for each test."""
@@ -54,12 +101,11 @@ class TestPokerAnalyzer:
     ])
     def test_card_name_normalization(self, analyzer, input_card, expected):
         """Test that card names are normalized consistently."""
-        card = analyzer.card_name_to_treys(input_card)
+        card = analyzer.card_name_to_pokerkit(input_card)
         assert card is not None
 
         # Convert back to string to check normalization
-        from treys import Card
-        normalized = Card.int_to_str(card)
+        normalized = repr(card)
         assert normalized == expected
 
     def test_invalid_card_names(self, analyzer):
@@ -141,13 +187,12 @@ class TestPokerAnalyzer:
             (["AS", "KS"], ["QS", "JS", "10S"], "Straight Flush"),  # Royal flush
             (["AS", "AD"], ["AC", "AH", "2S"], "Four of a Kind"),  # Quads
             (["AS", "KS"], ["QS", "JS", "10H"], "Straight"),  # Straight
-            (["AS", "AH"], ["2S", "3D", "4C"], "Pair"),  # Pair
+            (["AS", "AH"], ["2S", "3D", "4C"], "One Pair"),  # Pair
             (["AS", "7H"], ["3D", "4C", "5S"], "High Card"),  # High card
         ]
 
         for hole_cards, board_cards, expected_class in test_cases:
-            score = analyzer.evaluate_hand(hole_cards, board_cards)
-            hand_class = analyzer.get_hand_class(score)
+            hand_class = analyzer.get_hand_class(hole_cards, board_cards)
             assert hand_class == expected_class
 
     def test_invalid_hand_evaluation(self, analyzer):
@@ -267,11 +312,11 @@ class TestPokerAnalyzer:
     def test_calculate_odds_error_handling(self, analyzer):
         """Test error handling in odds calculations."""
         # Invalid card names
-        result = analyzer.calculate_odds(["XX", "AS"], [], [["KH", "QC"]], 100)
+        result = analyzer.calculate_odds(["XX", "AS"], [["KH", "QC"]], [], 100)
         assert result is None
 
         # Duplicate cards
-        result = analyzer.calculate_odds(["AS", "AS"], [], [["KH", "QC"]], 100)
+        result = analyzer.calculate_odds(["AS", "AS"], [["KH", "QC"]], [], 100)
         assert result is None
 
     # ===== PERFORMANCE TESTS =====
@@ -316,7 +361,7 @@ class TestPokerAnalyzer:
         score = analyzer.evaluate_hand(hole_cards, board_cards)
         assert score is not None
 
-        hand_class = analyzer.get_hand_class(score)
+        hand_class = analyzer.get_hand_class(hole_cards, board_cards)
         assert isinstance(hand_class, str)
 
         # Calculate odds
