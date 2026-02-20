@@ -26,9 +26,7 @@ class PokerAnalyzer:
         self.logger = get_logger(__name__)
         self.logger.info("PokerAnalyzer initialized")
         
-        # Note: The treys library version used here has an incomplete lookup table for 7-card evaluations,
-        # causing occasional KeyError exceptions. This is handled by try-except blocks in simulation methods.
-        # For production use, consider using the standard treys library with 0-51 card encoding.
+        # Using PokerKit library for robust poker hand evaluation
         
         # Cache for odds: key -> {'wins': int, 'ties': int, 'sims': int}
         self.odds_cache = {}
@@ -90,27 +88,9 @@ class PokerAnalyzer:
 
     def safe_evaluate(self, board: List[int], hand: List[int]) -> int:
         """
-        Safe evaluation with fallback for treys KeyError.
+        Safe evaluation using PokerKit.
         """
-        try:
-            return self.evaluator.evaluate(board, hand)
-        except KeyError as e:
-            self.logger.warning(f"treys lookup failed for key {e} -> using slow fallback")
-            # Very slow fallback: brute-force best 5-card rank
-            from itertools import combinations
-            best = float('inf')
-            all_cards = board + hand
-            for five in combinations(all_cards, 5):
-                try:
-                    score = self.evaluator.evaluate(list(five), [])
-                    best = min(best, score)
-                except KeyError:
-                    continue  # skip bad combos (rare)
-            if best < float('inf'):
-                return best
-            else:
-                # Worst possible hand
-                return 7462
+        return self.evaluator.evaluate(board, hand)
 
     def calculate_odds_cached(
         self, 
@@ -339,63 +319,6 @@ class PokerAnalyzer:
             )
         self.logger.info("Cache build complete")
 
-    def card_name_to_treys(self, card_name: str) -> Optional[int]:
-        """
-        Convert card name like 'AS' or 'ace_of_hearts' to treys int format.
-        """
-        card_name = card_name.upper()  # Handle lowercase input
-        RANKS = '23456789TJQKA'
-        SUITS = 'cdhs'
-        
-        # Handle both formats: 'AS' or 'ace_of_hearts'
-        if "_" in card_name:
-            # Format: 'ace_of_hearts'
-            rank_map = {
-                "ace": "A",
-                "king": "K",
-                "queen": "Q",
-                "jack": "J",
-                "ten": "T",
-                "nine": "9",
-                "eight": "8",
-                "seven": "7",
-                "six": "6",
-                "five": "5",
-                "four": "4",
-                "three": "3",
-                "two": "2",
-            }
-            suit_map = {"hearts": "h", "diamonds": "d", "clubs": "c", "spades": "s"}
-
-            parts = card_name.split("_of_")
-            if len(parts) != 2:
-                return None
-            rank_str, suit_str = parts
-            rank_char = rank_map.get(rank_str.lower())
-            suit_char = suit_map.get(suit_str.lower())
-            if not rank_char or not suit_char:
-                return None
-        else:
-            # Format: 'AS', '2C', '10H', etc.
-            suit_map = {"S": "s", "H": "h", "D": "d", "C": "c"}
-            if len(card_name) == 2:
-                rank_char, suit_char = card_name[0], card_name[1]
-            elif len(card_name) == 3 and card_name.startswith("10"):
-                rank_char = "T"
-                suit_char = card_name[2]
-            else:
-                return None
-            suit_char = suit_map.get(suit_char.upper())
-            if not suit_char:
-                return None
-        
-        # Use Card.new to get the correct treys int value
-        try:
-            card_str = rank_char + suit_char
-            return int(Card.new(card_str))
-        except:
-            return None
-
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """
         Evaluate hand strength.
@@ -520,7 +443,7 @@ class PokerAnalyzer:
             self.logger.error("Duplicate cards in input")
             return None
         
-        # Convert card names to treys format
+        # Convert card names to PokerKit format
         hero_hole = [self.card_name_to_pokerkit(c) for c in hero_hole_cards]
         opponent_holes = [[self.card_name_to_pokerkit(c) for c in opp] for opp in opponent_hole_cards_list]
         board = [self.card_name_to_pokerkit(c) for c in board_cards]
@@ -692,126 +615,6 @@ class PokerAnalyzer:
         }
         
         self.logger.info(f"EV calculation: {result}")
-        return result
-
-    def calculate_odds_optimized(
-        self, 
-        hero_hole_cards: List[str], 
-        opponent_hole_cards_list: List[List[str]], 
-        board_cards: List[str], 
-        num_simulations: int = 10000
-    ) -> Optional[Dict[str, float]]:
-        """
-        Optimized Monte Carlo simulation that ignores flush possibilities for speed.
-        Uses rank-based deck (13 ranks) and assigns random suits, skipping flush outcomes.
-        
-        This approximates odds for non-flush hands only—add separate flush analysis if needed.
-        
-        Args:
-            Same as calculate_odds.
-        
-        Returns:
-            Same as calculate_odds, but biased toward non-flush scenarios.
-        """
-        self.logger.info(f"Calculating optimized odds (non-flush only): hero={hero_hole_cards}, opponents={len(opponent_hole_cards_list)}, board={board_cards}, sims={num_simulations}")
-        
-        # Convert to ranks only (ignore suits for known cards)
-        def card_to_rank(card_name):
-            card = self.card_name_to_pokerkit(card_name)
-            if card is None:
-                return None
-            # Convert rank to numeric value (2=0, 3=1, ..., A=12)
-            rank_values = {'2': 0, '3': 1, '4': 2, '5': 3, '6': 4, '7': 5, '8': 6, '9': 7, 'T': 8, 'J': 9, 'Q': 10, 'K': 11, 'A': 12}
-            return rank_values.get(card.rank)
-        
-        hero_ranks = [card_to_rank(c) for c in hero_hole_cards]
-        opp_ranks = [[card_to_rank(c) for c in opp] for opp in opponent_hole_cards_list]
-        board_ranks = [card_to_rank(c) for c in board_cards]
-        
-        if any(r is None for r in hero_ranks + [r for opp in opp_ranks for r in opp] + board_ranks):
-            self.logger.error("Invalid card names")
-            return None
-        
-        known_ranks = hero_ranks + [r for opp in opp_ranks for r in opp] + board_ranks
-        if len(set(known_ranks)) < len(known_ranks):
-            self.logger.error("Duplicate ranks in input")
-            return None
-        
-        # Rank deck: 4 copies of each rank (0-12)
-        rank_deck = [r for r in range(13) for _ in range(4)]
-        for rank in known_ranks:
-            if rank in rank_deck:
-                rank_deck.remove(rank)
-        
-        cards_needed = 5 - len(board_cards)
-        
-        wins = 0
-        ties = 0
-        valid_sims = 0
-        
-        for _ in range(num_simulations):
-            # Draw ranks
-            import random
-            random.shuffle(rank_deck)
-            drawn_ranks = rank_deck[:cards_needed]
-            
-            # Assign random suits to drawn ranks (ensure no flush: limit suits)
-            suits = ['s', 'h', 'd', 'c']
-            assigned_suits = []
-            suit_counts = {'s': 0, 'h': 0, 'd': 0, 'c': 0}
-            for _ in drawn_ranks:
-                suit = random.choice(suits)
-                # Prevent >4 of any suit to avoid flushes
-                if suit_counts[suit] >= 4:
-                    suit = random.choice([s for s in suits if suit_counts[s] < 4])
-                assigned_suits.append(suit)
-                suit_counts[suit] += 1
-            
-            # Create treys cards for board
-            full_board_ranks = board_ranks + drawn_ranks
-            full_board_suits = [self.card_name_to_treys(board_cards[i]).suit for i in range(len(board_cards))] + assigned_suits
-            full_board = [Card.new(f"{Card.STR_RANKS[r]}{s}") for r, s in zip(full_board_ranks, full_board_suits)]
-            
-            # Check for flush (skip if any)
-            board_suit_counts = {}
-            for card in full_board:
-                suit = Card.get_suit_int(card)
-                board_suit_counts[suit] = board_suit_counts.get(suit, 0) + 1
-            if any(count >= 5 for count in board_suit_counts.values()):
-                continue  # Skip flush boards
-            
-            # Evaluate hands
-            hero_score = self.evaluator.evaluate(full_board, [Card.new(f"{Card.STR_RANKS[hero_ranks[0]]}s"), Card.new(f"{Card.STR_RANKS[hero_ranks[1]]}s")])  # Assign dummy suits
-            opp_scores = []
-            for opp in opp_ranks:
-                opp_score = self.evaluator.evaluate(full_board, [Card.new(f"{Card.STR_RANKS[opp[0]]}s"), Card.new(f"{Card.STR_RANKS[opp[1]]}s")])
-                opp_scores.append(opp_score)
-            
-            hero_better = all(hero_score < opp for opp in opp_scores)
-            hero_ties = all(hero_score == opp for opp in opp_scores)
-            
-            if hero_better:
-                wins += 1
-            elif hero_ties:
-                ties += 1
-            valid_sims += 1
-        
-        if valid_sims == 0:
-            self.logger.error("No valid non-flush simulations")
-            return None
-        
-        win_prob = wins / valid_sims
-        tie_prob = ties / valid_sims
-        loss_prob = 1 - win_prob - tie_prob
-        
-        result = {
-            'win_probability': win_prob,
-            'tie_probability': tie_prob,
-            'loss_probability': loss_prob,
-            'valid_simulations': valid_sims
-        }
-        
-        self.logger.info(f"Optimized odds result: {result}")
         return result
 
     def card_name_to_pokerkit(self, card_name: str) -> Optional[PokerkitCard]:

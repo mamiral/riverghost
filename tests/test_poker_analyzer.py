@@ -113,7 +113,7 @@ class TestPokerAnalyzer:
         """Test handling of invalid card names."""
         invalid_cards = ["XX", "1Z", "ace_of_mars", "", "A", "11H"]
         for card_name in invalid_cards:
-            result = analyzer.card_name_to_treys(card_name)
+            result = analyzer.card_name_to_pokerkit(card_name)
             assert result is None
 
     # ===== CACHE KEY GENERATION TESTS =====
