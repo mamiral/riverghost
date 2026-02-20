@@ -1,23 +1,10 @@
 import os
-import sqlite3
 from typing import List, Dict, Optional, Any
-from dataclasses import dataclass
 
 from pokerkit.hands import StandardHighHand
 from pokerkit.utilities import Card as PokerkitCard, Deck as PokerkitDeck
 
 from hopilot.logging_config import get_logger
-
-
-@dataclass
-class OddsResult:
-    """Result of odds calculation."""
-    win_probability: float
-    tie_probability: float
-    loss_probability: float
-    total_simulations: int
-    cached: bool = False
-    valid_simulations: Optional[int] = None
 
 
 class PokerAnalyzer:
@@ -27,64 +14,6 @@ class PokerAnalyzer:
         self.logger.info("PokerAnalyzer initialized")
         
         # Using PokerKit library for robust poker hand evaluation
-        
-        # Cache for odds: key -> {'wins': int, 'ties': int, 'sims': int}
-        self.odds_cache = {}
-        self.cache_db_path = os.path.join(os.path.dirname(__file__), 'odds_cache.db')
-        self.cache_db = sqlite3.connect(self.cache_db_path)
-        self._init_db()
-        self.load_cache()
-
-    def _init_db(self) -> None:
-        """Initialize the database table."""
-        self.cache_db.execute('''
-            CREATE TABLE IF NOT EXISTS odds_cache (
-                key TEXT PRIMARY KEY,
-                wins INTEGER,
-                ties INTEGER,
-                sims INTEGER
-            )
-        ''')
-        self.cache_db.commit()
-
-    def _generate_cache_key(self, hero_hole_cards: List[str], board_cards: List[str], num_opponents: int) -> str:
-        """Generate a string key for caching."""
-        # Normalize card names to canonical format for consistent keys
-        def normalize_card(card_name: str) -> str:
-            """Convert any card format to canonical 'RS' format (Rank + Suit)."""
-            card = self.card_name_to_pokerkit(card_name)
-            if card is None:
-                return card_name  # Fallback to original if invalid
-            # Convert back to string format: e.g., 'As', 'Th'
-            return repr(card)
-
-        # Normalize and sort hero and board cards
-        hero_normalized = [normalize_card(c) for c in hero_hole_cards]
-        board_normalized = [normalize_card(c) for c in board_cards]
-
-        hero_sorted = ','.join(sorted(hero_normalized))
-        board_sorted = ','.join(sorted(board_normalized))
-        return f"{hero_sorted}#{board_sorted}#{num_opponents}"
-
-    def load_cache(self) -> None:
-        """Load cache from database."""
-        try:
-            cursor = self.cache_db.execute('SELECT key, wins, ties, sims FROM odds_cache')
-            self.odds_cache = {row[0]: {'wins': row[1], 'ties': row[2], 'sims': row[3]} for row in cursor}
-            self.logger.info(f"Loaded odds cache with {len(self.odds_cache)} entries")
-        except Exception as e:
-            self.logger.error(f"Failed to load cache: {e}")
-            self.odds_cache = {}
-
-    def save_cache(self) -> None:
-        """Save cache to database."""
-        try:
-            data = [(k, v['wins'], v['ties'], v['sims']) for k, v in self.odds_cache.items()]
-            self.cache_db.executemany('INSERT OR REPLACE INTO odds_cache (key, wins, ties, sims) VALUES (?, ?, ?, ?)', data)
-            self.cache_db.commit()
-            self.logger.info(f"Saved odds cache with {len(self.odds_cache)} entries")
-        except Exception as e:
-            self.logger.error(f"Failed to save cache: {e}")
 
     def safe_evaluate(self, board: List[int], hand: List[int]) -> int:
         """
@@ -92,91 +21,34 @@ class PokerAnalyzer:
         """
         return self.evaluator.evaluate(board, hand)
 
-    def calculate_odds_cached(
-        self, 
-        hero_hole_cards: List[str], 
-        board_cards: List[str], 
-        num_opponents: int = 1, 
-        num_simulations: int = 10000, 
-        accumulate: bool = True
-    ) -> Optional[OddsResult]:
+    def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """
-        Cached version of calculate_odds. Simulates against random opponent hands.
+        Evaluate hand strength using PokerKit.
         
         Args:
-            hero_hole_cards: list of 2 card names.
-            board_cards: list of known community cards.
-            num_opponents: number of opponents (assumes random hands).
-            num_simulations: sims per call.
-            accumulate: accumulate results.
+            hole_cards: list of hole card names (2 cards).
+            board_cards: list of board card names.
         
         Returns:
-            OddsResult with probabilities.
+            Hand strength as integer (lower is better), or None if invalid.
         """
-        key = self._generate_cache_key(hero_hole_cards, board_cards, num_opponents)
+        # Convert string cards to PokerKit cards
+        hero = [self.card_name_to_pokerkit(c) for c in hole_cards]
+        board = [self.card_name_to_pokerkit(c) for c in board_cards]
         
-        cached = self.odds_cache.get(key, {'wins': 0, 'ties': 0, 'sims': 0})
+        # Filter out None values (invalid cards)
+        hero = [c for c in hero if c is not None]
+        board = [c for c in board if c is not None]
         
-        if not accumulate:
-            if cached['sims'] > 0:
-                win_prob = cached['wins'] / cached['sims']
-                tie_prob = cached['ties'] / cached['sims']
-                loss_prob = 1 - win_prob - tie_prob
-                result = OddsResult(
-                    win_probability=win_prob,
-                    tie_probability=tie_prob,
-                    loss_probability=loss_prob,
-                    total_simulations=cached['sims'],
-                    cached=True
-                )
-                self.logger.info(f"Used cached odds: {result}")
-                return result
-            else:
-                # Run simulations and save
-                new_result = self.calculate_odds_random_opponents(hero_hole_cards, board_cards, num_opponents, num_simulations)
-                if new_result is None:
-                    return None
-                valid_sims = new_result['valid_simulations']
-                self.odds_cache[key] = {'wins': new_result['wins'], 'ties': new_result['ties'], 'sims': valid_sims}
-                self.save_cache()
-                result = OddsResult(
-                    win_probability=new_result['win_probability'],
-                    tie_probability=new_result['tie_probability'],
-                    loss_probability=new_result['loss_probability'],
-                    total_simulations=valid_sims,
-                    cached=False
-                )
-                self.logger.info(f"Saved new odds: {result}")
-                return result
-        else:
-            # Accumulate: always run and add to cache
-            new_result = self.calculate_odds_random_opponents(hero_hole_cards, board_cards, num_opponents, num_simulations)
-            if new_result is None:
-                return None
-            
-            # Accumulate
-            valid_sims = new_result['valid_simulations']
-            total_wins = cached['wins'] + new_result['wins']
-            total_ties = cached['ties'] + new_result['ties']
-            total_sims = cached['sims'] + valid_sims
-            
-            # Update cache
-            self.odds_cache[key] = {'wins': total_wins, 'ties': total_ties, 'sims': total_sims}
-            self.save_cache()
-            
-            # Return final probabilities
-            win_prob = total_wins / total_sims
-            tie_prob = total_ties / total_sims
-            loss_prob = 1 - win_prob - tie_prob
-            result = OddsResult(
-                win_probability=win_prob,
-                tie_probability=tie_prob,
-                loss_probability=loss_prob,
-                total_simulations=total_sims,
-                cached=False
-            )
-            self.logger.info(f"Updated cached odds: {result}")
-            return result
+        if len(hero) != 2:
+            self.logger.warning(f"Invalid hole cards: {hole_cards}")
+            return None
+        
+        try:
+            return self.safe_evaluate(board, hero)
+        except Exception as e:
+            self.logger.error(f"Failed to evaluate hand: {e}")
+            return None
 
     def calculate_odds_random_opponents(
         self, 
@@ -295,29 +167,6 @@ class PokerAnalyzer:
         
         self.logger.info(f"Odds result: {result}")
         return result
-
-    def build_cache_offline(
-        self, 
-        scenarios: List[Dict[str, Any]], 
-        total_simulations_per_scenario: int = 10000
-    ) -> None:
-        """
-        Offline dry run to build cache for multiple scenarios.
-        
-        Args:
-            scenarios: List of dicts with 'hero', 'board', 'num_opponents' keys.
-            total_simulations_per_scenario: Sims per scenario.
-        """
-        self.logger.info(f"Building cache for {len(scenarios)} scenarios")
-        for scenario in scenarios:
-            self.calculate_odds_cached(
-                scenario['hero'], 
-                scenario['board'], 
-                scenario['num_opponents'],
-                total_simulations_per_scenario, 
-                accumulate=True
-            )
-        self.logger.info("Cache build complete")
 
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """

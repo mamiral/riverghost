@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 # Add the python directory to the path so we can import hopilot modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
-from hopilot.poker_analyzer import PokerAnalyzer, OddsResult
+from hopilot.poker_analyzer import PokerAnalyzer
 
 
 class TestPokerAnalyzer:
@@ -76,12 +76,6 @@ class TestPokerAnalyzer:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
 
-    def test_initialization(self, analyzer):
-        """Test that PokerAnalyzer initializes correctly."""
-        assert analyzer.evaluator is not None
-        assert isinstance(analyzer.odds_cache, dict)
-        assert analyzer.cache_db is not None
-
     # ===== CARD NAME CONVERSION TESTS =====
 
     @pytest.mark.parametrize("input_card,expected", [
@@ -115,58 +109,6 @@ class TestPokerAnalyzer:
         for card_name in invalid_cards:
             result = analyzer.card_name_to_pokerkit(card_name)
             assert result is None
-
-    # ===== CACHE KEY GENERATION TESTS =====
-
-    def test_cache_key_consistency(self, analyzer):
-        """Test that equivalent card sets produce identical cache keys."""
-        test_cases = [
-            # Different orders, same cards
-            (["AS", "KH"], ["QC"], 1),
-            (["KH", "AS"], ["QC"], 1),
-            # Different formats, same cards
-            (["AS", "KH"], ["QC"], 1),
-            (["ace_of_spades", "king_of_hearts"], ["queen_of_clubs"], 1),
-        ]
-
-        keys = []
-        for hero, board, opponents in test_cases:
-            key = analyzer._generate_cache_key(hero, board, opponents)
-            keys.append(key)
-
-        # All keys should be identical
-        assert all(key == keys[0] for key in keys)
-
-        # Test different suit orders with same opponents
-        test_cases2 = [
-            (["AS", "KH"], ["QC", "JD"], 2),
-            (["KH", "AS"], ["JD", "QC"], 2),
-        ]
-
-        keys2 = []
-        for hero, board, opponents in test_cases2:
-            key = analyzer._generate_cache_key(hero, board, opponents)
-            keys2.append(key)
-
-        # These should also be identical
-        assert all(key == keys2[0] for key in keys2)
-
-    def test_cache_key_uniqueness(self, analyzer):
-        """Test that different card sets produce different cache keys."""
-        test_cases = [
-            (["AS", "KH"], ["QC"], 1),
-            (["AD", "KS"], ["QC"], 1),  # Different hero cards
-            (["AS", "KH"], ["JD"], 1),  # Different board
-            (["AS", "KH"], ["QC"], 2),  # Different opponent count
-        ]
-
-        keys = []
-        for hero, board, opponents in test_cases:
-            key = analyzer._generate_cache_key(hero, board, opponents)
-            keys.append(key)
-
-        # All keys should be unique
-        assert len(set(keys)) == len(keys)
 
     # ===== HAND EVALUATION TESTS =====
 
@@ -243,42 +185,6 @@ class TestPokerAnalyzer:
         assert result['win_probability'] > 0.99  # Should win almost always
         assert result['loss_probability'] < 0.01
 
-    # ===== CACHE TESTS =====
-
-    def test_cache_storage_and_retrieval(self, analyzer, temp_db_path):
-        """Test that odds are properly cached and retrieved."""
-        # Mock the database path
-        with patch.object(analyzer, 'cache_db_path', temp_db_path):
-            # Clear any existing cache
-            analyzer.odds_cache = {}
-
-            # First calculation should compute and cache
-            result1 = analyzer.calculate_odds_cached(["AS", "KH"], ["QC"], 1, 100, accumulate=False)
-            assert result1.cached == False
-
-            # Second calculation with same parameters should use cache
-            result2 = analyzer.calculate_odds_cached(["AS", "KH"], ["QC"], 1, 100, accumulate=False)
-            assert result2.cached == True
-
-            # Results should be identical
-            assert result1.win_probability == result2.win_probability
-            assert result1.tie_probability == result2.tie_probability
-            assert result1.loss_probability == result2.loss_probability
-
-    def test_cache_accumulation(self, analyzer, temp_db_path):
-        """Test that cache accumulation works correctly."""
-        with patch.object(analyzer, 'cache_db_path', temp_db_path):
-            analyzer.odds_cache = {}
-
-            # First run with 100 simulations
-            result1 = analyzer.calculate_odds_cached(["AS", "KH"], ["QC"], 1, 100, accumulate=True)
-            assert result1.total_simulations <= 100  # May be less due to failed simulations
-            first_sims = result1.total_simulations
-
-            # Second run should accumulate (total should increase)
-            result2 = analyzer.calculate_odds_cached(["AS", "KH"], ["QC"], 1, 100, accumulate=True)
-            assert result2.total_simulations > first_sims  # Should have accumulated more simulations
-
     # ===== POT ODDS AND EV TESTS =====
 
     def test_pot_odds_calculation(self, analyzer):
@@ -327,7 +233,7 @@ class TestPokerAnalyzer:
         import time
 
         start_time = time.time()
-        result = analyzer.calculate_odds_cached(["AS", "KH"], ["QC", "JD"], 3, 1000, accumulate=False)
+        result = analyzer.calculate_odds_random_opponents(["AS", "KH"], ["QC", "JD"], 3, 1000)
         end_time = time.time()
 
         # Should complete in less than 2 seconds for 1000 simulations
@@ -339,11 +245,11 @@ class TestPokerAnalyzer:
     def test_edge_cases(self, analyzer):
         """Test various edge cases."""
         # Empty board
-        result = analyzer.calculate_odds_cached(["AS", "KH"], [], 1, 100, accumulate=False)
+        result = analyzer.calculate_odds_random_opponents(["AS", "KH"], [], 1, 100)
         assert result is not None
 
         # Full board (river)
-        result = analyzer.calculate_odds_cached(["AS", "KH"], ["QC", "JD", "10H", "2S", "3C"], 1, 100, accumulate=False)
+        result = analyzer.calculate_odds_random_opponents(["AS", "KH"], ["QC", "JD", "10H", "2S", "3C"], 1, 100)
         assert result is not None
 
         # Zero opponents (shouldn't happen in practice but test robustness)
@@ -366,14 +272,17 @@ class TestPokerAnalyzer:
         assert isinstance(hand_class, str)
 
         # Calculate odds
-        odds = analyzer.calculate_odds_cached(hole_cards, board_cards, 2, 500, accumulate=False)
-        assert isinstance(odds, OddsResult)
-        assert 0 <= odds.win_probability <= 1
-        assert 0 <= odds.tie_probability <= 1
-        assert 0 <= odds.loss_probability <= 1
+        odds = analyzer.calculate_odds_random_opponents(hole_cards, board_cards, 2, 500)
+        assert isinstance(odds, dict)
+        assert 'win_probability' in odds
+        assert 'tie_probability' in odds
+        assert 'loss_probability' in odds
+        assert 0 <= odds['win_probability'] <= 1
+        assert 0 <= odds['tie_probability'] <= 1
+        assert 0 <= odds['loss_probability'] <= 1
 
         # Verify probabilities sum to ~1
-        total = odds.win_probability + odds.tie_probability + odds.loss_probability
+        total = odds['win_probability'] + odds['tie_probability'] + odds['loss_probability']
         assert abs(total - 1.0) < 0.01
 
 
