@@ -25,17 +25,13 @@ class SimulationPanel:
         self.num_simulations = gui.num_simulations if gui else 10000
         self.randomize_unset = gui.randomize_unset if gui else True
 
-        # Hero range input
-        self.hero_range = ""  # For range input like "AKs"
-        self.range_input_active = False
-
         # Buttons
         self.run_button_rect = (self.x + 20, self.y + 50, 100, 30)
         self.add_villain_rect = (self.x + 140, self.y + 50, 100, 30)
         self.remove_villain_rect = (self.x + 260, self.y + 50, 70, 30)
         self.inc_sims_rect = (self.x + 20, self.y + 90, 30, 30)
         self.dec_sims_rect = (self.x + 60, self.y + 90, 30, 30)
-        self.range_input_rect = (self.x + 20, self.y + 130, 200, 30)
+        self.select_range_button_rect = (self.x + 20, self.y + 130, 150, 30)
 
         # Results
         self.results: Optional[dict] = None
@@ -86,14 +82,6 @@ class SimulationPanel:
         randomize_text = self.font.render(f"Randomize Unset: {self.randomize_unset}", True, (255, 255, 255))
         self.screen.blit(randomize_text, (self.x + 20, params_y + 30))
 
-        # Hero range input
-        range_label = self.font.render("Hero Range:", True, (255, 255, 255))
-        self.screen.blit(range_label, (self.x + 20, params_y + 50))
-        pygame.draw.rect(self.screen, (255, 255, 255) if self.range_input_active else (100, 100, 100), self.range_input_rect)
-        pygame.draw.rect(self.screen, (0, 0, 0), self.range_input_rect, 2)
-        range_text = self.font.render(self.hero_range or "Click to enter range", True, (0, 0, 0))
-        self.screen.blit(range_text, (self.range_input_rect[0] + 5, self.range_input_rect[1] + 5))
-
         # Results
         if self.results:
             results_y = params_y + 80
@@ -141,22 +129,6 @@ class SimulationPanel:
                 if self.gui:
                     self.gui.num_simulations = self.num_simulations
                 return True
-
-            # Range input
-            if (self.range_input_rect[0] <= mouse_x <= self.range_input_rect[0] + self.range_input_rect[2] and
-                self.range_input_rect[1] <= mouse_y <= self.range_input_rect[1] + self.range_input_rect[3]):
-                self.range_input_active = not self.range_input_active
-                return True
-
-        # Handle text input for range
-        if event.type == pygame.KEYDOWN and self.range_input_active:
-            if event.key == pygame.K_RETURN:
-                self.range_input_active = False
-            elif event.key == pygame.K_BACKSPACE:
-                self.hero_range = self.hero_range[:-1]
-            else:
-                self.hero_range += event.unicode.upper()
-            return True
 
         return False
 

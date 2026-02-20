@@ -208,10 +208,19 @@ def expand_range_to_hands(range_str: str) -> List[List[str]]:
     Expand a range string to list of hole card combinations.
     Each combination is a list of 2 card strings.
 
-    Example: "AKs" -> [['As', 'Ks'], ['Ah', 'Kh'], ...]
+    Supports combined ranges with '+' separator.
+    Example: "AKs+AQs+22" -> all combinations from AKs, AQs, and 22
     """
-    tuples = HandRange.parse_shorthand(range_str)
-    return [[card1, card2] for card1, card2 in tuples]
+    if '+' in range_str:
+        parts = [part.strip() for part in range_str.split('+') if part.strip()]
+        all_hands = []
+        for part in parts:
+            tuples = HandRange.parse_shorthand(part)
+            all_hands.extend([[card1, card2] for card1, card2 in tuples])
+        return all_hands
+    else:
+        tuples = HandRange.parse_shorthand(range_str)
+        return [[card1, card2] for card1, card2 in tuples]
 
 
 def validate_range_syntax(range_str: str) -> bool:
@@ -223,3 +232,54 @@ def validate_range_syntax(range_str: str) -> bool:
         return len(hands) > 0
     except:
         return False
+
+
+def split_range_to_components(range_str: str) -> Set[str]:
+    """
+    Split a combined range string into individual matrix components.
+    
+    Example: "AKs+22" -> {"AKs", "22"}
+    Returns set of strings that correspond to RangePicker matrix cells.
+    """
+    if not range_str:
+        return set()
+    
+    components = set()
+    
+    try:
+        # Expand the range to all individual hands
+        hands = expand_range_to_hands(range_str)
+        
+        # For each hand, determine what matrix component it represents
+        for hand in hands:
+            if len(hand) == 2:
+                # Two cards - determine if suited, offsuit, or pair
+                card1, card2 = hand
+                rank1 = card1[0]
+                suit1 = card1[1]
+                rank2 = card2[0]
+                suit2 = card2[1]
+                
+                # Ensure consistent ordering (higher rank first)
+                if RANK_VALUES[rank1] < RANK_VALUES[rank2]:
+                    rank1, rank2 = rank2, rank1
+                    suit1, suit2 = suit2, suit1
+                
+                if rank1 == rank2:
+                    # Pocket pair
+                    components.add(f"{rank1}{rank2}")
+                elif suit1 == suit2:
+                    # Suited
+                    components.add(f"{rank1}{rank2}s")
+                else:
+                    # Offsuit
+                    components.add(f"{rank1}{rank2}o")
+    except Exception as e:
+        logger.warning(f"Failed to parse range '{range_str}': {e}")
+        # Fallback to simple splitting
+        parts = [part.strip() for part in range_str.split('+') if part.strip()]
+        for part in parts:
+            if len(part) >= 2:
+                components.add(part)
+    
+    return components

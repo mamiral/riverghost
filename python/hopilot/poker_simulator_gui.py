@@ -8,6 +8,7 @@ from hopilot.poker_analyzer import PokerAnalyzer
 from .gui_components.player_seat import PlayerSeat
 from .gui_components.board_slot import BoardSlot
 from .gui_components.card_picker import CardPicker
+from .gui_components.range_picker import RangePicker
 from .gui_components.simulation_panel import SimulationPanel
 
 
@@ -34,13 +35,16 @@ class PokerSimulatorGUI:
 
         # Game state
         self.hero_cards: List[Optional[str]] = [None, None]  # Two hole cards
+        self.hero_range: Optional[str] = None  # Hero range if set
         self.villain_cards: List[List[Optional[str]]] = []  # List of villain hole cards
+        self.villain_ranges: List[Optional[str]] = []  # List of villain ranges
         self.board_cards: List[Optional[str]] = [None, None, None, None, None]  # Flop, turn, river
 
         # GUI components
         self.player_seats: List[PlayerSeat] = []
         self.board_slots: List[BoardSlot] = []
         self.card_picker: Optional[CardPicker] = None
+        self.range_picker: Optional[RangePicker] = None
         self.simulation_panel: Optional[SimulationPanel] = None
 
         # Simulation parameters
@@ -56,7 +60,7 @@ class PokerSimulatorGUI:
     def _setup_layout(self):
         """Set up the initial GUI layout."""
         # Hero seat
-        hero_seat = PlayerSeat(self.screen, 100, 500, "Hero", self.hero_cards)
+        hero_seat = PlayerSeat(self.screen, 100, 500, "Hero", self.hero_cards, self.hero_range)
         self.player_seats.append(hero_seat)
 
         # Board slots
@@ -75,15 +79,17 @@ class PokerSimulatorGUI:
         """Add a new villain seat."""
         villain_index = len(self.villain_cards)
         self.villain_cards.append([None, None])
+        self.villain_ranges.append(None)
         seat_x = 100 + (villain_index + 1) * 150
         seat_y = 500
-        villain_seat = PlayerSeat(self.screen, seat_x, seat_y, f"Villain {villain_index + 1}", self.villain_cards[-1])
+        villain_seat = PlayerSeat(self.screen, seat_x, seat_y, f"Villain {villain_index + 1}", self.villain_cards[-1], self.villain_ranges[-1])
         self.player_seats.append(villain_seat)
 
     def remove_villain(self):
         """Remove the last villain seat."""
         if len(self.villain_cards) > 1:  # Keep at least one villain
             self.villain_cards.pop()
+            self.villain_ranges.pop()
             self.player_seats.pop()
 
     def get_assigned_cards(self) -> set:
@@ -106,10 +112,9 @@ class PokerSimulatorGUI:
 
     def run_simulation(self):
         """Run the poker simulation with current setup."""
-        # Check if hero range is specified
-        hero_range = self.simulation_panel.hero_range.strip()
-        if hero_range:
-            # Use range-based simulation
+        # Check if hero has a range
+        if self.hero_range:
+            # Use range-based simulation for hero
             board = [c for c in self.board_cards if c is not None]
             
             # Check for duplicate cards in board
@@ -119,7 +124,12 @@ class PokerSimulatorGUI:
                 return
             
             try:
-                result = self.analyzer.calculate_odds_range(hero_range, board, 1, self.num_simulations)
+                # Count opponents (villains with cards or ranges)
+                num_opponents = sum(1 for v in self.villain_cards if any(c is not None for c in v) or self.villain_ranges[len(self.villain_cards) - len(self.villain_cards) + self.villain_cards.index(v)] is not None)
+                if num_opponents == 0:
+                    num_opponents = 1  # Default to 1 opponent
+                
+                result = self.analyzer.calculate_odds_range(self.hero_range, board, num_opponents, self.num_simulations)
                 self.simulation_results = result
                 self.simulation_panel.set_results(result)
                 self.logger.info(f"Range simulation completed: {result}")
@@ -180,6 +190,10 @@ class PokerSimulatorGUI:
         if self.card_picker:
             self.card_picker.draw()
 
+        # Draw range picker if active
+        if self.range_picker:
+            self.range_picker.draw()
+
         # Draw error messages if available
         if self.simulation_results and "error" in self.simulation_results:
             self._draw_results()
@@ -207,6 +221,11 @@ class PokerSimulatorGUI:
         if self.card_picker:
             if self.card_picker.handle_event(event):
                 self.card_picker = None
+                return True
+
+        # Handle range picker if active (check first for modal priority)
+        if self.range_picker:
+            if self.range_picker.handle_event(event):
                 return True
 
         # Handle component events

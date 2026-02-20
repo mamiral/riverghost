@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from hopilot.poker_simulator_gui import PokerSimulatorGUI
 from hopilot.logging_config import get_logger
 from hopilot.gui_components.card_picker import CardPicker
+from hopilot.gui_components.range_picker import RangePicker
+from hopilot.gui_components.plot_panel import PlotPanel
 
 logger = get_logger(__name__)
 
@@ -103,7 +105,7 @@ class TestPokerSimulatorGUI:
         """Test that card picker events take priority over underlying components."""
         # Open card picker on hero card
         gui_app.card_picker = CardPicker(
-            gui_app.screen, lambda x: None, lambda: None, lambda: None, set(), None
+            gui_app.screen, lambda x: None, lambda: None, lambda: None, lambda: None, set(), None
         )
 
         # Create a click event that would hit both picker and board slot
@@ -139,7 +141,7 @@ class TestPokerSimulatorGUI:
             cancel_called = True
 
         # Create card picker
-        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, set(), None)
+        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, lambda: None, set(), None)
 
         # Test random selection
         mock_event = MagicMock()
@@ -160,7 +162,7 @@ class TestPokerSimulatorGUI:
             selected_card = card
 
         # Create card picker
-        picker = CardPicker(gui_app.screen, on_select, lambda: None, lambda: None, set(), None)
+        picker = CardPicker(gui_app.screen, on_select, lambda: None, lambda: None, lambda: None, set(), None)
 
         # Test card selection (first spade - 2s)
         mock_event = MagicMock()
@@ -553,6 +555,266 @@ class TestPokerSimulatorGUI:
         gui_app.board_cards[0] = "Qd"
         board_slot = gui_app.board_slots[0]
         assert board_slot.card == "Qd"
+
+    def test_range_picker_initialization(self, gui_app):
+        """Test RangePicker initialization and basic functionality."""
+        from hopilot.gui_components.range_picker import RangePicker
+
+        selected_range = None
+        cancelled = False
+
+        def on_select(range_str):
+            nonlocal selected_range
+            selected_range = range_str
+
+        def on_cancel():
+            nonlocal cancelled
+            cancelled = True
+
+        # Test initialization without initial range
+        picker = RangePicker(gui_app.screen, on_select, on_cancel)
+        assert len(picker.selected_ranges) == 0
+        assert picker.ranks == ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
+
+        # Test initialization with initial range
+        picker_with_range = RangePicker(gui_app.screen, on_select, on_cancel, "AKs+QQ")
+        assert "AKs" in picker_with_range.selected_ranges
+        assert "QQ" in picker_with_range.selected_ranges
+
+    def test_range_picker_cell_selection(self, gui_app):
+        """Test selecting cells in the range picker matrix."""
+        from hopilot.gui_components.range_picker import RangePicker
+
+        selected_range = None
+
+        def on_select(range_str):
+            nonlocal selected_range
+            selected_range = range_str
+
+        def on_cancel():
+            pass
+
+        picker = RangePicker(gui_app.screen, on_select, on_cancel)
+
+        # Simulate clicking on AA (pocket pair)
+        mock_event = MagicMock()
+        mock_event.type = pygame.MOUSEBUTTONDOWN
+        mock_event.pos = (picker.x + 30 + 35//2, picker.y + 85 + 35//2)  # Center of AA cell
+
+        result = picker.handle_event(mock_event)
+        assert result is True
+        assert "AA" in picker.selected_ranges
+
+        # Click again to deselect
+        result = picker.handle_event(mock_event)
+        assert result is True
+        assert "AA" not in picker.selected_ranges
+
+    def test_range_picker_ok_cancel_buttons(self, gui_app):
+        """Test OK and Cancel button functionality in range picker."""
+        from hopilot.gui_components.range_picker import RangePicker
+
+        selected_range = None
+        cancelled = False
+
+        def on_select(range_str):
+            nonlocal selected_range
+            selected_range = range_str
+
+        def on_cancel():
+            nonlocal cancelled
+            cancelled = True
+
+        picker = RangePicker(gui_app.screen, on_select, on_cancel)
+
+        # Select a range first
+        picker.selected_ranges.add("AKs")
+        picker.selected_ranges.add("QQ")
+
+        # Test OK button
+        mock_ok_event = MagicMock()
+        mock_ok_event.type = pygame.MOUSEBUTTONDOWN
+        mock_ok_event.pos = (picker.x + picker.width - 180 + 40, picker.y + picker.height - 50 + 15)  # Center of OK button
+
+        result = picker.handle_event(mock_ok_event)
+        assert result is True
+        assert selected_range == "AKs+QQ"
+
+        # Reset for cancel test
+        selected_range = None
+        cancelled = False
+
+        # Test Cancel button
+        mock_cancel_event = MagicMock()
+        mock_cancel_event.type = pygame.MOUSEBUTTONDOWN
+        mock_cancel_event.pos = (picker.x + picker.width - 90 + 40, picker.y + picker.height - 50 + 15)  # Center of Cancel button
+
+        result = picker.handle_event(mock_cancel_event)
+        assert result is True
+        assert cancelled is True
+
+    def test_card_picker_range_selection_button(self, gui_app):
+        """Test the 'Select Range' button in CardPicker."""
+        selected_range = None
+
+        def on_select(card):
+            pass
+
+        def on_random():
+            pass
+
+        def on_cancel():
+            pass
+
+        def on_select_range():
+            nonlocal selected_range
+            selected_range = "AKs"
+
+        # Create card picker with assigned cards
+        assigned_cards = {"As", "Kh"}
+        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards)
+
+        # Test clicking Select Range button
+        mock_event = MagicMock()
+        mock_event.type = pygame.MOUSEBUTTONDOWN
+        mock_event.pos = (picker.x + 140 + 60, picker.y + 50 + 15)  # Center of Select Range button
+
+        result = picker.handle_event(mock_event)
+        assert result is True
+        assert selected_range == "AKs"
+
+    def test_player_seat_range_selection(self, gui_app):
+        """Test range selection functionality in PlayerSeat."""
+        hero_seat = gui_app.player_seats[0]
+
+        # Initially no range
+        assert hero_seat.range_str is None
+
+        # Simulate clicking on range area (assuming it's in the seat)
+        # This would typically open a range picker
+        mock_event = MagicMock()
+        mock_event.type = pygame.MOUSEBUTTONDOWN
+        mock_event.pos = (hero_seat.x + 10, hero_seat.y + 10)  # Click in seat area
+
+        # For now, just test that the seat handles events without error
+        result = hero_seat.handle_event(mock_event, gui_app)
+        # This might return False if no specific area was clicked, which is fine
+
+    def test_plot_panel_functionality(self, gui_app):
+        """Test PlotPanel data setting and basic functionality."""
+        from hopilot.gui_components.plot_panel import PlotPanel
+
+        # Create a plot panel
+        plot_panel = PlotPanel(gui_app.screen, 100, 100, 400, 300, "Test Plot", "X Axis", "Y Axis")
+
+        # Test initial state
+        assert plot_panel.title == "Test Plot"
+        assert plot_panel.xlabel == "X Axis"
+        assert plot_panel.ylabel == "Y Axis"
+        assert len(plot_panel.data_x) == 0
+        assert len(plot_panel.data_y) == 0
+
+        # Set some test data
+        x_data = [1, 2, 3, 4, 5]
+        y_data = [10, 20, 15, 25, 30]
+        plot_panel.set_data(x_data, y_data, "Test Data")
+
+        assert plot_panel.data_x == x_data
+        assert plot_panel.data_y == y_data
+        assert plot_panel.data_label == "Test Data"
+
+        # Test drawing (should not raise exceptions)
+        try:
+            plot_panel.draw()
+        except Exception as e:
+            pytest.fail(f"PlotPanel.draw() raised an exception: {e}")
+
+    def test_range_picker_click_outside_cancel(self, gui_app):
+        """Test that clicking outside the range picker cancels it."""
+        from hopilot.gui_components.range_picker import RangePicker
+
+        cancelled = False
+
+        def on_select(range_str):
+            pass
+
+        def on_cancel():
+            nonlocal cancelled
+            cancelled = True
+
+        picker = RangePicker(gui_app.screen, on_select, on_cancel)
+
+        # Click outside the dialog
+        mock_event = MagicMock()
+        mock_event.type = pygame.MOUSEBUTTONDOWN
+        mock_event.pos = (picker.x - 10, picker.y - 10)  # Outside the dialog
+
+        result = picker.handle_event(mock_event)
+        assert result is True
+        assert cancelled is True
+
+    def test_card_picker_current_card_highlighting(self, gui_app):
+        """Test that current card is properly highlighted in CardPicker."""
+        def on_select(card):
+            pass
+
+        def on_random():
+            pass
+
+        def on_cancel():
+            pass
+
+        def on_select_range():
+            pass
+
+        # Create card picker with a current card
+        assigned_cards = {"As", "Kh"}
+        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, "Qd")
+
+        # Test that current card is set
+        assert picker.current_card == "Qd"
+
+        # Test drawing (should highlight Qd appropriately)
+        try:
+            picker.draw()
+        except Exception as e:
+            pytest.fail(f"CardPicker.draw() with current card raised an exception: {e}")
+
+    def test_board_slot_visual_rendering(self, gui_app):
+        """Test that BoardSlot renders correctly with and without cards."""
+        board_slot = gui_app.board_slots[0]
+
+        # Test drawing without card
+        assert board_slot.card is None
+        try:
+            board_slot.draw()
+        except Exception as e:
+            pytest.fail(f"BoardSlot.draw() without card raised an exception: {e}")
+
+        # Test drawing with card
+        board_slot.card = "As"
+        try:
+            board_slot.draw()
+        except Exception as e:
+            pytest.fail(f"BoardSlot.draw() with card raised an exception: {e}")
+
+    def test_simulation_panel_results_display(self, gui_app):
+        """Test that simulation panel displays results correctly."""
+        # Set some mock results
+        mock_results = {
+            'win_probability': 0.65,
+            'tie_probability': 0.05,
+            'loss_probability': 0.30,
+            'valid_simulations': 10000
+        }
+
+        gui_app.simulation_panel.set_results(mock_results)
+
+        # Test drawing with results
+        try:
+            gui_app.simulation_panel.draw()
+        except Exception as e:
+            pytest.fail(f"SimulationPanel.draw() with results raised an exception: {e}")
 
 
 # PyAutoGUI-based integration tests (run separately)

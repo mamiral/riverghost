@@ -8,11 +8,12 @@ class CardPicker:
     Shows all available cards and allows selection.
     """
 
-    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], assigned_cards: set, current_card: Optional[str] = None):
+    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], on_select_range: Callable[[], None], assigned_cards: set, current_card: Optional[str] = None):
         self.screen = screen
         self.on_select = on_select
         self.on_random = on_random
         self.on_cancel = on_cancel
+        self.on_select_range = on_select_range
         self.assigned_cards = assigned_cards  # Set of already assigned card names
         self.current_card = current_card  # Currently selected card for this position
         self.width = 600
@@ -51,6 +52,11 @@ class CardPicker:
         random_text = self.font.render("Random", True, (255, 255, 255))
         self.screen.blit(random_text, (self.x + 30, self.y + 55))
 
+        # Select Range button
+        pygame.draw.rect(self.screen, (0, 0, 255), (self.x + 140, self.y + 50, 120, 30))
+        range_text = self.font.render("Select Range", True, (255, 255, 255))
+        self.screen.blit(range_text, (self.x + 150, self.y + 55))
+
         # Draw cards grid
         card_size = 40
         cols = 13
@@ -66,10 +72,10 @@ class CardPicker:
 
                 # Check card status
                 if card_name == self.current_card:
-                    color = (255, 255, 0)  # Yellow highlight for current card
-                    border_color = (255, 165, 0)  # Orange border
+                    color = self.suit_bg_colors[suit]  # Normal suit color
+                    border_color = (255, 255, 0)  # Yellow border for current card
                     border_width = 3
-                    text_color = (0, 0, 0)  # Black text for highlighted card
+                    text_color = (255, 255, 255)  # White text
                 elif card_name in self.assigned_cards:
                     color = (128, 128, 128)  # Gray out assigned cards
                     border_color = (0, 0, 0)
@@ -97,6 +103,12 @@ class CardPicker:
             if (self.x + 20 <= mouse_x <= self.x + 120 and
                 self.y + 50 <= mouse_y <= self.y + 80):
                 self.on_random()  # Random
+                return True
+
+            # Check select range button
+            if (self.x + 140 <= mouse_x <= self.x + 260 and
+                self.y + 50 <= mouse_y <= self.y + 80):
+                self.on_select_range()  # Select Range
                 return True
 
             # Check card grid
