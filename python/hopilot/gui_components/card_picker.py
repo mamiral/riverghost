@@ -8,7 +8,7 @@ class CardPicker:
     Shows all available cards and allows selection.
     """
 
-    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], on_select_range: Callable[[], None], assigned_cards: set, current_card: Optional[str] = None):
+    def __init__(self, screen: pygame.Surface, on_select: Callable[[Optional[str]], None], on_random: Callable[[], None], on_cancel: Callable[[], None], on_select_range: Callable[[], None], assigned_cards: set, current_card: Optional[str] = None, show_range_button: bool = True):
         self.screen = screen
         self.on_select = on_select
         self.on_random = on_random
@@ -16,6 +16,7 @@ class CardPicker:
         self.on_select_range = on_select_range
         self.assigned_cards = assigned_cards  # Set of already assigned card names
         self.current_card = current_card  # Currently selected card for this position
+        self.show_range_button = show_range_button  # Whether to show the Select Range button
         self.width = 600
         self.height = 400
         self.x = (screen.get_width() - self.width) // 2
@@ -52,10 +53,11 @@ class CardPicker:
         random_text = self.font.render("Random", True, (255, 255, 255))
         self.screen.blit(random_text, (self.x + 30, self.y + 55))
 
-        # Select Range button
-        pygame.draw.rect(self.screen, (0, 0, 255), (self.x + 140, self.y + 50, 120, 30))
-        range_text = self.font.render("Select Range", True, (255, 255, 255))
-        self.screen.blit(range_text, (self.x + 150, self.y + 55))
+        # Select Range button (only if enabled)
+        if self.show_range_button:
+            pygame.draw.rect(self.screen, (0, 0, 255), (self.x + 140, self.y + 50, 120, 30))
+            range_text = self.font.render("Select Range", True, (255, 255, 255))
+            self.screen.blit(range_text, (self.x + 150, self.y + 55))
 
         # Draw cards grid
         card_size = 40
@@ -105,8 +107,8 @@ class CardPicker:
                 self.on_random()  # Random
                 return True
 
-            # Check select range button
-            if (self.x + 140 <= mouse_x <= self.x + 260 and
+            # Check select range button (only if enabled)
+            if self.show_range_button and (self.x + 140 <= mouse_x <= self.x + 260 and
                 self.y + 50 <= mouse_y <= self.y + 80):
                 self.on_select_range()  # Select Range
                 return True

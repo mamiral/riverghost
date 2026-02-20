@@ -102,6 +102,6 @@ class BoardSlot:
                 assigned_cards = gui.get_assigned_cards()
                 if self.card:  # If currently assigned, allow re-selecting it
                     assigned_cards.discard(self.card)
-                gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, lambda: None, assigned_cards, self.card)
+                gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, lambda: None, assigned_cards, self.card, show_range_button=False)
                 return True
         return False

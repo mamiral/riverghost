@@ -672,7 +672,7 @@ class TestPokerSimulatorGUI:
 
         # Create card picker with assigned cards
         assigned_cards = {"As", "Kh"}
-        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards)
+        picker = CardPicker(gui_app.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, None)
 
         # Test clicking Select Range button
         mock_event = MagicMock()
@@ -779,6 +779,38 @@ class TestPokerSimulatorGUI:
             picker.draw()
         except Exception as e:
             pytest.fail(f"CardPicker.draw() with current card raised an exception: {e}")
+
+    def test_card_picker_hide_range_button(self, gui_app):
+        """Test that CardPicker can hide the Select Range button."""
+        def on_select(card):
+            pass
+
+        def on_random():
+            pass
+
+        def on_cancel():
+            pass
+
+        def on_select_range():
+            pass
+
+        # Create card picker with range button hidden
+        assigned_cards = {"As", "Kh"}
+        picker_hidden = CardPicker(gui_app.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, None, show_range_button=False)
+        picker_shown = CardPicker(gui_app.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, None, show_range_button=True)
+
+        # Test that the flag is set correctly
+        assert picker_hidden.show_range_button == False
+        assert picker_shown.show_range_button == True
+
+        # Test that clicking where the range button would be doesn't trigger it when hidden
+        mock_event = MagicMock()
+        mock_event.type = pygame.MOUSEBUTTONDOWN
+        mock_event.pos = (picker_hidden.x + 140 + 60, picker_hidden.y + 50 + 15)  # Where Select Range button would be
+
+        # Should not return True (button not handled) when range button is hidden
+        result = picker_hidden.handle_event(mock_event)
+        assert result == False  # Event not handled since button is hidden
 
     def test_board_slot_visual_rendering(self, gui_app):
         """Test that BoardSlot renders correctly with and without cards."""
