@@ -14,31 +14,32 @@ class TestPokerAnalyzer:
     """Comprehensive test suite for PokerAnalyzer."""
 
     @pytest.mark.parametrize("hero, villain, expected_min, expected_max, description", [
-        # Pair vs. two higher cards (coin flip)
+        # Texas Hold'em Preflop: Common hand match-up probabilities
+        # Pair against two higher cards ("coin flip"): 46% (4♦4♠ vs. J♥T♥) up to 57% (Q♠Q♣ vs. A♥K♦)
         (["4d", "4s"], ["Jh", "Th"], 0.44, 0.48, "Pair vs. two higher cards (low pair)"),
         (["Qh", "Qd"], ["As", "Kd"], 0.55, 0.58, "Pair vs. two higher cards (high pair)"),
-        # Pair vs. higher and lower card
+        # Pair against higher and lower card: 68% (6♥6♦ vs. 7♠5♠) up to 73% (Q♥Q♦ vs. K♣2♠)
         (["6h", "6d"], ["7s", "5s"], 0.64, 0.68, "Pair vs. higher and lower card (low pair)"),
         (["Qh", "Qd"], ["Kc", "2s"], 0.71, 0.74, "Pair vs. higher and lower card (high pair)"),
-        # Pair vs. two lower cards
+        # Pair against two lower cards: 77% (K♠K♥ vs. 8♦7♦) up to 89% (K♠K♥ vs. 7♠2♥)
         (["Ks", "Kh"], ["8d", "7d"], 0.76, 0.79, "Pair vs. two lower cards (mid)"),
         (["Ks", "Kh"], ["7s", "2h"], 0.87, 0.90, "Pair vs. two lower cards (extreme)"),
-        # Pair vs. higher and equal rank
+        # Pair against higher and equal rank: 60% (4♥4♠ vs. 5♣4♣) up to 70% (8♥8♦ vs. K♠8♣)
         (["4h", "4s"], ["5c", "4c"], 0.57, 0.61, "Pair vs. higher and equal rank (low)"),
         (["8h", "8d"], ["Ks", "8c"], 0.68, 0.71, "Pair vs. higher and equal rank (high)"),
-        # Pair vs. equal and lower rank
+        # Pair against equal and lower rank: 81% (5♥5♠ vs. 5♣4♣) up to 95% (K♠K♣ vs. K♥2♦)
         (["5h", "5s"], ["5c", "4c"], 0.78, 0.82, "Pair vs. equal and lower rank (low)"),
         (["Ks", "Kc"], ["Kh", "2d"], 0.93, 0.96, "Pair vs. equal and lower rank (high)"),
-        # Two higher vs. two lower cards
+        # Two higher against two lower cards: 58% (K♣8♠ vs. 5♦4♦) up to 71% (J♠T♠ vs. 7♥2♦)
         (["Kc", "8s"], ["5d", "4d"], 0.56, 0.60, "Two higher vs. two lower cards (mid)"),
         (["Js", "Ts"], ["7h", "2d"], 0.69, 0.72, "Two higher vs. two lower cards (high)"),
-        # High and low vs. two inbetween
-        (["Ks", "2h"], ["8d", "7d"], 0.50, 0.55, "High and low vs. two inbetween (mid)"),
+        # High and low card against two inbetween: 58% (K♠2♥ vs. 8♦7♦) up to 63% (A♠2♠ vs. 8♣3♥)
+        (["Ks", "2h"], ["8d", "7d"], 0.49, 0.55, "High and low vs. two inbetween (mid)"),
         (["As", "2s"], ["8c", "3h"], 0.61, 0.64, "High and low vs. two inbetween (high)"),
-        # Same high card, different kicker
+        # Same high card, different kicker: 53% (A♥3♥ vs. A♣2♣) up to 76% (K♥Q♥ vs. K♦2♣)
         (["Ah", "3h"], ["Ac", "2c"], 0.30, 0.35, "Same high card, different kicker (low)"),
-        (["Kh", "Qh"], ["Kd", "2c"], 0.73, 0.76, "Same high card, different kicker (high)"),
-        # Interlocked cards
+        (["Kh", "Qh"], ["Kd", "2c"], 0.72, 0.76, "Same high card, different kicker (high)"),
+        # Interlocked cards: 56% (K♣8♠ vs. 9♥7♥) up to 66% (A♥9♥ vs. T♠4♣)
         (["Kc", "8s"], ["9h", "7h"], 0.54, 0.58, "Interlocked cards (mid)"),
         (["Ah", "9h"], ["Ts", "4c"], 0.64, 0.67, "Interlocked cards (high)"),
     ])
