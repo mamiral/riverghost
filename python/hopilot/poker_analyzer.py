@@ -5,6 +5,7 @@ from pokerkit.hands import StandardHighHand
 from pokerkit.utilities import Card as PokerkitCard, Deck as PokerkitDeck
 
 from hopilot.logging_config import get_logger
+from hopilot.hand_range import expand_range_to_hands, HandRange
 
 
 class PokerAnalyzer:
@@ -15,11 +16,12 @@ class PokerAnalyzer:
         
         # Using PokerKit library for robust poker hand evaluation
 
-    def safe_evaluate(self, board: List[int], hand: List[int]) -> int:
+    def safe_evaluate(self, board: List[PokerkitCard], hand: List[PokerkitCard]) -> int:
         """
         Safe evaluation using PokerKit.
         """
-        return self.evaluator.evaluate(board, hand)
+        full_hand = StandardHighHand.from_game(hand, board)
+        return -full_hand.entry.index  # Negative so higher index = stronger = lower score
 
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """
@@ -49,6 +51,101 @@ class PokerAnalyzer:
         except Exception as e:
             self.logger.error(f"Failed to evaluate hand: {e}")
             return None
+
+    def _run_monte_carlo_simulation(
+        self,
+        hero_hole: List[PokerkitCard],
+        board: List[PokerkitCard],
+        num_simulations: int,
+        opponent_holes: Optional[List[List[PokerkitCard]]] = None,
+        num_random_opponents: int = 0
+    ) -> Optional[Dict[str, float]]:
+        """
+        Core Monte Carlo simulation method.
+        
+        Args:
+            hero_hole: Hero's hole cards (PokerKit format)
+            board: Known board cards (PokerKit format)
+            num_simulations: Number of simulations to run
+            opponent_holes: Fixed opponent hands (if None, generate random)
+            num_random_opponents: Number of random opponents to generate (if opponent_holes is None)
+        
+        Returns:
+            dict with win/tie/loss probabilities
+        """
+        # Determine known cards
+        known_cards = set(hero_hole + board)
+        if opponent_holes:
+            known_cards.update(c for opp in opponent_holes for c in opp)
+        
+        wins = 0
+        ties = 0
+        valid_simulations = 0
+        
+        for _ in range(num_simulations):
+            # Create fresh deck for each simulation
+            deck_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
+            import random
+            random.shuffle(deck_cards)
+            
+            # Generate opponents if needed
+            current_opponent_holes = opponent_holes
+            if opponent_holes is None:
+                # Generate random opponents
+                if len(deck_cards) < num_random_opponents * 2:
+                    continue  # Not enough cards
+                
+                current_opponent_holes = []
+                for _ in range(num_random_opponents):
+                    hole = [deck_cards.pop(), deck_cards.pop()]
+                    current_opponent_holes.append(hole)
+            
+            # Deal remaining board cards
+            remaining_board_needed = 5 - len(board)
+            if len(deck_cards) < remaining_board_needed:
+                continue  # Not enough cards for board
+            
+            remaining_board = [deck_cards.pop() for _ in range(remaining_board_needed)]
+            full_board = board + remaining_board
+            
+            try:
+                # Evaluate all hands
+                hero_hand = StandardHighHand.from_game(hero_hole, full_board)
+                opp_hands = [StandardHighHand.from_game(opp_hole, full_board) for opp_hole in current_opponent_holes]
+                hero_score = -hero_hand.entry.index
+                opp_scores = [-h.entry.index for h in opp_hands]
+                valid_simulations += 1
+                
+                # Determine if hero wins, ties, or loses
+                hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
+                hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
+                
+                if hero_better_than_all:
+                    wins += 1
+                elif hero_ties_all:
+                    ties += 1
+            except Exception as e:
+                self.logger.warning(f"Simulation iteration failed: {type(e).__name__}: {e}")
+                continue
+        
+        if valid_simulations == 0:
+            self.logger.error("No valid simulations completed")
+            return None
+        
+        win_prob = wins / valid_simulations
+        tie_prob = ties / valid_simulations
+        loss_prob = 1 - win_prob - tie_prob
+        
+        result = {
+            'win_probability': win_prob,
+            'tie_probability': tie_prob,
+            'loss_probability': loss_prob,
+            'valid_simulations': valid_simulations,
+            'wins': wins,
+            'ties': ties
+        }
+        
+        return result
 
     def calculate_odds_random_opponents(
         self, 
@@ -89,83 +186,110 @@ class PokerAnalyzer:
             self.logger.error(f"Board cannot have more than 5 cards, got {len(board)}")
             return None
         
-        known_cards = set(hero + board)
+        # Use common simulation method
+        result = self._run_monte_carlo_simulation(
+            hero_hole=hero,
+            board=board,
+            num_simulations=num_simulations,
+            opponent_holes=None,
+            num_random_opponents=num_opponents
+        )
         
-        wins = 0
-        ties = 0
-        valid_simulations = 0
+        if result:
+            self.logger.info(f"Odds result: {result}")
+        return result
+
+    def calculate_odds_range(
+        self, 
+        hero_range: str, 
+        board_cards: List[str], 
+        num_opponents: int, 
+        num_simulations: int = 10000
+    ) -> Optional[Dict[str, float]]:
+        """
+        Calculate odds for a hero hand range against random opponent hands.
         
-        for _ in range(num_simulations):
-            # Generate random opponent hands
-            deck_cards = list(PokerkitDeck.STANDARD)
-            # Remove known cards
-            deck_cards = [c for c in deck_cards if c not in known_cards]
-            # Shuffle
-            import random
-            random.shuffle(deck_cards)
+        Args:
+            hero_range: shorthand range string like "AKs", "QJo", "22", etc.
+            board_cards: list of community cards.
+            num_opponents: number of opponents.
+            num_simulations: number of sims.
+        
+        Returns:
+            dict with win/tie/loss probabilities averaged over the range.
+        """
+        self.logger.info(f"Calculating odds for range: {hero_range}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
+        
+        # Expand range to all possible hands
+        hero_hands = expand_range_to_hands(hero_range)
+        if not hero_hands:
+            self.logger.error(f"Invalid hero range: {hero_range}")
+            return None
+        
+        # Check for duplicates in board
+        if len(set(board_cards)) < len(board_cards):
+            self.logger.error("Duplicate cards in board")
+            return None
+        
+        # Convert board
+        board = [self.card_name_to_pokerkit(c) for c in board_cards]
+        if any(c is None for c in board):
+            self.logger.error("Invalid board card names")
+            return None
+        
+        if len(board) > 5:
+            self.logger.error(f"Board cannot have more than 5 cards, got {len(board)}")
+            return None
+        
+        known_cards = set(board)
+        
+        total_wins = 0
+        total_ties = 0
+        total_valid_simulations = 0
+        
+        # For each hand in the range, run simulations and accumulate results
+        for hero_hole_cards in hero_hands:
+            # Check for duplicates with board
+            if set(hero_hole_cards) & set(board_cards):
+                continue  # Skip this hand
             
-            # Check deck size
-            needed = 2 * num_opponents + (5 - len(board))
-            if len(deck_cards) < needed:
-                self.logger.error(f"Insufficient cards in deck: {len(deck_cards)}, needed: {needed}")
+            hero = [self.card_name_to_pokerkit(c) for c in hero_hole_cards]
+            if any(c is None for c in hero):
                 continue
             
-            opponent_holes = []
-            for _ in range(num_opponents):
-                if len(deck_cards) < 2:
-                    self.logger.warning("Insufficient cards for opponent hole")
-                    opponent_holes = None
-                    break
-                hole = [deck_cards.pop(), deck_cards.pop()]
-                hole.reverse()  # First card dealt is first in hand
-                opponent_holes.append(hole)
+            # Use common simulation method for this hand
+            hand_result = self._run_monte_carlo_simulation(
+                hero_hole=hero,
+                board=board,
+                num_simulations=num_simulations,
+                opponent_holes=None,
+                num_random_opponents=num_opponents
+            )
             
-            if opponent_holes is not None:
-                # Remaining board
-                remaining_board = 5 - len(board)
-                if len(deck_cards) < remaining_board:
-                    self.logger.warning("Insufficient cards for board")
-                    continue
-                full_board = board + [deck_cards.pop() for _ in range(remaining_board)]
-                
-                try:
-                    # Evaluate
-                    hero_hand = StandardHighHand.from_game(hero, full_board)
-                    opp_hands = [StandardHighHand.from_game(opp, full_board) for opp in opponent_holes]
-                    hero_score = -hero_hand.entry.index  # Negative so higher index = stronger = lower score
-                    opp_scores = [-h.entry.index for h in opp_hands]
-                    valid_simulations += 1
-                    
-                    # Determine if hero wins, ties, or loses
-                    hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
-                    hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
-                    
-                    if hero_better_than_all:
-                        wins += 1
-                    elif hero_ties_all:
-                        ties += 1
-                except Exception as e:
-                    self.logger.warning(f"Random opponents simulation iteration failed: {type(e).__name__}: {e} (hero: {hero}, board: {full_board}, opponents: {opponent_holes})")
-                    continue
+            if hand_result:
+                total_wins += hand_result['wins']
+                total_ties += hand_result['ties']
+                total_valid_simulations += hand_result['valid_simulations']
         
-        if valid_simulations == 0:
+        if total_valid_simulations == 0:
             self.logger.error("No valid simulations completed")
             return None
         
-        win_prob = wins / valid_simulations
-        tie_prob = ties / valid_simulations
+        win_prob = total_wins / total_valid_simulations
+        tie_prob = total_ties / total_valid_simulations
         loss_prob = 1 - win_prob - tie_prob
         
         result = {
             'win_probability': win_prob,
             'tie_probability': tie_prob,
             'loss_probability': loss_prob,
-            'valid_simulations': valid_simulations,
-            'wins': wins,
-            'ties': ties
+            'valid_simulations': total_valid_simulations,
+            'wins': total_wins,
+            'ties': total_ties,
+            'range_size': len(hero_hands)
         }
         
-        self.logger.info(f"Odds result: {result}")
+        self.logger.info(f"Range odds result: {result}")
         return result
 
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
@@ -243,22 +367,25 @@ class PokerAnalyzer:
 
         score = self.evaluate_hand(hole_cards, board_cards)
         hand_class = self.get_hand_class(score)
+        
+        # Get shorthand notation for the hand
+        shorthand = HandRange.shorthand_from_cards(hole_cards)
 
         advice = ""
         if phase == "pre-flop":
             if score and score < 1000:  # Strong hand
-                advice = f"Strong starting hand ({hand_class}). Consider raising."
+                advice = f"Strong starting hand {shorthand} ({hand_class}). Consider raising."
             else:
-                advice = f"Weak starting hand ({hand_class}). Play cautiously."
+                advice = f"Weak starting hand {shorthand} ({hand_class}). Play cautiously."
         elif phase in ["flop", "turn", "river"]:
             if score and score < 500:  # Very strong
                 advice = (
-                    f"Very strong hand ({hand_class}). Aggressive play recommended."
+                    f"Very strong hand {shorthand} ({hand_class}). Aggressive play recommended."
                 )
             elif score and score < 2000:
-                advice = f"Good hand ({hand_class}). Continue betting."
+                advice = f"Good hand {shorthand} ({hand_class}). Continue betting."
             else:
-                advice = f"Weak hand ({hand_class}). Consider folding."
+                advice = f"Weak hand {shorthand} ({hand_class}). Consider folding."
         else:
             advice = "Insufficient information for advice."
 
@@ -316,68 +443,17 @@ class PokerAnalyzer:
             self.logger.error("Duplicate cards in input")
             return None
         
-        # Create deck and remove known cards
-        available_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
-        import random
-        random.shuffle(available_cards)
+        # Use common simulation method
+        result = self._run_monte_carlo_simulation(
+            hero_hole=hero_hole,
+            board=board,
+            num_simulations=num_simulations,
+            opponent_holes=opponent_holes,
+            num_random_opponents=0
+        )
         
-        # Number of cards to draw for board
-        cards_needed = 5 - len(board)
-        
-        wins = 0
-        ties = 0
-        valid_simulations = 0
-        
-        for _ in range(num_simulations):
-            # Create fresh deck for each simulation
-            deck_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
-            import random
-            random.shuffle(deck_cards)
-            
-            # Draw remaining board cards
-            if len(deck_cards) < cards_needed:
-                self.logger.warning("Insufficient cards for board")
-                continue
-            remaining_board = [deck_cards.pop() for _ in range(cards_needed)]
-            full_board = board + remaining_board
-            
-            try:
-                # Evaluate hero hand
-                hero_hand = StandardHighHand.from_game(hero_hole, full_board)
-                opp_hands = [StandardHighHand.from_game(opp_hole, full_board) for opp_hole in opponent_holes]
-                hero_score = -hero_hand.entry.index
-                opp_scores = [-h.entry.index for h in opp_hands]
-                valid_simulations += 1
-                
-                # Determine if hero wins, ties, or loses
-                hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
-                hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
-                
-                if hero_better_than_all:
-                    wins += 1
-                elif hero_ties_all:
-                    ties += 1
-            except Exception as e:
-                self.logger.warning(f"Simulation iteration failed: {type(e).__name__}: {e} (hero: {hero_hole}, opponents: {opponent_holes}, board: {full_board})")
-                # Continue with next simulation
-                continue
-        
-        # Calculate probabilities
-        if valid_simulations == 0:
-            self.logger.error("No valid simulation results obtained")
-            return None
-            
-        win_prob = wins / valid_simulations
-        tie_prob = ties / valid_simulations
-        loss_prob = 1 - win_prob - tie_prob
-        
-        result = {
-            'win_probability': win_prob,
-            'tie_probability': tie_prob,
-            'loss_probability': loss_prob
-        }
-        
-        self.logger.info(f"Odds calculation result: {result}")
+        if result:
+            self.logger.info(f"Odds calculation result: {result}")
         return result
 
     def calculate_pot_odds(

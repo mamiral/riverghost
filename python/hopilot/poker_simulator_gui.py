@@ -106,6 +106,30 @@ class PokerSimulatorGUI:
 
     def run_simulation(self):
         """Run the poker simulation with current setup."""
+        # Check if hero range is specified
+        hero_range = self.simulation_panel.hero_range.strip()
+        if hero_range:
+            # Use range-based simulation
+            board = [c for c in self.board_cards if c is not None]
+            
+            # Check for duplicate cards in board
+            if len(board) != len(set(board)):
+                self.logger.error("Duplicate cards in board")
+                self.simulation_results = {"error": "Duplicate cards are not allowed in board"}
+                return
+            
+            try:
+                result = self.analyzer.calculate_odds_range(hero_range, board, 1, self.num_simulations)
+                self.simulation_results = result
+                self.simulation_panel.set_results(result)
+                self.logger.info(f"Range simulation completed: {result}")
+            except Exception as e:
+                self.logger.error(f"Range simulation failed: {e}")
+                self.simulation_results = {"error": f"Range simulation failed: {str(e)}"}
+                self.simulation_panel.set_results({"error": f"Range simulation failed: {str(e)}"})
+            return
+
+        # Original card-based simulation
         # Collect assigned cards
         hero_hole = [c for c in self.hero_cards if c is not None]
         villain_holes = [[c for c in v if c is not None] for v in self.villain_cards if any(c is not None for c in v)]
