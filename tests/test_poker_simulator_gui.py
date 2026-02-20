@@ -173,7 +173,31 @@ class TestPokerSimulatorGUI:
         assert result is True
         assert selected_card == "2s"
 
-    def test_event_handling_structure(self, gui_app):
+    def test_card_picker_card_deselection(self, gui_app):
+        """Test deselecting a currently selected card (goes to random)."""
+        selected_card = None
+        random_called = False
+
+        def on_select(card):
+            nonlocal selected_card
+            selected_card = card
+
+        def on_random():
+            nonlocal random_called
+            random_called = True
+
+        # Create card picker with a current card selected
+        picker = CardPicker(gui_app.screen, on_select, on_random, lambda: None, lambda: None, set(), "2s")
+
+        # Test clicking on the currently selected card (2s) - should call on_random
+        mock_event = MagicMock()
+        mock_event.type = pygame.MOUSEBUTTONDOWN
+        mock_event.pos = (325, 305)  # Position of 2s card
+
+        result = picker.handle_event(mock_event)
+        assert result is True
+        assert random_called is True
+        assert selected_card is None  # on_select should not be called
         """Test the event handling structure without actual events."""
         # Create a mock event
         mock_event = MagicMock()
@@ -209,7 +233,7 @@ class TestPokerSimulatorGUI:
         # Simulate selecting a card (As)
         mock_select_event = MagicMock()
         mock_select_event.type = pygame.MOUSEBUTTONDOWN
-        mock_select_event.pos = (880, 320)  # Position of As in card picker
+        mock_select_event.pos = (855, 320)  # Position of As in card picker (adjusted for wider dialog)
         
         picker_result = gui_app.handle_event(mock_select_event)
         assert picker_result is True
@@ -234,7 +258,7 @@ class TestPokerSimulatorGUI:
         # Select Kh
         mock_select_event = MagicMock()
         mock_select_event.type = pygame.MOUSEBUTTONDOWN
-        mock_select_event.pos = (815, 345)  # Position of Kh in card picker
+        mock_select_event.pos = (810, 345)  # Position of Kh in card picker (adjusted for wider dialog)
         
         picker_result = gui_app.handle_event(mock_select_event)
         assert picker_result is True
@@ -258,7 +282,7 @@ class TestPokerSimulatorGUI:
         # Select Qc
         mock_select_event = MagicMock()
         mock_select_event.type = pygame.MOUSEBUTTONDOWN
-        mock_select_event.pos = (770, 435)  # Position of Qc in card picker
+        mock_select_event.pos = (765, 435)  # Position of Qc in card picker (adjusted for wider dialog)
         
         picker_result = gui_app.handle_event(mock_select_event)
         assert picker_result is True
@@ -282,7 +306,7 @@ class TestPokerSimulatorGUI:
         # Select Js
         mock_select_event = MagicMock()
         mock_select_event.type = pygame.MOUSEBUTTONDOWN
-        mock_select_event.pos = (725, 300)  # Position of Js in card picker
+        mock_select_event.pos = (720, 300)  # Position of Js in card picker (adjusted for wider dialog)
         
         picker_result = gui_app.handle_event(mock_select_event)
         assert picker_result is True
@@ -306,7 +330,7 @@ class TestPokerSimulatorGUI:
         # Select 10h
         mock_select_event = MagicMock()
         mock_select_event.type = pygame.MOUSEBUTTONDOWN
-        mock_select_event.pos = (680, 345)  # Position of 10h in card picker
+        mock_select_event.pos = (675, 345)  # Position of 10h in card picker (adjusted for wider dialog)
         
         picker_result = gui_app.handle_event(mock_select_event)
         assert picker_result is True
@@ -356,7 +380,7 @@ class TestPokerSimulatorGUI:
         # Handle the click to open picker
         result = gui_app.player_seats[0].handle_event(mock_click_event, gui_app)
         assert result is True
-        assert gui_app.card_picker is not None
+        assert gui_app.range_picker is not None
         
         # Simulate clicking outside the picker (cancel)
         mock_cancel_event = MagicMock()
@@ -366,7 +390,7 @@ class TestPokerSimulatorGUI:
         # Handle the cancel event
         cancel_result = gui_app.handle_event(mock_cancel_event)
         assert cancel_result is True
-        assert gui_app.card_picker is None
+        assert gui_app.range_picker is None
         
         # Verify the card is preserved
         assert gui_app.hero_cards[0] == "As"
@@ -384,16 +408,15 @@ class TestPokerSimulatorGUI:
         # Handle the click to open picker
         result = gui_app.player_seats[0].handle_event(mock_click_event, gui_app)
         assert result is True
-        assert gui_app.card_picker is not None
+        assert gui_app.range_picker is not None
         
-        # Verify the picker has the current card set
-        assert gui_app.card_picker.current_card == "As"
+        # Verify the picker is opened (now a range picker by default)
+        assert gui_app.range_picker is not None
         
-        # Draw the picker and check that As is highlighted
-        gui_app.card_picker.draw()
+        # Draw the picker and check that it renders without errors
+        gui_app.range_picker.draw()
         
-        # The test passes if no exceptions occur and the picker is properly configured
-        assert gui_app.card_picker.current_card == "As"
+        # The test passes if no exceptions occur and the picker is properly opened
 
     def test_simulation_panel_button_interactions(self, gui_app):
         """Test simulation panel button clicks."""
@@ -639,6 +662,21 @@ class TestPokerSimulatorGUI:
         result = picker.handle_event(mock_ok_event)
         assert result is True
         assert selected_range == "AKs+QQ"
+
+        # Reset for no selection test
+        selected_range = None
+        cancelled = False
+
+        # Clear all selections and test OK button (should call on_select with empty string)
+        picker.selected_ranges.clear()
+        mock_ok_event2 = MagicMock()
+        mock_ok_event2.type = pygame.MOUSEBUTTONDOWN
+        mock_ok_event2.pos = (picker.x + picker.width - 180 + 40, picker.y + picker.height - 50 + 15)  # Center of OK button
+
+        result = picker.handle_event(mock_ok_event2)
+        assert result is True
+        assert selected_range == ""  # Should call on_select with empty string for no selection
+        assert cancelled is False  # Should not call on_cancel
 
         # Reset for cancel test
         selected_range = None

@@ -13,10 +13,11 @@ class RangePicker:
     Shows a grid of hand combinations with suited/offsuit options.
     """
 
-    def __init__(self, screen: pygame.Surface, on_select: Callable[[str], None], on_cancel: Callable[[], None], initial_range: Optional[str] = None):
+    def __init__(self, screen: pygame.Surface, on_select: Callable[[str], None], on_cancel: Callable[[], None], initial_range: Optional[str] = None, on_switch_to_cards: Optional[Callable[[], None]] = None):
         self.screen = screen
         self.on_select = on_select
         self.on_cancel = on_cancel
+        self.on_switch_to_cards = on_switch_to_cards
         self.width = 700
         self.height = 620  # Increased height to accommodate larger cells
         self.x = (screen.get_width() - self.width) // 2
@@ -56,17 +57,23 @@ class RangePicker:
         self.screen.blit(instr1, (self.x + 20, self.y + 45))
         self.screen.blit(instr2, (self.x + 20, self.y + 60))
 
-        # OK and Cancel buttons
-        ok_button_rect = (self.x + self.width - 180, self.y + self.height - 50, 80, 30)
-        cancel_button_rect = (self.x + self.width - 90, self.y + self.height - 50, 80, 30)
+        # OK, Cancel, and Select Cards buttons
+        select_cards_button_rect = (self.x + self.width - 270, self.y + self.height - 50, 100, 30)
+        ok_button_rect = (self.x + self.width - 160, self.y + self.height - 50, 70, 30)
+        cancel_button_rect = (self.x + self.width - 80, self.y + self.height - 50, 70, 30)
+
+        if self.on_switch_to_cards:
+            pygame.draw.rect(self.screen, (0, 0, 255), select_cards_button_rect)
+            cards_text = self.font.render("Cards", True, (255, 255, 255))
+            self.screen.blit(cards_text, (select_cards_button_rect[0] + 10, select_cards_button_rect[1] + 5))
 
         pygame.draw.rect(self.screen, (0, 255, 0), ok_button_rect)
         pygame.draw.rect(self.screen, (255, 0, 0), cancel_button_rect)
 
         ok_text = self.font.render("OK", True, (255, 255, 255))
         cancel_text = self.font.render("Cancel", True, (255, 255, 255))
-        self.screen.blit(ok_text, (ok_button_rect[0] + 25, ok_button_rect[1] + 5))
-        self.screen.blit(cancel_text, (cancel_button_rect[0] + 15, cancel_button_rect[1] + 5))
+        self.screen.blit(ok_text, (ok_button_rect[0] + 20, ok_button_rect[1] + 5))
+        self.screen.blit(cancel_text, (cancel_button_rect[0] + 10, cancel_button_rect[1] + 5))
 
         # Draw the range matrix
         self._draw_matrix()
@@ -126,8 +133,16 @@ class RangePicker:
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_x, mouse_y = event.pos
 
+            # Check Select Cards button
+            if self.on_switch_to_cards:
+                select_cards_button_rect = (self.x + self.width - 270, self.y + self.height - 50, 100, 30)
+                if (select_cards_button_rect[0] <= mouse_x <= select_cards_button_rect[0] + select_cards_button_rect[2] and
+                    select_cards_button_rect[1] <= mouse_y <= select_cards_button_rect[1] + select_cards_button_rect[3]):
+                    self.on_switch_to_cards()
+                    return True
+
             # Check OK button
-            ok_button_rect = (self.x + self.width - 180, self.y + self.height - 50, 80, 30)
+            ok_button_rect = (self.x + self.width - 160, self.y + self.height - 50, 70, 30)
             if (ok_button_rect[0] <= mouse_x <= ok_button_rect[0] + ok_button_rect[2] and
                 ok_button_rect[1] <= mouse_y <= ok_button_rect[1] + ok_button_rect[3]):
                 # Convert selected ranges to a combined range string
@@ -135,11 +150,12 @@ class RangePicker:
                     combined_range = "+".join(sorted(self.selected_ranges))
                     self.on_select(combined_range)
                 else:
-                    self.on_cancel()
+                    # No ranges selected - clear the range (go back to random)
+                    self.on_select("")
                 return True
 
             # Check Cancel button
-            cancel_button_rect = (self.x + self.width - 90, self.y + self.height - 50, 80, 30)
+            cancel_button_rect = (self.x + self.width - 80, self.y + self.height - 50, 70, 30)
             if (cancel_button_rect[0] <= mouse_x <= cancel_button_rect[0] + cancel_button_rect[2] and
                 cancel_button_rect[1] <= mouse_y <= cancel_button_rect[1] + cancel_button_rect[3]):
                 self.on_cancel()

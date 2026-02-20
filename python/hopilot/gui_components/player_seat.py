@@ -88,33 +88,37 @@ class PlayerSeat:
             
             # Check if clicking on range area
             if self.range_str and self.x + 10 <= mouse_x <= self.x + 110 and self.y + 35 <= mouse_y <= self.y + 65:
-                # Open card picker for range selection
-                def on_select(card):
-                    self.cards = [card, None] if card else [None, None]
-                    self.range_str = None
+                # Re-open range picker for range editing
+                def on_range_select(range_str):
+                    self.range_str = range_str if range_str else None
+                    gui.range_picker = None
                 
-                def on_random():
-                    self.cards = [None, None]
-                    self.range_str = None
+                def on_range_cancel():
+                    gui.range_picker = None
                 
-                def on_cancel():
-                    pass
-                
-                def on_select_range():
-                    # Open range picker
-                    def on_range_select(range_str):
-                        self.range_str = range_str
-                        self.cards = [None, None]  # Clear specific cards when range is set
-                        gui.range_picker = None
+                def on_switch_to_cards():
+                    # Switch to card picker (though this is less common when range is already set)
+                    gui.range_picker = None
                     
-                    def on_range_cancel():
-                        gui.range_picker = None
+                    def on_select(card):
+                        self.cards = [card, None] if card else [None, None]
+                        self.range_str = None
                     
-                    gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str)
-                    gui.card_picker = None  # Close card picker
+                    def on_random():
+                        self.cards = [None, None]
+                        self.range_str = None
+                    
+                    def on_cancel():
+                        pass
+                    
+                    def on_select_range():
+                        gui.card_picker = None
+                        gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards)
+                    
+                    assigned_cards = gui.get_assigned_cards()
+                    gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, None)
                 
-                assigned_cards = gui.get_assigned_cards()
-                gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, None)
+                gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards)
                 return True
             
             # Check card clicks
@@ -122,36 +126,39 @@ class PlayerSeat:
                 card_x = self.x + 10 + i * 50
                 card_y = self.y + 25
                 if card_x <= mouse_x <= card_x + 40 and card_y <= mouse_y <= card_y + 50:
-                    # Clear range if setting specific cards
-                    self.range_str = None
+                    # Open range picker by default
+                    def on_range_select(range_str):
+                        self.range_str = range_str if range_str else None
+                        self.cards = [None, None]  # Clear specific cards when range is set
+                        gui.range_picker = None
                     
-                    # Open card picker for this card
-                    def on_select(card):
-                        self.cards[i] = card
+                    def on_range_cancel():
+                        gui.range_picker = None
                     
-                    def on_random():
-                        self.cards[i] = None
-                    
-                    def on_cancel():
-                        # Do nothing - keep current card
-                        pass
-                    
-                    def on_select_range():
-                        # Open range picker
-                        def on_range_select(range_str):
-                            self.range_str = range_str
-                            self.cards = [None, None]  # Clear specific cards when range is set
-                            gui.range_picker = None
+                    def on_switch_to_cards():
+                        # Switch to card picker for this specific card
+                        gui.range_picker = None  # Close range picker
                         
-                        def on_range_cancel():
-                            gui.range_picker = None
+                        def on_select(card):
+                            self.cards[i] = card
+                            self.range_str = None  # Clear range when setting specific card
                         
-                        gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str)
-                        gui.card_picker = None  # Close card picker
+                        def on_random():
+                            self.cards[i] = None
+                        
+                        def on_cancel():
+                            pass
+                        
+                        def on_select_range():
+                            # Re-open range picker
+                            gui.card_picker = None
+                            gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards)
+                        
+                        assigned_cards = gui.get_assigned_cards()
+                        if self.cards[i]:  # If currently assigned, allow re-selecting it
+                            assigned_cards.discard(self.cards[i])
+                        gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, self.cards[i])
                     
-                    assigned_cards = gui.get_assigned_cards()
-                    if self.cards[i]:  # If currently assigned, allow re-selecting it
-                        assigned_cards.discard(self.cards[i])
-                    gui.card_picker = CardPicker(gui.screen, on_select, on_random, on_cancel, on_select_range, assigned_cards, self.cards[i])
+                    gui.range_picker = RangePicker(gui.screen, on_range_select, on_range_cancel, self.range_str, on_switch_to_cards)
                     return True
         return False

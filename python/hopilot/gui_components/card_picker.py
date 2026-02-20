@@ -17,7 +17,7 @@ class CardPicker:
         self.assigned_cards = assigned_cards  # Set of already assigned card names
         self.current_card = current_card  # Currently selected card for this position
         self.show_range_button = show_range_button  # Whether to show the Select Range button
-        self.width = 600
+        self.width = 650  # Increased from 600 to give more margin for A cards
         self.height = 400
         self.x = (screen.get_width() - self.width) // 2
         self.y = (screen.get_height() - self.height) // 2
@@ -127,7 +127,12 @@ class CardPicker:
                         card_y <= mouse_y <= card_y + card_size):
                         card_name = f"{rank}{suit}"
                         if card_name not in self.assigned_cards:
-                            self.on_select(card_name)
+                            if card_name == self.current_card:
+                                # Clicking on currently selected card deselects it (go to random)
+                                self.on_random()
+                            else:
+                                # Select the clicked card
+                                self.on_select(card_name)
                             return True
 
             # Click outside to cancel
