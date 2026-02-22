@@ -11,7 +11,7 @@ class CardLayout:
             try:
                 config = load_config()
             except FileNotFoundError:
-                from config import DEFAULT_CONFIG
+                from .config import DEFAULT_CONFIG
 
                 config = DEFAULT_CONFIG
 
