@@ -133,7 +133,8 @@ class CardPicker:
                             else:
                                 # Select the clicked card
                                 self.on_select(card_name)
-                            return True
+                        # Always return True for card clicks (even if assigned)
+                        return True
 
             # Click outside to cancel
             if not (self.x <= mouse_x <= self.x + self.width and

@@ -189,7 +189,9 @@ class RangePicker:
                         if range_str in self.selected_ranges:
                             self.selected_ranges.remove(range_str)
                         else:
-                            self.selected_ranges.add(range_str)
+                            # Check if this range can be assigned before selecting
+                            if self.can_assign_range(range_str):
+                                self.selected_ranges.add(range_str)
                         return True
 
             # Click outside to cancel
