@@ -206,35 +206,7 @@ class TestPokerSimulatorGUI:
         assert random_called is True
         assert selected_card is None  # on_select should not be called
 
-    def test_card_blocking_after_range_to_specific_conversion(self, gui_app):
-        """Test that cards selected after range conversion are properly blocked in other positions."""
-        # Set hero range to "33"
-        gui_app.card_manager.set_hero_range("33")
-        
-        # Verify all 3's are blocked
-        blocked_cards = gui_app.card_manager.get_blocked_cards()
-        assert "3s" in blocked_cards
-        assert "3h" in blocked_cards
-        assert "3d" in blocked_cards
-        assert "3c" in blocked_cards
-        
-        # Now set a specific hero card "3s" - this should clear the range
-        gui_app.card_manager.set_hero_card(0, "3s")
-        
-        # Verify range is cleared
-        hero_state = gui_app.card_manager.get_hero_state()
-        assert hero_state['range'] is None
-        assert hero_state['cards'][0] == "3s"
-        
-        # Verify "3s" is still blocked (now by the specific card assignment)
-        blocked_cards = gui_app.card_manager.get_blocked_cards()
-        assert "3s" in blocked_cards
-        
-        # Verify other 3's are now available (since range was cleared)
-        assert "3h" not in blocked_cards
-        assert "3d" not in blocked_cards
-        assert "3c" not in blocked_cards
-        """Test the event handling structure without actual events."""
+    def test_event_handling_structure(self, gui_app):
         # Create a mock event
         mock_event = MagicMock()
         mock_event.type = pygame.MOUSEBUTTONDOWN

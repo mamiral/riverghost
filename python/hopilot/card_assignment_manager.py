@@ -77,6 +77,8 @@ class CardAssignmentManager:
         """Set a specific villain hole card."""
         while len(self.villain_cards) <= villain_index:
             self.villain_cards.append([None, None])
+        while len(self.villain_ranges) <= villain_index:
+            self.villain_ranges.append(None)
         self.villain_cards[villain_index][card_index] = card
         if card:  # If setting a specific card
             self.villain_ranges[villain_index] = None  # Clear range
@@ -98,13 +100,14 @@ class CardAssignmentManager:
         self.board_cards[index] = card
         self._notify_observers()
 
-    def get_blocked_cards(self) -> Set[str]:
+    def get_specifically_assigned_cards(self) -> Set[str]:
         """
-        Get all cards that are blocked from assignment.
-
+        Get all cards that are specifically assigned (not from ranges).
+        
         This includes:
-        - All specifically assigned cards
-        - All cards that are part of any player's range
+        - All specifically assigned hero cards
+        - All specifically assigned villain cards
+        - All board cards
         """
         blocked = set()
 
@@ -121,6 +124,18 @@ class CardAssignmentManager:
         for card in self.board_cards:
             if card:
                 blocked.add(card)
+
+        return blocked
+
+    def get_blocked_cards(self) -> Set[str]:
+        """
+        Get all cards that are blocked from assignment.
+
+        This includes:
+        - All specifically assigned cards
+        - All cards that are part of any player's range
+        """
+        blocked = self.get_specifically_assigned_cards()
 
         # Add cards from ranges
         if self.hero_range:
@@ -149,14 +164,14 @@ class CardAssignmentManager:
         return card not in self.get_blocked_cards()
 
     def can_assign_range(self, range_str: str) -> bool:
-        """Check if a range can be assigned (no conflicts with existing assignments)."""
+        """Check if a range can be assigned (no conflicts with existing specific card assignments)."""
         try:
             range_cards = HandRange.parse_shorthand(range_str)
-            blocked_cards = self.get_blocked_cards()
+            assigned_cards = self.get_specifically_assigned_cards()
 
-            # Check if any cards in the range are already blocked
+            # Check if any cards in the range are already specifically assigned
             for card1, card2 in range_cards:
-                if card1 in blocked_cards or card2 in blocked_cards:
+                if card1 in assigned_cards or card2 in assigned_cards:
                     return False
             return True
         except Exception as e:
