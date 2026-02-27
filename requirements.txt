@@ -3,7 +3,7 @@
 opencv-python==4.8.0
 numpy==1.24.0
 pygame==2.5.0
-treys==0.1.8
+pokerkit==0.1.0
 Pillow==10.0.0
 pygetwindow==0.0.9
 pathlib2==2.3.7
@@ -17,6 +17,7 @@ pytest==7.4.0
 pytest-mock==3.11.1
 pydantic==2.5.0
 pyyaml==6.0
+matplotlib==3.7.0
 black==23.7.0
 flake8==6.0.0
 mypy==1.5.1
