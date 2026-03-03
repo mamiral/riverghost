@@ -11,6 +11,8 @@ from .gui_components.board_slot import BoardSlot
 from .gui_components.card_picker import CardPicker
 from .gui_components.range_picker import RangePicker
 from .gui_components.simulation_panel import SimulationPanel
+from .gui_components.gto_solver_panel import GTOSolverPanel
+from .gto.gto_optimizer import GTOOptimizer
 
 
 class PokerSimulatorGUI:
@@ -27,16 +29,23 @@ class PokerSimulatorGUI:
         self.width = width
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption("Poker Simulator")
+        pygame.display.set_caption("HoPilot - Poker Simulator & GTO Solver")
         self.font = pygame.font.SysFont("arial", 24)
         self.clock = pygame.time.Clock()
 
         # Initialize PokerAnalyzer
         self.analyzer = PokerAnalyzer()
 
+        # Initialize GTOOptimizer
+        self.optimizer = GTOOptimizer(self.analyzer)
+
         # Initialize Card Assignment Manager
         self.card_manager = CardAssignmentManager()
         self.card_manager.add_observer(self._on_assignments_changed)
+
+        # Navigation and panels
+        self.current_panel = 'simulator'  # 'simulator' or 'gto_solver'
+        self.nav_buttons = {}  # Navigation button rectangles
 
         # GUI components
         self.player_seats: List[PlayerSeat] = []
@@ -44,6 +53,7 @@ class PokerSimulatorGUI:
         self.card_picker: Optional[CardPicker] = None
         self.range_picker: Optional[RangePicker] = None
         self.simulation_panel: Optional[SimulationPanel] = None
+        self.gto_solver_panel: Optional[GTOSolverPanel] = None
 
         # Simulation parameters
         self.num_simulations = 10000
@@ -75,7 +85,39 @@ class PokerSimulatorGUI:
             slot.card = board_state[i]
 
     def _setup_layout(self):
-        """Set up the initial GUI layout."""
+        """Set up the GUI layout based on current panel."""
+        # Clear existing components
+        self.player_seats.clear()
+        self.board_slots.clear()
+        self.card_picker = None
+        self.range_picker = None
+        self.simulation_panel = None
+        self.gto_solver_panel = None
+
+        # Setup navigation buttons
+        self._setup_navigation()
+
+        if self.current_panel == 'simulator':
+            self._setup_simulator_layout()
+        elif self.current_panel == 'gto_solver':
+            self._setup_gto_solver_layout()
+
+    def _setup_navigation(self):
+        """Set up navigation buttons at the top."""
+        button_width = 150
+        button_height = 40
+        button_y = 10
+
+        # Poker Simulator button
+        simulator_x = (self.width - 2 * button_width - 20) // 2
+        self.nav_buttons['simulator'] = pygame.Rect(simulator_x, button_y, button_width, button_height)
+
+        # GTO Solver button
+        gto_x = simulator_x + button_width + 20
+        self.nav_buttons['gto_solver'] = pygame.Rect(gto_x, button_y, button_width, button_height)
+
+    def _setup_simulator_layout(self):
+        """Set up the poker simulator layout."""
         # Hero seat
         hero_state = self.card_manager.get_hero_state()
         def update_hero_range(range_str):
@@ -97,6 +139,14 @@ class PokerSimulatorGUI:
 
         # Add default villain
         self.add_villain()
+
+    def _setup_gto_solver_layout(self):
+        """Set up the GTO solver layout."""
+        # GTO Solver panel
+        self.gto_solver_panel = GTOSolverPanel(self.analyzer, self.optimizer, self.width, self.height - 60)
+        # Position the panel below navigation
+        self.gto_solver_panel.surface = pygame.Surface((self.width, self.height - 60))
+        self.gto_solver_panel._create_ui_rects()  # Recreate UI with new dimensions
 
     def add_villain(self):
         """Add a new villain seat."""
@@ -207,6 +257,39 @@ class PokerSimulatorGUI:
         """Draw the GUI."""
         self.screen.fill((34, 139, 34))  # Green table color
 
+        # Draw navigation buttons
+        self._draw_navigation()
+
+        # Draw current panel content
+        if self.current_panel == 'simulator':
+            self._draw_simulator()
+        elif self.current_panel == 'gto_solver':
+            self._draw_gto_solver()
+
+        pygame.display.flip()
+
+    def _draw_navigation(self):
+        """Draw navigation buttons."""
+        mouse_pos = pygame.mouse.get_pos()
+
+        for panel_name, rect in self.nav_buttons.items():
+            # Highlight current panel
+            color = (100, 200, 100) if panel_name == self.current_panel else (150, 150, 150)
+            # Hover effect
+            if rect.collidepoint(mouse_pos):
+                color = tuple(min(255, c + 50) for c in color)
+
+            pygame.draw.rect(self.screen, color, rect)
+            pygame.draw.rect(self.screen, (0, 0, 0), rect, 2)
+
+            # Button text
+            text = "Poker Simulator" if panel_name == 'simulator' else "GTO Solver"
+            text_surface = self.font.render(text, True, (0, 0, 0))
+            text_rect = text_surface.get_rect(center=rect.center)
+            self.screen.blit(text_surface, text_rect)
+
+    def _draw_simulator(self):
+        """Draw the poker simulator components."""
         # Draw components
         for seat in self.player_seats:
             seat.draw()
@@ -227,7 +310,13 @@ class PokerSimulatorGUI:
         if self.simulation_results and "error" in self.simulation_results:
             self._draw_results()
 
-        pygame.display.flip()
+    def _draw_gto_solver(self):
+        """Draw the GTO solver panel."""
+        if self.gto_solver_panel:
+            # Draw the GTO solver panel below navigation
+            self.gto_solver_panel.draw(self.screen)
+            # Blit the panel surface to the screen at the right position
+            self.screen.blit(self.gto_solver_panel.surface, (0, 60))
 
     def _draw_results(self):
         """Draw simulation results."""
@@ -246,6 +335,27 @@ class PokerSimulatorGUI:
         if event.type == pygame.QUIT:
             return False
 
+        # Handle navigation button clicks
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_pos = event.pos
+            for panel_name, rect in self.nav_buttons.items():
+                if rect.collidepoint(mouse_pos):
+                    if panel_name != self.current_panel:
+                        self.current_panel = panel_name
+                        self._setup_layout()  # Recreate layout for new panel
+                        self.logger.info(f"Switched to panel: {panel_name}")
+                    return True
+
+        # Handle panel-specific events
+        if self.current_panel == 'simulator':
+            return self._handle_simulator_event(event)
+        elif self.current_panel == 'gto_solver':
+            return self._handle_gto_solver_event(event)
+
+        return True
+
+    def _handle_simulator_event(self, event):
+        """Handle events for the poker simulator panel."""
         # Handle card picker if active (check first for modal priority)
         if self.card_picker:
             if self.card_picker.handle_event(event):
@@ -264,7 +374,7 @@ class PokerSimulatorGUI:
         for slot in self.board_slots:
             if slot.handle_event(event, self):
                 return True
-        
+
         # Handle simulation panel events
         if self.simulation_panel:
             panel_result = self.simulation_panel.handle_event(event)
@@ -278,6 +388,25 @@ class PokerSimulatorGUI:
                 self.remove_villain()
                 return True
             elif panel_result:
+                return True
+
+        return True
+
+    def _handle_gto_solver_event(self, event):
+        """Handle events for the GTO solver panel."""
+        if self.gto_solver_panel:
+            # Adjust event position for the panel offset (below navigation)
+            if hasattr(event, 'pos'):
+                adjusted_pos = (event.pos[0], event.pos[1] - 60)
+                adjusted_event = event
+                if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+                    adjusted_event = pygame.event.Event(event.type, pos=adjusted_pos, button=getattr(event, 'button', 1))
+                elif event.type == pygame.KEYDOWN:
+                    adjusted_event = event  # Keyboard events don't need position adjustment
+
+            panel_result = self.gto_solver_panel.handle_event(adjusted_event)
+            if panel_result:
+                self.logger.info(f"GTO solver panel event: {panel_result}")
                 return True
 
         return True

@@ -7,6 +7,8 @@ using professional shorthand notation (e.g., "AKs", "QJo", "22", "A5s-A2s", "KTs
 
 from typing import List, Set, Dict, Optional, Tuple
 import re
+from datetime import datetime
+from pydantic import BaseModel, validator
 from hopilot.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -19,10 +21,51 @@ SUITS = ['s', 'h', 'd', 'c']
 SUIT_NAMES = {'s': 'spades', 'h': 'hearts', 'd': 'diamonds', 'c': 'clubs'}
 
 
+class PokerRange(BaseModel):
+    """Represents a collection of poker hands with metadata."""
+    name: str
+    description: Optional[str] = None
+    hands: List[str]  # List of shorthand hand notations (e.g., ["AA", "AKs", "QQ"])
+    tags: Optional[List[str]] = None  # e.g., ["broadway", "premium", "suited"]
+    created: datetime = datetime.now()
+    modified: datetime = datetime.now()
+
+    @validator('hands')
+    def validate_hands(cls, v):
+        """Ensure all hands are valid poker hand notations."""
+        for hand in v:
+            if not HandRange.is_valid_shorthand(hand):
+                raise ValueError(f"Invalid hand notation: {hand}")
+        return v
+
+    def expand_to_cards(self) -> List[List[str]]:
+        """Expand range to all possible card combinations."""
+        return HandRange.expand_range_to_hands(self.hands)
+
+
 class HandRange:
     """
     Class for parsing and expanding poker hand ranges.
     """
+
+    @staticmethod
+    def is_valid_shorthand(shorthand: str) -> bool:
+        """
+        Check if a shorthand notation is valid.
+        
+        Args:
+            shorthand: Hand shorthand (e.g., "AKs", "22", "A5s-A2s")
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        try:
+            # Import here to avoid circular import
+            from hopilot.hand_range import expand_range_to_hands
+            hands = expand_range_to_hands(shorthand)
+            return len(hands) > 0
+        except:
+            return False
 
     @staticmethod
     def parse_shorthand(shorthand: str) -> List[Tuple[str, str]]:
@@ -283,3 +326,42 @@ def split_range_to_components(range_str: str) -> Set[str]:
                 components.add(part)
     
     return components
+
+    @staticmethod
+    def shorthand_from_cards(cards: List[str]) -> str:
+        """
+        Convert two cards to shorthand notation.
+
+        Args:
+            cards: List of two card names (e.g., ['As', 'Kh'])
+
+        Returns:
+            Shorthand string (e.g., 'AKs', 'AKo', 'AA')
+        """
+        if len(cards) != 2:
+            return ""
+
+        card1, card2 = cards
+        rank1 = card1[0]
+        suit1 = card1[1]
+        rank2 = card2[0]
+        suit2 = card2[1]
+
+        # Ensure consistent ordering (higher rank first)
+        if RANK_VALUES[rank1] < RANK_VALUES[rank2]:
+            rank1, rank2 = rank2, rank1
+            suit1, suit2 = suit2, suit1
+        elif RANK_VALUES[rank1] == RANK_VALUES[rank2]:
+            # For pairs, sort by suit for consistency
+            if suit1 > suit2:
+                suit1, suit2 = suit2, suit1
+
+        if rank1 == rank2:
+            # Pocket pair
+            return f"{rank1}{rank2}"
+        elif suit1 == suit2:
+            # Suited
+            return f"{rank1}{rank2}s"
+        else:
+            # Offsuit
+            return f"{rank1}{rank2}o"

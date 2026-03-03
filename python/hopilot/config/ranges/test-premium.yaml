@@ -1,0 +1,11 @@
+name: Test Premium
+description: Testing integration
+hands:
+- AA
+- AKs
+- QQ
+tags:
+- test
+- premium
+created: '2026-03-01T16:49:39.496155'
+modified: '2026-03-01T16:49:39.496158'

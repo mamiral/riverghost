@@ -1,0 +1,13 @@
+# Default bonus payout configurations for GTO solver
+# These represent common tournament bonus multipliers
+
+bonus_payouts:
+  royal_flush: 500
+  straight_flush: 100
+  four_of_a_kind: 50
+  full_house: 10
+  flush: 5
+  straight: 4
+  three_of_a_kind: 3
+  two_pair: 2
+  one_pair: 1
