@@ -3,7 +3,13 @@ Unit tests for AllInFoldGTOSolver GTO threshold calculations.
 """
 
 import pytest
+import sys
+import os
 from unittest.mock import Mock, patch
+
+# Add the python directory to the path so we can import hopilot modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+
 from hopilot.all_in_fold_gto import AllInFoldGTOSolver
 from hopilot.poker_analyzer import PokerAnalyzer
 

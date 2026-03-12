@@ -5,7 +5,6 @@ from typing import List, Optional, Dict, Any
 from hopilot.logging_config import get_logger
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.card_assignment_manager import CardAssignmentManager
-from hopilot.all_in_fold_gto import AllInFoldGTOSolver
 
 from .gui_components.player_seat import PlayerSeat
 from .gui_components.board_slot import BoardSlot
@@ -39,9 +38,6 @@ class PokerSimulatorGUI:
 
         # Initialize GTOOptimizer
         self.optimizer = GTOOptimizer(self.analyzer)
-
-        # Initialize GTO Solver
-        self.gto_solver = AllInFoldGTOSolver(self.analyzer)
 
         # Initialize Card Assignment Manager
         self.card_manager = CardAssignmentManager()
@@ -139,7 +135,7 @@ class PokerSimulatorGUI:
             self.board_slots.append(slot)
 
         # Simulation panel
-        self.simulation_panel = SimulationPanel(self.screen, self.analyzer, self.gto_solver, 800, 100, self)
+        self.simulation_panel = SimulationPanel(self.screen, self.analyzer, 800, 100, self)
 
         # Add default villain
         self.add_villain()
@@ -256,65 +252,6 @@ class PokerSimulatorGUI:
             self.logger.error(f"Simulation failed: {e}")
             self.simulation_results = {"error": f"Simulation failed: {str(e)}"}
             self.simulation_panel.set_results({"error": f"Simulation failed: {str(e)}"})
-
-    def run_gto_analysis(self):
-        """Run GTO analysis for all-in scenarios."""
-        if not self.gto_solver:
-            self.logger.error("GTO solver not available")
-            self.simulation_panel.set_gto_results({"error": "GTO solver not available"})
-            return
-
-        # Collect hero cards
-        hero_state = self.card_manager.get_hero_state()
-        hero_hole = [c for c in hero_state['cards'] if c is not None]
-        
-        if len(hero_hole) != 2:
-            self.logger.error("Hero must have exactly 2 hole cards for GTO analysis")
-            self.simulation_panel.set_gto_results({"error": "Hero must have exactly 2 hole cards"})
-            return
-
-        # Collect villain cards - for GTO, need exactly one villain
-        villain_holes = []
-        for i in range(len(self.card_manager.villain_cards)):
-            villain_state = self.card_manager.get_villain_state(i)
-            villain_cards = [c for c in villain_state['cards'] if c is not None]
-            if villain_cards:
-                villain_holes.append(villain_cards)
-        
-        if len(villain_holes) != 1:
-            self.logger.error("GTO analysis requires exactly one villain")
-            self.simulation_panel.set_gto_results({"error": "GTO analysis requires exactly one villain"})
-            return
-        
-        villain_hole = villain_holes[0]
-        if len(villain_hole) != 2:
-            self.logger.error("Villain must have exactly 2 hole cards for GTO analysis")
-            self.simulation_panel.set_gto_results({"error": "Villain must have exactly 2 hole cards"})
-            return
-
-        # Collect board
-        board_state = self.card_manager.get_board_state()
-        board = [c for c in board_state if c is not None]
-
-        # Check for duplicate cards
-        all_cards = hero_hole + villain_hole + board
-        if len(all_cards) != len(set(all_cards)):
-            self.logger.error("Duplicate cards detected")
-            self.simulation_panel.set_gto_results({"error": "Duplicate cards are not allowed"})
-            return
-
-        # Run GTO analysis
-        try:
-            # Get parameters from simulation panel
-            pot_size = self.simulation_panel.gto_pot_size
-            bet_amount = self.simulation_panel.gto_bet_amount
-            
-            result = self.gto_solver.solve(hero_hole, villain_hole, board, pot_size, bet_amount)
-            self.simulation_panel.set_gto_results(result)
-            self.logger.info(f"GTO analysis completed: {result}")
-        except Exception as e:
-            self.logger.error(f"GTO analysis failed: {e}")
-            self.simulation_panel.set_gto_results({"error": f"GTO analysis failed: {str(e)}"})
 
     def draw(self):
         """Draw the GUI."""
@@ -449,9 +386,6 @@ class PokerSimulatorGUI:
                 return True
             elif panel_result == "remove_villain":
                 self.remove_villain()
-                return True
-            elif panel_result == "run_gto":
-                self.run_gto_analysis()
                 return True
             elif panel_result:
                 return True

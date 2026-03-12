@@ -199,6 +199,69 @@ class PokerAnalyzer:
             self.logger.info(f"Odds result: {result}")
         return result
 
+    def calculate_odds(
+        self, 
+        hero_hole_cards: List[str], 
+        villain_hole_cards: List[List[str]], 
+        board_cards: List[str], 
+        num_simulations: int = 10000
+    ) -> Optional[Dict[str, float]]:
+        """
+        Calculate odds against specific opponent hands.
+        
+        Args:
+            hero_hole_cards: list of 2 hero card names.
+            villain_hole_cards: list of villain hole card lists (each with 2 cards).
+            board_cards: list of community cards.
+            num_simulations: number of sims.
+        
+        Returns:
+            dict with win/tie/loss probabilities.
+        """
+        self.logger.info(f"Calculating odds against specific opponents: hero={hero_hole_cards}, villains={villain_hole_cards}, board={board_cards}, sims={num_simulations}")
+        
+        # Check for duplicates in input
+        all_input_cards = hero_hole_cards + board_cards
+        for villain_hole in villain_hole_cards:
+            all_input_cards.extend(villain_hole)
+        if len(set(all_input_cards)) < len(all_input_cards):
+            self.logger.error("Duplicate cards in input")
+            return None
+        
+        # Convert hero and board
+        hero = [self.card_name_to_pokerkit(c) for c in hero_hole_cards]
+        board = [self.card_name_to_pokerkit(c) for c in board_cards]
+        
+        # Convert villain hands
+        villain_holes = []
+        for villain_hole in villain_hole_cards:
+            villain = [self.card_name_to_pokerkit(c) for c in villain_hole]
+            if any(c is None for c in villain):
+                self.logger.error("Invalid villain card names")
+                return None
+            villain_holes.append(villain)
+        
+        if any(c is None for c in hero + board):
+            self.logger.error("Invalid hero or board card names")
+            return None
+        
+        if len(board) > 5:
+            self.logger.error(f"Board cannot have more than 5 cards, got {len(board)}")
+            return None
+        
+        # Use common simulation method
+        result = self._run_monte_carlo_simulation(
+            hero_hole=hero,
+            board=board,
+            num_simulations=num_simulations,
+            opponent_holes=villain_holes,
+            num_random_opponents=0
+        )
+        
+        if result:
+            self.logger.info(f"Specific odds result: {result}")
+        return result
+
     def calculate_odds_range(
         self, 
         hero_range: str, 

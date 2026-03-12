@@ -321,3 +321,86 @@ class AllInFoldGTOSolver:
             'bet_amount': bet_amount,
             'num_opponents': num_opponents
         }
+
+    def solve(self, hero_hole: List[str], villain_hole: List[str], board_cards: List[str] = None,
+              pot_size: float = 20, bet_amount: float = 10) -> Dict:
+        """
+        Solve GTO for a specific hero vs villain all-in scenario.
+
+        Args:
+            hero_hole: Hero's hole cards (exactly 2)
+            villain_hole: Villain's hole cards (exactly 2)
+            board_cards: Community cards (optional)
+            pot_size: Current pot size before bet
+            bet_amount: All-in bet amount
+
+        Returns:
+            Dict with GTO analysis for the matchup
+        """
+        if board_cards is None:
+            board_cards = []
+
+        # Parameter validation
+        if not isinstance(hero_hole, list) or len(hero_hole) != 2:
+            raise ValueError("hero_hole must be a list of exactly 2 card strings")
+        if not isinstance(villain_hole, list) or len(villain_hole) != 2:
+            raise ValueError("villain_hole must be a list of exactly 2 card strings")
+        if not isinstance(board_cards, list):
+            raise ValueError("board_cards must be a list")
+        if not isinstance(pot_size, (int, float)) or pot_size <= 0:
+            raise ValueError("pot_size must be a positive number")
+        if not isinstance(bet_amount, (int, float)) or bet_amount <= 0:
+            raise ValueError("bet_amount must be a positive number")
+
+        # Check for duplicate cards
+        all_cards = hero_hole + villain_hole + board_cards
+        if len(all_cards) != len(set(all_cards)):
+            raise ValueError("Duplicate cards are not allowed")
+
+        # Calculate equity
+        equity_result = self.analyzer.calculate_odds(
+            hero_hole_cards=hero_hole,
+            opponent_hole_cards_list=[villain_hole],
+            board_cards=board_cards,
+            num_simulations=10000  # Use high simulation count for accuracy
+        )
+
+        if not equity_result:
+            return {'error': 'Could not calculate equity'}
+
+        hero_equity = equity_result['win_probability']
+        hero_ev = self._calculate_ev_with_bonus(hero_hole, board_cards, hero_equity, pot_size, bet_amount)
+
+        # For villain, equity is 1 - hero_equity, and they don't have to call (they're the bettor)
+        villain_equity = 1 - hero_equity
+        villain_ev = villain_equity * (pot_size + bet_amount) - (1 - villain_equity) * bet_amount
+
+        # Get hand categories for bonus analysis
+        hero_category = self._get_hand_category(hero_hole, board_cards)
+        villain_category = self._get_hand_category(villain_hole, board_cards)
+
+        hero_bonus = self.bonus_payouts.get(hero_category, 0)
+        villain_bonus = self.bonus_payouts.get(villain_category, 0)
+
+        # Hero strategy: call if EV > 0
+        hero_strategy = "CALL" if hero_ev > 0 else "FOLD"
+        villain_strategy = "ALL-IN"  # Villain already bet
+
+        return {
+            'hero_hole': hero_hole,
+            'villain_hole': villain_hole,
+            'board_cards': board_cards,
+            'hero_equity': hero_equity,
+            'villain_equity': villain_equity,
+            'hero_ev': hero_ev,
+            'villain_ev': villain_ev,
+            'hero_strategy': hero_strategy,
+            'villain_strategy': villain_strategy,
+            'hero_category': hero_category,
+            'villain_category': villain_category,
+            'hero_bonus_multiplier': hero_bonus,
+            'villain_bonus_multiplier': villain_bonus,
+            'pot_size': pot_size,
+            'bet_amount': bet_amount,
+            'total_pot': pot_size + bet_amount
+        }
