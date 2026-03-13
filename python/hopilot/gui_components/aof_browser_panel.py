@@ -25,12 +25,14 @@ class AoFBrowserPanel:
         self.precompute_context: dict | None = None
         self.precompute_simulations_per_cell = 1000
         self.precompute_buttons: dict[str, pygame.Rect] = {}
+        self.precompute_worker_buttons: dict[str, pygame.Rect] = {}
         self.precompute_max_workers = self._load_precompute_max_workers()
         self.precompute_executor: ThreadPoolExecutor | None = None
         self.precompute_futures: dict[Future, int] = {}
+        self.precompute_payload_persisted = False
 
         self.top_margin = 20
-        self.control_h = 160
+        self.control_h = 190
         self.side_panel_w = 300
         self.outer_margin = 20
         self.side_x = self.width - self.side_panel_w + self.outer_margin
@@ -49,6 +51,7 @@ class AoFBrowserPanel:
             self.state.selected_position,
             self.state.selected_metric,
             self.state.position_actions,
+            allow_compute=False,
         )
         self._restore_precompute_checkpoint_if_available()
 
@@ -74,6 +77,11 @@ class AoFBrowserPanel:
             "pause": pygame.Rect(side_x, start_y + (button_h + gap), button_w, button_h),
             "resume": pygame.Rect(side_x, start_y + 2 * (button_h + gap), button_w, button_h),
             "stop": pygame.Rect(side_x, start_y + 3 * (button_h + gap), button_w, button_h),
+        }
+        worker_y = start_y + 4 * (button_h + gap) + 2
+        self.precompute_worker_buttons = {
+            "down": pygame.Rect(side_x, worker_y, 24, button_h),
+            "up": pygame.Rect(side_x + button_w - 24, worker_y, 24, button_h),
         }
 
     def _default_precompute_workers(self) -> int:
@@ -106,6 +114,7 @@ class AoFBrowserPanel:
             self.state.selected_position,
             self.state.selected_metric,
             self.state.position_actions,
+            allow_compute=False,
         )
         self.state.status_message = self.payload.get("status_message")
 
@@ -139,6 +148,7 @@ class AoFBrowserPanel:
         if self.precompute_executor is None:
             self.precompute_executor = ThreadPoolExecutor(max_workers=self.precompute_max_workers, thread_name_prefix="aof-precompute")
         self._cancel_pending_precompute_futures()
+        self.precompute_payload_persisted = False
         self.payload = {
             "context": dict(self.precompute_context),
             "cells": [
@@ -155,6 +165,42 @@ class AoFBrowserPanel:
             ],
             "status_message": "Precompute started",
         }
+
+    def _persist_completed_precompute_payload(self) -> None:
+        if self.precompute_payload_persisted:
+            return
+        if self.precompute_context is None:
+            return
+        store = getattr(self.provider, "_cache_store", None)
+        if store is None:
+            self.precompute_payload_persisted = True
+            return
+
+        try:
+            runtime_signature = self.provider._runtime_signature(self.precompute_context)  # pylint: disable=protected-access
+            solver_key = self.provider._build_solver_equivalence_key(self.precompute_context)  # pylint: disable=protected-access
+            payload = {
+                "context": dict(self.precompute_context),
+                "cells": list(self.payload.get("cells", [])),
+                "status_message": self.payload.get("status_message"),
+            }
+            store.upsert_payload(solver_key, payload, runtime_signature)
+            # Drop stale in-memory misses so subsequent cache-only reads hit persisted rows.
+            self.provider.clear_cache()
+            request_key = self.provider._build_cache_key(self.precompute_context)  # pylint: disable=protected-access
+            self.provider._cache[request_key] = payload  # pylint: disable=protected-access
+            self.precompute_payload_persisted = True
+            self.state.status_message = "Precompute completed and cache saved"
+            self.logger.info(
+                "AoF gui precompute event=gui_precompute_payload_persisted fields=%s",
+                {
+                    "run_id": self.precompute_session.run_id if self.precompute_session else None,
+                    "scenario_key_hash": solver_key,
+                    "cells": len(payload.get("cells", [])),
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive persistence guard
+            self.logger.warning("Failed to persist threaded precompute payload: %s", exc)
 
     def _cancel_pending_precompute_futures(self) -> None:
         for future in list(self.precompute_futures.keys()):
@@ -195,6 +241,10 @@ class AoFBrowserPanel:
             self.payload["context"] = dict(self.precompute_context)
             self.payload["status_message"] = self.precompute_context.get("status_message")
 
+        if self.precompute_session.run_state == GuiRunState.COMPLETED and not self.precompute_futures:
+            self._persist_completed_precompute_payload()
+            return
+
         if self.precompute_session.run_state != GuiRunState.RUNNING:
             return
 
@@ -226,8 +276,28 @@ class AoFBrowserPanel:
             self.runner.mark_gui_dispatch(self.precompute_session)
             self.state.status_message = "Precompute completed"
 
+        if self.precompute_session.run_state == GuiRunState.COMPLETED and not self.precompute_futures:
+            self._persist_completed_precompute_payload()
+
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
+            if self.precompute_worker_buttons.get("down") and self.precompute_worker_buttons["down"].collidepoint(event.pos):
+                if not self.precompute_futures and (self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING):
+                    self.precompute_max_workers = max(1, self.precompute_max_workers - 1)
+                    if self.precompute_executor is not None:
+                        self.precompute_executor.shutdown(wait=False)
+                        self.precompute_executor = None
+                    self.state.status_message = f"Workers set to {self.precompute_max_workers}"
+                    return True
+            if self.precompute_worker_buttons.get("up") and self.precompute_worker_buttons["up"].collidepoint(event.pos):
+                if not self.precompute_futures and (self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING):
+                    self.precompute_max_workers = min(16, self.precompute_max_workers + 1)
+                    if self.precompute_executor is not None:
+                        self.precompute_executor.shutdown(wait=False)
+                        self.precompute_executor = None
+                    self.state.status_message = f"Workers set to {self.precompute_max_workers}"
+                    return True
+
             if self.precompute_buttons.get("start") and self.precompute_buttons["start"].collidepoint(event.pos):
                 if self.precompute_session is None or self.precompute_session.run_state in (GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED):
                     self._start_precompute()
@@ -301,11 +371,23 @@ class AoFBrowserPanel:
 
         ctx = self.payload.get("context", {})
         current_action = self.state.get_position_action(self.state.selected_position)
+        status_counts: dict[str, int] = {}
+        for cell in self.payload.get("cells", []):
+            status = str(cell.get("status", "MISSING"))
+            status_counts[status] = status_counts.get(status, 0) + 1
+        total_cells = sum(status_counts.values())
         lines = [
             f"Position: {self.state.selected_position}",
             f"Action: {current_action}",
             f"Metric: {self.state.selected_metric.replace('_', ' ')}",
             f"All-in players: {ctx.get('active_players', 0)}",
+            (
+                f"Cells: {total_cells} "
+                f"A:{status_counts.get('AVAILABLE', 0)} "
+                f"T:{status_counts.get('TIMEOUT', 0)} "
+                f"M:{status_counts.get('MISSING', 0)} "
+                f"E:{status_counts.get('ERROR', 0)}"
+            ),
         ]
         for idx, line in enumerate(lines):
             text = self.font.render(line, True, (230, 230, 230))
@@ -339,6 +421,20 @@ class AoFBrowserPanel:
                 (210, 210, 210),
             )
             screen.blit(progress, (panel_rect.x + 10, panel_rect.y + 44))
+
+        workers_label = self.small_font.render(f"Workers: {self.precompute_max_workers}", True, (210, 210, 210))
+        screen.blit(workers_label, (self.side_x + 30, self.precompute_worker_buttons["down"].y + 4))
+
+        for name, rect in self.precompute_worker_buttons.items():
+            worker_enabled = not self.precompute_futures and (
+                self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING
+            )
+            color = (56, 98, 74) if worker_enabled else (56, 56, 56)
+            pygame.draw.rect(screen, color, rect, border_radius=4)
+            pygame.draw.rect(screen, (90, 90, 90), rect, 1, border_radius=4)
+            symbol = "-" if name == "down" else "+"
+            label = self.small_font.render(symbol, True, (240, 240, 240))
+            screen.blit(label, label.get_rect(center=rect.center))
 
         for name, rect in self.precompute_buttons.items():
             enabled = True

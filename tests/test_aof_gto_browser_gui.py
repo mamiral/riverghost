@@ -23,7 +23,7 @@ def test_aof_browser_app_initialization(app):
     assert app.width == 1000
     assert app.height == 760
     assert app.panel.state.selected_position == "UTG"
-    assert app.panel.state.get_position_action("UTG") == "FOLD"
+    assert app.panel.state.get_position_action("UTG") == "ALL_IN"
     assert app.panel.state.selected_metric == "WIN_LOSE_PROBABILITY"
 
 
@@ -112,17 +112,12 @@ def test_empty_state_for_missing_metric_context():
 
 def test_multi_position_all_in_updates_context_and_values(app):
     baseline = app.panel.payload
-    utg_all_in = pygame.event.Event(
+    sb_select = pygame.event.Event(
         pygame.MOUSEBUTTONDOWN,
-        pos=app.panel.action_selector.rects[("UTG", "ALL_IN")].center,
+        pos=app.panel.action_selector.card_rects["SB"].center,
     )
-    sb_all_in = pygame.event.Event(
-        pygame.MOUSEBUTTONDOWN,
-        pos=app.panel.action_selector.rects[("SB", "ALL_IN")].center,
-    )
-    app.panel.handle_event(utg_all_in)
-    app.panel.handle_event(sb_all_in)
+    app.panel.handle_event(sb_select)
 
     updated = app.panel.payload
     assert updated["context"]["active_players"] == 2
-    assert baseline["cells"][0]["value"] != updated["cells"][0]["value"]
+    assert baseline["context"]["position"] != updated["context"]["position"]

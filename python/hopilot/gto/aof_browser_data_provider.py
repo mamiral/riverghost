@@ -25,7 +25,13 @@ SOLVER_SIGNATURE = "aof-solver-v1"
 
 
 class AoFBrowserDataProvider:
-    def __init__(self, fixture_path: str | None = None, cache_enabled: bool | None = None, cache_db_path: str | None = None):
+    def __init__(
+        self,
+        fixture_path: str | None = None,
+        cache_enabled: bool | None = None,
+        cache_db_path: str | None = None,
+        persist_degraded_payloads: bool | None = None,
+    ):
         self.logger = get_logger(__name__)
         self._matrix_keys = build_matrix_keys()
         self._fixture_data: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
@@ -33,6 +39,10 @@ class AoFBrowserDataProvider:
         self._cache_store: AoFScenarioCacheStore | None = None
         self._runtime = self._load_runtime_config()
         self._cache_cfg = self._load_cache_config()
+        if persist_degraded_payloads is None:
+            self._persist_degraded_payloads = bool(self._cache_cfg.get("persist_degraded_payloads", True))
+        else:
+            self._persist_degraded_payloads = bool(persist_degraded_payloads)
         self._solver = AoFSolverAdapter(runtime=self._runtime)
         self._baseline_equity_cache: dict[str, float] = {}
 
@@ -43,7 +53,8 @@ class AoFBrowserDataProvider:
 
         if enabled:
             try:
-                db_path = cache_db_path or str(self._cache_cfg.get("db_path", "python/hopilot/cache/aof_scenario_cache.sqlite3"))
+                db_path_raw = cache_db_path or str(self._cache_cfg.get("db_path", "python/hopilot/cache/aof_scenario_cache.sqlite3"))
+                db_path = self._resolve_cache_db_path(db_path_raw)
                 schema_version = str(self._cache_cfg.get("schema_version", "1"))
                 policy_signature = str(self._cache_cfg.get("policy_signature", "aof-cache-policy-v1"))
                 self._cache_store = AoFScenarioCacheStore(
@@ -63,6 +74,15 @@ class AoFBrowserDataProvider:
             with open(fixture_path, "r", encoding="utf-8") as f:
                 loaded = yaml.safe_load(f) or {}
             self._fixture_data = loaded.get("data", {})
+
+    def _resolve_cache_db_path(self, configured_path: str) -> str:
+        path_obj = Path(configured_path)
+        if path_obj.is_absolute():
+            return str(path_obj)
+
+        repo_root = Path(__file__).resolve().parents[3]
+        canonical = (repo_root / path_obj).resolve()
+        return str(canonical)
 
     def _load_runtime_config(self) -> SolverRuntimeConfig:
         cfg_path = Path(__file__).resolve().parents[3] / "config" / "gto_defaults.yaml"
@@ -93,6 +113,7 @@ class AoFBrowserDataProvider:
                 "db_path": "python/hopilot/cache/aof_scenario_cache.sqlite3",
                 "schema_version": "1",
                 "policy_signature": "aof-cache-policy-v1",
+                "persist_degraded_payloads": True,
             }
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
@@ -117,8 +138,23 @@ class AoFBrowserDataProvider:
         canonical = self._canonical_solver_payload(context)
         payload = {
             "runtime": self._runtime_signature_base(),
+            "selected_action": canonical["selected_action"],
+            "active_players": canonical["active_players"],
+            "num_opponents": canonical["num_opponents"],
+            "pot_size": canonical["pot_size"],
+            "bet_amount": canonical["bet_amount"],
+            "effective_mode": canonical["effective_mode"],
+        }
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _legacy_runtime_signature(self, context: dict[str, Any]) -> str:
+        canonical = self._legacy_canonical_solver_payload(context)
+        payload = {
+            "runtime": self._runtime_signature_base(),
             "metric": canonical["metric"],
             "selected_action": canonical["selected_action"],
+            "active_players": canonical["active_players"],
             "num_opponents": canonical["num_opponents"],
             "pot_size": canonical["pot_size"],
             "bet_amount": canonical["bet_amount"],
@@ -129,11 +165,12 @@ class AoFBrowserDataProvider:
 
     def _canonical_solver_payload(self, context: dict[str, Any]) -> dict[str, Any]:
         selected_action = str(context["action"])
+        active_players = int(context["active_players"])
         num_opponents = int(self._resolve_num_opponents(selected_action, context["position_actions"]))
         return {
             "solver_signature": SOLVER_SIGNATURE,
-            "metric": str(context["metric"]),
             "selected_action": selected_action,
+            "active_players": active_players,
             "num_opponents": num_opponents,
             "pot_size": float(context["pot_size"]),
             "bet_amount": float(context["bet_amount"]),
@@ -147,8 +184,18 @@ class AoFBrowserDataProvider:
             "fixture_enabled": bool(self._fixture_data),
         }
 
+    def _legacy_canonical_solver_payload(self, context: dict[str, Any]) -> dict[str, Any]:
+        payload = self._canonical_solver_payload(context)
+        payload["metric"] = str(context["metric"])
+        return payload
+
     def _build_solver_equivalence_key(self, context: dict[str, Any]) -> str:
         payload = self._canonical_solver_payload(context)
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _build_legacy_solver_equivalence_key(self, context: dict[str, Any]) -> str:
+        payload = self._legacy_canonical_solver_payload(context)
         encoded = json.dumps(payload, sort_keys=True)
         return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
 
@@ -194,6 +241,90 @@ class AoFBrowserDataProvider:
         encoded = json.dumps(payload, sort_keys=True)
         return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _metric_template() -> dict[str, float | None]:
+        return {
+            "WIN_LOSE_PROBABILITY": None,
+            "EQUITY": None,
+            "EV": None,
+            "EQR": None,
+        }
+
+    def _project_cells_for_metric(
+        self,
+        cells: list[dict[str, Any]],
+        metric: str,
+        stored_metric: str | None,
+    ) -> list[dict[str, Any]] | None:
+        projected: list[dict[str, Any]] = []
+        has_metric_bundle = any(isinstance(cell.get("metrics"), dict) for cell in cells)
+        if not has_metric_bundle and stored_metric is not None and stored_metric != metric:
+            return None
+
+        for cell in cells:
+            entry = dict(cell)
+            bundle = entry.get("metrics")
+            if isinstance(bundle, dict):
+                value = bundle.get(metric)
+                entry["value"] = value
+                entry["display"] = format_metric_value(metric, value)
+            elif stored_metric == metric:
+                metrics = self._metric_template()
+                metrics[metric] = entry.get("value")
+                entry["metrics"] = metrics
+                entry["display"] = format_metric_value(metric, entry.get("value"))
+            else:
+                return None
+            projected.append(entry)
+        return projected
+
+    def _load_legacy_persistent_payload(
+        self,
+        context: dict[str, Any],
+        metric: str,
+        request_key: str,
+        current_solver_key: str,
+        current_runtime_signature: str,
+    ) -> dict[str, Any] | None:
+        if self._cache_store is None:
+            return None
+
+        legacy_context = dict(context)
+        legacy_context["metric"] = metric
+        legacy_key = self._build_legacy_solver_equivalence_key(legacy_context)
+        legacy_signature = self._legacy_runtime_signature(legacy_context)
+        legacy_payload = self._cache_store.get_payload(legacy_key, legacy_signature)
+        if legacy_payload is None:
+            return None
+
+        projected = self._project_cells_for_metric(
+            legacy_payload.get("cells", []),
+            metric,
+            str(legacy_payload.get("context", {}).get("metric")) if isinstance(legacy_payload.get("context"), dict) else None,
+        )
+        if projected is None:
+            return None
+
+        migrated_payload = {
+            "context": dict(context),
+            "cells": projected,
+            "status_message": legacy_payload.get("status_message"),
+        }
+        try:
+            self._cache_store.upsert_payload(current_solver_key, migrated_payload, current_runtime_signature)
+            self._log_event("cache_migrated", source="legacy_metric_key", scenario_key_hash=current_solver_key)
+        except Exception as exc:
+            self.logger.warning("AoF provider legacy cache migration failed key=%s error=%s", current_solver_key, exc)
+
+        hydrated = {
+            "context": context,
+            "cells": projected,
+            "status_message": legacy_payload.get("status_message"),
+        }
+        self._cache[request_key] = hydrated
+        self._log_event("cache_hit", source="persistent_legacy", scenario_key_hash=legacy_key)
+        return hydrated
+
     def get_matrix_payload(
         self,
         position: str,
@@ -202,6 +333,7 @@ class AoFBrowserDataProvider:
         pot_size: float = 20.0,
         bet_amount: float = 10.0,
         strict_current_action: bool = False,
+        allow_compute: bool = True,
         on_cell_complete: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         try:
@@ -263,15 +395,36 @@ class AoFBrowserDataProvider:
         if self._cache_store is not None:
             store_payload = self._cache_store.get_payload(solver_key, runtime_signature)
             if store_payload is not None:
-                hydrated = {
-                    "context": context,
-                    "cells": store_payload["cells"],
-                    "status_message": store_payload.get("status_message"),
-                }
-                self._log_event("cache_hit", source="persistent", scenario_key_hash=solver_key)
-                self._cache[request_key] = hydrated
-                return hydrated
+                projected = self._project_cells_for_metric(
+                    store_payload["cells"],
+                    metric,
+                    str(store_payload.get("context", {}).get("metric")) if isinstance(store_payload.get("context"), dict) else None,
+                )
+                if projected is None:
+                    self._log_event("cache_miss", source="persistent_metric_incompatible", scenario_key_hash=solver_key)
+                else:
+                    hydrated = {
+                        "context": context,
+                        "cells": projected,
+                        "status_message": store_payload.get("status_message"),
+                    }
+                    self._log_event("cache_hit", source="persistent", scenario_key_hash=solver_key)
+                    self._cache[request_key] = hydrated
+                    return hydrated
+            migrated = self._load_legacy_persistent_payload(
+                context=context,
+                metric=metric,
+                request_key=request_key,
+                current_solver_key=solver_key,
+                current_runtime_signature=runtime_signature,
+            )
+            if migrated is not None:
+                return migrated
             self._log_event("cache_miss", source="persistent", scenario_key_hash=solver_key)
+
+        if not allow_compute:
+            payload = self._build_status_payload(context, STATUS_MISSING, "No cached result for selected scenario")
+            return payload
 
         cells: list[dict[str, Any]] = []
         request_start = time.perf_counter()
@@ -283,14 +436,17 @@ class AoFBrowserDataProvider:
                 elapsed_ms = int((time.perf_counter() - request_start) * 1000)
                 remaining_ms = max(0, timeout_budget_ms - elapsed_ms)
                 if remaining_ms == 0:
+                    metric_bundle = self._metric_template()
                     value, status, status_message = (None, STATUS_TIMEOUT, "Solver timeout")
                 else:
-                    value, status, status_message = self._value_for_hand(context, key, remaining_ms)
+                    metric_bundle, status, status_message = self._metrics_for_hand(context, key, remaining_ms)
+                    value = metric_bundle.get(metric)
                 cells.append(
                     {
                         "row": row,
                         "col": col,
                         "hand_key": key,
+                        "metrics": metric_bundle,
                         "value": value,
                         "status": status,
                         "display": format_metric_value(metric, value),
@@ -313,41 +469,54 @@ class AoFBrowserDataProvider:
 
         if self._cache_store is not None:
             statuses = {cell.get("status") for cell in cells}
-            if STATUS_TIMEOUT in statuses or STATUS_ERROR in statuses:
-                if STATUS_TIMEOUT in statuses:
-                    self._log_event("fallback_compute_timeout", scenario_key_hash=solver_key)
-                if STATUS_ERROR in statuses:
-                    self._log_event("fallback_compute_error", scenario_key_hash=solver_key)
+            degraded = STATUS_TIMEOUT in statuses or STATUS_ERROR in statuses
+            if degraded and STATUS_TIMEOUT in statuses:
+                self._log_event("fallback_compute_timeout", scenario_key_hash=solver_key)
+            if degraded and STATUS_ERROR in statuses:
+                self._log_event("fallback_compute_error", scenario_key_hash=solver_key)
+
+            if degraded and not self._persist_degraded_payloads:
                 self._log_event("write_back_skipped", reason="degraded_status", scenario_key_hash=solver_key)
             else:
                 try:
                     self._cache_store.upsert_payload(solver_key, payload, runtime_signature)
+                    if degraded:
+                        self._log_event("write_back_persisted", reason="degraded_status", scenario_key_hash=solver_key)
                 except Exception as exc:
                     self.logger.warning("AoF provider write-back failed key=%s error=%s", solver_key, exc)
         return payload
 
-    def _value_for_hand(
+    def _metrics_for_hand(
         self,
         context: dict[str, Any],
         hand_key: str,
         remaining_timeout_ms: int,
-    ) -> tuple[float | None, str, str | None]:
-        metric = context["metric"]
+    ) -> tuple[dict[str, float | None], str, str | None]:
         action = context["action"]
         active_players = int(context["active_players"])
         pot_size = float(context["pot_size"])
         bet_amount = float(context["bet_amount"])
 
-        fixture_value = self._fixture_value(context, hand_key)
-        if fixture_value is not None:
-            return fixture_value, STATUS_AVAILABLE, None
+        fixture_metrics = self._metric_template()
+        has_fixture = False
+        for fixture_metric in tuple(fixture_metrics.keys()):
+            fixture_context = dict(context)
+            fixture_context["metric"] = fixture_metric
+            fixture_value = self._fixture_value(fixture_context, hand_key)
+            if fixture_value is not None:
+                fixture_metrics[fixture_metric] = round(float(fixture_value), 4)
+                has_fixture = True
+        if has_fixture:
+            return fixture_metrics, STATUS_AVAILABLE, None
 
         # Selected all-in with no opponents is an uncontested capture.
         if action == "ALL_IN" and active_players == 1:
-            if metric == "EV":
-                return round(pot_size, 4), STATUS_AVAILABLE, "Uncontested all-in capture"
-            if metric in ("WIN_LOSE_PROBABILITY", "EQUITY", "EQR"):
-                return 1.0, STATUS_AVAILABLE, "Uncontested all-in capture"
+            return {
+                "WIN_LOSE_PROBABILITY": 1.0,
+                "EQUITY": 1.0,
+                "EV": round(pot_size, 4),
+                "EQR": 1.0,
+            }, STATUS_AVAILABLE, "Uncontested all-in capture"
 
         num_opponents = self._resolve_num_opponents(action, context["position_actions"])
         solved = self._solver.evaluate_hand_key(
@@ -363,13 +532,13 @@ class AoFBrowserDataProvider:
             msg = "Solver timeout" if mapped == STATUS_TIMEOUT else "Solver unavailable for current context"
             if mapped in (STATUS_TIMEOUT, STATUS_ERROR):
                 self.logger.warning("AoF provider degraded mode for %s: %s", hand_key, solved)
-            return None, mapped, msg
+            return self._metric_template(), mapped, msg
 
         combo_results = solved.get("combo_results")
         if isinstance(combo_results, list):
             valid_records = [record for record in combo_results if bool(record.get("is_valid", True))]
             if not valid_records:
-                return None, STATUS_MISSING, "No valid combos for current hand/context"
+                return self._metric_template(), STATUS_MISSING, "No valid combos for current hand/context"
             win_prob = sum(float(record.get("win_probability", 0.0)) for record in valid_records) / len(valid_records)
             equity = sum(float(record.get("equity", 0.0)) for record in valid_records) / len(valid_records)
             ev = sum(float(record.get("ev", 0.0)) for record in valid_records) / len(valid_records)
@@ -381,15 +550,22 @@ class AoFBrowserDataProvider:
         baseline_equity = self._baseline_equity(hand_key)
         eqr = max(0.0, min(1.0, equity / max(1e-6, baseline_equity)))
 
-        if metric == "WIN_LOSE_PROBABILITY":
-            return round(win_prob, 4), STATUS_AVAILABLE, None
-        if metric == "EQUITY":
-            return round(equity, 4), STATUS_AVAILABLE, None
-        if metric == "EV":
-            return round(ev, 4), STATUS_AVAILABLE, None
-        if metric == "EQR":
-            return round(eqr, 4), STATUS_AVAILABLE, None
-        return None, STATUS_MISSING, "Unknown metric"
+        return {
+            "WIN_LOSE_PROBABILITY": round(win_prob, 4),
+            "EQUITY": round(equity, 4),
+            "EV": round(ev, 4),
+            "EQR": round(eqr, 4),
+        }, STATUS_AVAILABLE, None
+
+    def _value_for_hand(
+        self,
+        context: dict[str, Any],
+        hand_key: str,
+        remaining_timeout_ms: int,
+    ) -> tuple[float | None, str, str | None]:
+        metric = context["metric"]
+        metric_bundle, status, status_message = self._metrics_for_hand(context, hand_key, remaining_timeout_ms)
+        return metric_bundle.get(metric), status, status_message
 
     def _baseline_equity(self, hand_key: str) -> float:
         cached = self._baseline_equity_cache.get(hand_key)
@@ -449,14 +625,16 @@ class AoFBrowserDataProvider:
         for row in range(13):
             for col in range(13):
                 key = self._matrix_keys[row][col]
+                metrics = self._metric_template()
                 cells.append(
                     {
                         "row": row,
                         "col": col,
                         "hand_key": key,
-                        "value": None,
+                        "metrics": metrics,
+                        "value": metrics.get(metric),
                         "status": status,
-                        "display": format_metric_value(metric, None),
+                        "display": format_metric_value(metric, metrics.get(metric)),
                     }
                 )
         return {"context": context, "cells": cells, "status_message": message}

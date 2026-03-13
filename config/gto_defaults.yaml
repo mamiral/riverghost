@@ -24,3 +24,4 @@ aof_browser_cache:
   db_path: "python/hopilot/cache/aof_scenario_cache.sqlite3"
   schema_version: "1"
   policy_signature: "aof-cache-policy-v1"
+  persist_degraded_payloads: true

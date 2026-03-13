@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.gto.gto_optimizer import GTOOptimizer
+from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
+from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner
 from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
 
 
@@ -268,17 +270,86 @@ class TestAoFBrowserIntegration:
     def test_precompute_max_workers_loaded_from_config(self, aof_app):
         assert aof_app.panel.precompute_max_workers == 3
 
+    def test_precompute_worker_buttons_adjust_count(self, aof_app):
+        before = aof_app.panel.precompute_max_workers
+        up_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_worker_buttons["up"].center)
+        assert aof_app.panel.handle_event(up_event)
+        assert aof_app.panel.precompute_max_workers == min(16, before + 1)
+
+        down_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_worker_buttons["down"].center)
+        assert aof_app.panel.handle_event(down_event)
+        assert aof_app.panel.precompute_max_workers == before
+
     def test_action_switch_updates_matrix(self, aof_app):
         before = [c["value"] for c in aof_app.panel.payload["cells"]]
+        before_context = dict(aof_app.panel.payload["context"])
         event = pygame.event.Event(
             pygame.MOUSEBUTTONDOWN,
             pos=aof_app.panel.action_selector.rects[("UTG", "ALL_IN")].center,
         )
         aof_app.panel.handle_event(event)
         after = [c["value"] for c in aof_app.panel.payload["cells"]]
+        after_context = aof_app.panel.payload["context"]
 
         assert aof_app.panel.state.get_position_action("UTG") == "ALL_IN"
-        assert before != after
+        assert before_context["action"] == after_context["action"] == "ALL_IN"
+        assert before == after
+
+    def test_scenario_selection_does_not_invoke_solver(self, aof_app):
+        class _CountingSolver:
+            def __init__(self):
+                self.calls = 0
+
+            def evaluate_hand_key(self, *args, **kwargs):
+                self.calls += 1
+                return {"status": "AVAILABLE", "win_probability": 0.6, "equity": 0.6, "ev": 1.0}
+
+        solver = _CountingSolver()
+        aof_app.panel.provider._solver = solver
+
+        # Selection in browser mode should be cache-read only and never hit solver fallback.
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.action_selector.rects[("UTG", "ALL_IN")].center,
+        )
+        assert aof_app.panel.handle_event(event)
+        assert solver.calls == 0
+
+    def test_completed_precompute_persists_payload(self, aof_app, tmp_path):
+        class _FastSolver:
+            def evaluate_hand_key(self, *args, **kwargs):
+                return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 1.0}
+
+        db_path = tmp_path / "aof_panel_precompute.sqlite3"
+        provider = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+        provider._solver = _FastSolver()
+        aof_app.panel.provider = provider
+        aof_app.panel.runner = AoFPrecomputeRunner(provider, getattr(provider, "_cache_store", None))
+        aof_app.panel.payload = provider.get_matrix_payload(
+            aof_app.panel.state.selected_position,
+            aof_app.panel.state.selected_metric,
+            aof_app.panel.state.position_actions,
+            allow_compute=False,
+        )
+
+        start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_buttons["start"].center)
+        assert aof_app.panel.handle_event(start_event)
+
+        deadline = time.perf_counter() + 10.0
+        while time.perf_counter() < deadline:
+            aof_app.panel._tick_precompute()  # pylint: disable=protected-access
+            if aof_app.panel.precompute_payload_persisted:
+                break
+            time.sleep(0.002)
+
+        assert aof_app.panel.precompute_payload_persisted
+        context = aof_app.panel.precompute_context
+        assert context is not None
+        solver_key = provider._build_solver_equivalence_key(context)  # pylint: disable=protected-access
+        runtime_signature = provider._runtime_signature(context)  # pylint: disable=protected-access
+        stored = provider._cache_store.get_payload(solver_key, runtime_signature)  # pylint: disable=protected-access
+        assert stored is not None
+        assert len(stored["cells"]) == 169
 
     def test_metric_switch_updates_matrix(self, aof_app):
         before = [c["display"] for c in aof_app.panel.payload["cells"]]

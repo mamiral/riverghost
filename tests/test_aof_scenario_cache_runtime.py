@@ -65,7 +65,7 @@ def test_miss_writeback_then_hit_transition(tmp_path):
     assert solver.calls == first_calls
 
 
-def test_timeout_payload_is_not_written_as_current(tmp_path):
+def test_timeout_payload_is_written_and_reused_after_restart(tmp_path):
     db_path = tmp_path / "aof_runtime_cache.sqlite3"
 
     provider_timeout = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
@@ -78,11 +78,11 @@ def test_timeout_payload_is_not_written_as_current(tmp_path):
     provider_available._solver = available_solver
     payload = provider_available.get_matrix_payload("UTG", "EV", _ctx())
 
-    assert available_solver.calls > 0
-    assert any(cell["status"] == "AVAILABLE" for cell in payload["cells"])
+    assert available_solver.calls == 0
+    assert any(cell["status"] == "TIMEOUT" for cell in payload["cells"])
 
 
-def test_error_payload_is_not_written_as_current(tmp_path):
+def test_error_payload_is_written_and_reused_after_restart(tmp_path):
     db_path = tmp_path / "aof_runtime_cache.sqlite3"
 
     provider_error = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
@@ -95,11 +95,36 @@ def test_error_payload_is_not_written_as_current(tmp_path):
     provider_available._solver = available_solver
     payload = provider_available.get_matrix_payload("UTG", "EV", _ctx())
 
+    assert available_solver.calls == 0
+    assert any(cell["status"] == "ERROR" for cell in payload["cells"])
+
+
+def test_degraded_payload_writeback_can_be_disabled(tmp_path):
+    db_path = tmp_path / "aof_runtime_cache.sqlite3"
+
+    provider_timeout = AoFBrowserDataProvider(
+        cache_enabled=True,
+        cache_db_path=str(db_path),
+        persist_degraded_payloads=False,
+    )
+    provider_timeout._solver = _TimeoutSolver()
+    timeout_payload = provider_timeout.get_matrix_payload("UTG", "EV", _ctx())
+    assert any(cell["status"] == "TIMEOUT" for cell in timeout_payload["cells"])
+
+    provider_available = AoFBrowserDataProvider(
+        cache_enabled=True,
+        cache_db_path=str(db_path),
+        persist_degraded_payloads=False,
+    )
+    available_solver = _CountingAvailableSolver()
+    provider_available._solver = available_solver
+    payload = provider_available.get_matrix_payload("UTG", "EV", _ctx())
+
     assert available_solver.calls > 0
     assert any(cell["status"] == "AVAILABLE" for cell in payload["cells"])
 
 
-def test_solver_equivalent_positions_reuse_persistent_cells(tmp_path):
+def test_distinct_position_presets_use_distinct_persistent_scenarios(tmp_path):
     db_path = tmp_path / "aof_runtime_cache.sqlite3"
     actions = {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"}
 
@@ -114,8 +139,93 @@ def test_solver_equivalent_positions_reuse_persistent_cells(tmp_path):
     provider.clear_cache()
     btn_payload = provider.get_matrix_payload("BTN", "EV", actions)
 
-    # Canonical persistent key should dedup solver-equivalent seat labels.
-    assert solver.calls == calls_after_utg
-    assert utg_payload["cells"] == btn_payload["cells"]
+    # Preset-only model treats positions as distinct scenarios.
+    assert solver.calls > calls_after_utg
     assert utg_payload["context"]["position"] == "UTG"
     assert btn_payload["context"]["position"] == "BTN"
+    assert utg_payload["context"]["position_actions"] != btn_payload["context"]["position_actions"]
+
+
+def test_metric_switch_reuses_same_persistent_scenario_key(tmp_path):
+    db_path = tmp_path / "aof_runtime_cache.sqlite3"
+
+    provider_1 = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+    solver_1 = _CountingAvailableSolver()
+    provider_1._solver = solver_1
+
+    payload_wp = provider_1.get_matrix_payload("UTG", "WIN_LOSE_PROBABILITY", _ctx())
+    calls_after_wp = solver_1.calls
+    assert calls_after_wp > 0
+
+    provider_2 = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+    solver_2 = _CountingAvailableSolver()
+    provider_2._solver = solver_2
+
+    payload_ev = provider_2.get_matrix_payload("UTG", "EV", _ctx())
+
+    assert solver_2.calls == 0
+    assert payload_wp["context"]["position_actions"] == payload_ev["context"]["position_actions"]
+    assert all("metrics" in cell for cell in payload_ev["cells"])
+
+
+def test_legacy_metric_key_payload_is_loaded_and_migrated(tmp_path):
+    db_path = tmp_path / "aof_runtime_cache.sqlite3"
+
+    writer = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+    legacy_context = writer._build_context(  # pylint: disable=protected-access
+        position="UTG",
+        metric="WIN_LOSE_PROBABILITY",
+        position_actions=_ctx(),
+    )
+    legacy_key = writer._build_legacy_solver_equivalence_key(legacy_context)  # pylint: disable=protected-access
+    legacy_sig = writer._legacy_runtime_signature(legacy_context)  # pylint: disable=protected-access
+    legacy_payload = {
+        "context": legacy_context,
+        "cells": [
+            {
+                "row": row,
+                "col": col,
+                "hand_key": writer._matrix_keys[row][col],  # pylint: disable=protected-access
+                "value": 0.5,
+                "status": "AVAILABLE",
+                "display": "50.0%",
+            }
+            for row in range(13)
+            for col in range(13)
+        ],
+        "status_message": "legacy",
+    }
+    writer._cache_store.upsert_payload(legacy_key, legacy_payload, legacy_sig)  # pylint: disable=protected-access
+
+    reader = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+    reader._solver = _CountingAvailableSolver()
+    payload = reader.get_matrix_payload("UTG", "WIN_LOSE_PROBABILITY", _ctx(), allow_compute=False)
+
+    assert all(cell["status"] == "AVAILABLE" for cell in payload["cells"])
+    assert all("metrics" in cell for cell in payload["cells"])
+
+    new_context = reader._build_context(  # pylint: disable=protected-access
+        position="UTG",
+        metric="WIN_LOSE_PROBABILITY",
+        position_actions=_ctx(),
+    )
+    new_key = reader._build_solver_equivalence_key(new_context)  # pylint: disable=protected-access
+    new_sig = reader._runtime_signature(new_context)  # pylint: disable=protected-access
+    migrated = reader._cache_store.get_payload(new_key, new_sig)  # pylint: disable=protected-access
+    assert migrated is not None
+
+
+def test_cache_only_missing_does_not_shadow_later_persisted_payload(tmp_path):
+    db_path = tmp_path / "aof_runtime_cache.sqlite3"
+
+    reader = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+    first = reader.get_matrix_payload("UTG", "WIN_LOSE_PROBABILITY", _ctx(), allow_compute=False)
+    assert all(cell["status"] == "MISSING" for cell in first["cells"])
+
+    writer = AoFBrowserDataProvider(cache_enabled=True, cache_db_path=str(db_path))
+    writer._solver = _CountingAvailableSolver()
+    written = writer.get_matrix_payload("UTG", "WIN_LOSE_PROBABILITY", _ctx(), allow_compute=True)
+    assert any(cell["status"] == "AVAILABLE" for cell in written["cells"])
+
+    second = reader.get_matrix_payload("UTG", "WIN_LOSE_PROBABILITY", _ctx(), allow_compute=False)
+    assert any(cell["status"] == "AVAILABLE" for cell in second["cells"])

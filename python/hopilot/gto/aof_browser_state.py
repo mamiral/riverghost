@@ -6,6 +6,18 @@ ACTIONS = ("FOLD", "ALL_IN")
 METRICS = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR")
 
 
+def preset_position_actions(selected_position: str) -> dict[str, str]:
+    if selected_position not in POSITIONS:
+        raise ValueError(f"Unsupported selected position: {selected_position}")
+    if selected_position == "UTG":
+        return {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
+    if selected_position == "BTN":
+        return {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
+    if selected_position == "SB":
+        return {"UTG": "FOLD", "BTN": "FOLD", "SB": "ALL_IN", "BB": "ALL_IN"}
+    return {"UTG": "FOLD", "BTN": "FOLD", "SB": "FOLD", "BB": "FOLD"}
+
+
 @dataclass
 class AoFBrowserViewState:
     selected_position: str = "UTG"
@@ -15,22 +27,20 @@ class AoFBrowserViewState:
     status_message: str | None = None
 
     def __post_init__(self) -> None:
-        if self.position_actions is None:
-            self.position_actions = {position: "FOLD" for position in POSITIONS}
+        self.position_actions = preset_position_actions(self.selected_position)
 
     def set_position(self, position: str) -> None:
         if position not in POSITIONS:
             raise ValueError(f"Unsupported position: {position}")
         self.selected_position = position
+        self.position_actions = preset_position_actions(position)
 
     def set_position_action(self, position: str, action: str) -> None:
+        # Browser runs in preset-only mode: per-position manual overrides are ignored.
         if position not in POSITIONS:
             raise ValueError(f"Unsupported position: {position}")
         if action not in ACTIONS:
             raise ValueError(f"Unsupported action: {action}")
-        if self.position_actions is None:
-            self.position_actions = {p: "FOLD" for p in POSITIONS}
-        self.position_actions[position] = action
 
     def get_position_action(self, position: str) -> str:
         if self.position_actions is None:
@@ -89,7 +99,7 @@ def build_browser_context(
     if timeout_ms <= 0:
         raise ValueError("timeout_ms must be positive")
 
-    actions = normalize_position_actions(position_actions)
+    actions = preset_position_actions(selected_position)
     active_players = sum(1 for action in actions.values() if action == "ALL_IN")
     selected_action = actions[selected_position]
     effective_mode = "strict-current-action" if strict_current_action else "analysis"

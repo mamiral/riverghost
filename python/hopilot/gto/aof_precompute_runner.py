@@ -252,22 +252,31 @@ class AoFPrecomputeRunner:
         row = int(cell_index) // 13
         col = int(cell_index) % 13
         hand_key = self.provider._matrix_keys[row][col]  # pylint: disable=protected-access
+        metric = str(context["metric"])
         try:
-            value, status, status_message = self.provider._value_for_hand(  # pylint: disable=protected-access
+            metrics, status, status_message = self.provider._metrics_for_hand(  # pylint: disable=protected-access
                 context,
                 hand_key,
                 int(context["timeout_ms"]),
             )
+            value = metrics.get(metric)
         except Exception as exc:  # pragma: no cover - defensive execution path
+            metrics = {
+                "WIN_LOSE_PROBABILITY": None,
+                "EQUITY": None,
+                "EV": None,
+                "EQR": None,
+            }
             value, status, status_message = None, STATUS_ERROR, str(exc)
 
         return {
             "row": row,
             "col": col,
             "hand_key": hand_key,
+            "metrics": metrics,
             "value": value,
             "status": status,
-            "display": format_metric_value(str(context["metric"]), value),
+            "display": format_metric_value(metric, value),
         }, status_message
 
     def apply_gui_cell_result(
