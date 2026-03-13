@@ -26,6 +26,9 @@ class AoFBrowserPanel:
         self.precompute_simulations_per_cell = 1000
         self.precompute_buttons: dict[str, pygame.Rect] = {}
         self.precompute_worker_buttons: dict[str, pygame.Rect] = {}
+        self.precompute_worker_knob = pygame.Rect(0, 0, 0, 0)
+        self.precompute_sim_buttons: dict[str, pygame.Rect] = {}
+        self.precompute_sim_knob = pygame.Rect(0, 0, 0, 0)
         self.precompute_max_workers = self._load_precompute_max_workers()
         self.precompute_executor: ThreadPoolExecutor | None = None
         self.precompute_futures: dict[Future, int] = {}
@@ -68,21 +71,33 @@ class AoFBrowserPanel:
 
     def _build_precompute_controls(self) -> None:
         side_x = self.side_x
-        start_y = self.top_margin + 56
+        vertical_gap = 8
+        start_y = self.metric_dropdown.rect.bottom + vertical_gap
         button_w = self.side_w
         button_h = 24
-        gap = 6
+        gap = vertical_gap
         self.precompute_buttons = {
             "start": pygame.Rect(side_x, start_y, button_w, button_h),
             "pause": pygame.Rect(side_x, start_y + (button_h + gap), button_w, button_h),
             "resume": pygame.Rect(side_x, start_y + 2 * (button_h + gap), button_w, button_h),
             "stop": pygame.Rect(side_x, start_y + 3 * (button_h + gap), button_w, button_h),
         }
-        worker_y = start_y + 4 * (button_h + gap) + 2
+        worker_y = self.precompute_buttons["stop"].bottom + vertical_gap
+        knob_w = 52
+        self.precompute_worker_knob = pygame.Rect(side_x, worker_y, knob_w, button_h)
+        half_w = knob_w // 2
         self.precompute_worker_buttons = {
-            "down": pygame.Rect(side_x, worker_y, 24, button_h),
-            "up": pygame.Rect(side_x + button_w - 24, worker_y, 24, button_h),
+            "down": pygame.Rect(side_x, worker_y, half_w, button_h),
+            "up": pygame.Rect(side_x + half_w, worker_y, knob_w - half_w, button_h),
         }
+
+        sim_x = side_x + button_w - knob_w
+        self.precompute_sim_knob = pygame.Rect(sim_x, worker_y, knob_w, button_h)
+        self.precompute_sim_buttons = {
+            "down": pygame.Rect(sim_x, worker_y, half_w, button_h),
+            "up": pygame.Rect(sim_x + half_w, worker_y, knob_w - half_w, button_h),
+        }
+        self.control_h = (self.precompute_worker_knob.bottom - self.top_margin) + vertical_gap
 
     def _default_precompute_workers(self) -> int:
         workers = os.cpu_count() or 2
@@ -91,6 +106,18 @@ class AoFBrowserPanel:
     @staticmethod
     def _clamp_precompute_workers(raw_workers: int) -> int:
         return max(1, min(16, int(raw_workers)))
+
+    @staticmethod
+    def _clamp_precompute_simulations(raw_simulations: int) -> int:
+        return max(100, min(50000, int(raw_simulations)))
+
+    @staticmethod
+    def _simulation_step_size(current_simulations: int, mouse_button: int) -> int:
+        coarse = int(mouse_button) == 3
+        current = int(current_simulations)
+        if coarse:
+            return 1000 if current < 5000 else 5000
+        return 100 if current < 5000 else 500
 
     def _load_precompute_max_workers(self) -> int:
         cfg_path = Path(__file__).resolve().parents[3] / "config" / "gto_defaults.yaml"
@@ -297,6 +324,18 @@ class AoFBrowserPanel:
                         self.precompute_executor = None
                     self.state.status_message = f"Workers set to {self.precompute_max_workers}"
                     return True
+            if self.precompute_sim_buttons.get("down") and self.precompute_sim_buttons["down"].collidepoint(event.pos):
+                if not self.precompute_futures and (self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING):
+                    step = self._simulation_step_size(self.precompute_simulations_per_cell, getattr(event, "button", 1))
+                    self.precompute_simulations_per_cell = self._clamp_precompute_simulations(self.precompute_simulations_per_cell - step)
+                    self.state.status_message = f"Simulations per cell set to {self.precompute_simulations_per_cell}"
+                    return True
+            if self.precompute_sim_buttons.get("up") and self.precompute_sim_buttons["up"].collidepoint(event.pos):
+                if not self.precompute_futures and (self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING):
+                    step = self._simulation_step_size(self.precompute_simulations_per_cell, getattr(event, "button", 1))
+                    self.precompute_simulations_per_cell = self._clamp_precompute_simulations(self.precompute_simulations_per_cell + step)
+                    self.state.status_message = f"Simulations per cell set to {self.precompute_simulations_per_cell}"
+                    return True
 
             if self.precompute_buttons.get("start") and self.precompute_buttons["start"].collidepoint(event.pos):
                 if self.precompute_session is None or self.precompute_session.run_state in (GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED):
@@ -422,19 +461,46 @@ class AoFBrowserPanel:
             )
             screen.blit(progress, (panel_rect.x + 10, panel_rect.y + 44))
 
-        workers_label = self.small_font.render(f"Workers: {self.precompute_max_workers}", True, (210, 210, 210))
-        screen.blit(workers_label, (self.side_x + 30, self.precompute_worker_buttons["down"].y + 4))
+        worker_enabled = not self.precompute_futures and (
+            self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING
+        )
+        knob_color = (56, 98, 74) if worker_enabled else (56, 56, 56)
+        pygame.draw.rect(screen, knob_color, self.precompute_worker_knob, border_radius=4)
+        pygame.draw.rect(screen, (90, 90, 90), self.precompute_worker_knob, 1, border_radius=4)
+        divider_x = self.precompute_worker_buttons["up"].x
+        pygame.draw.line(
+            screen,
+            (90, 90, 90),
+            (divider_x, self.precompute_worker_knob.y + 2),
+            (divider_x, self.precompute_worker_knob.bottom - 2),
+            1,
+        )
 
-        for name, rect in self.precompute_worker_buttons.items():
-            worker_enabled = not self.precompute_futures and (
-                self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING
-            )
-            color = (56, 98, 74) if worker_enabled else (56, 56, 56)
-            pygame.draw.rect(screen, color, rect, border_radius=4)
-            pygame.draw.rect(screen, (90, 90, 90), rect, 1, border_radius=4)
-            symbol = "-" if name == "down" else "+"
-            label = self.small_font.render(symbol, True, (240, 240, 240))
-            screen.blit(label, label.get_rect(center=rect.center))
+        down_label = self.small_font.render("-", True, (240, 240, 240))
+        up_label = self.small_font.render("+", True, (240, 240, 240))
+        screen.blit(down_label, down_label.get_rect(center=self.precompute_worker_buttons["down"].center))
+        screen.blit(up_label, up_label.get_rect(center=self.precompute_worker_buttons["up"].center))
+
+        pygame.draw.rect(screen, knob_color, self.precompute_sim_knob, border_radius=4)
+        pygame.draw.rect(screen, (90, 90, 90), self.precompute_sim_knob, 1, border_radius=4)
+        sim_divider_x = self.precompute_sim_buttons["up"].x
+        pygame.draw.line(
+            screen,
+            (90, 90, 90),
+            (sim_divider_x, self.precompute_sim_knob.y + 2),
+            (sim_divider_x, self.precompute_sim_knob.bottom - 2),
+            1,
+        )
+        screen.blit(down_label, down_label.get_rect(center=self.precompute_sim_buttons["down"].center))
+        screen.blit(up_label, up_label.get_rect(center=self.precompute_sim_buttons["up"].center))
+
+        row_y = self.precompute_worker_knob.y + 4
+        workers_label = self.small_font.render(f"Workers: {self.precompute_max_workers}", True, (210, 210, 210))
+        screen.blit(workers_label, (self.precompute_worker_knob.right + 8, row_y))
+
+        sims_label = self.small_font.render(f"Sims/cell: {self.precompute_simulations_per_cell}", True, (210, 210, 210))
+        sims_x = self.precompute_sim_knob.x - sims_label.get_width() - 8
+        screen.blit(sims_label, (sims_x, row_y))
 
         for name, rect in self.precompute_buttons.items():
             enabled = True

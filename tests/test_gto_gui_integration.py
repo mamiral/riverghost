@@ -280,6 +280,27 @@ class TestAoFBrowserIntegration:
         assert aof_app.panel.handle_event(down_event)
         assert aof_app.panel.precompute_max_workers == before
 
+    def test_precompute_sim_buttons_adjust_count(self, aof_app):
+        before = aof_app.panel.precompute_simulations_per_cell
+        up_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_sim_buttons["up"].center, button=1)
+        assert aof_app.panel.handle_event(up_event)
+        assert aof_app.panel.precompute_simulations_per_cell == before + 100
+
+        down_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_sim_buttons["down"].center, button=1)
+        assert aof_app.panel.handle_event(down_event)
+        assert aof_app.panel.precompute_simulations_per_cell == before
+
+    def test_precompute_sim_buttons_right_click_adjust_count(self, aof_app):
+        aof_app.panel.precompute_simulations_per_cell = 1000
+        up_event_small = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_sim_buttons["up"].center, button=3)
+        assert aof_app.panel.handle_event(up_event_small)
+        assert aof_app.panel.precompute_simulations_per_cell == 2000
+
+        aof_app.panel.precompute_simulations_per_cell = 6000
+        up_event_large = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_sim_buttons["up"].center, button=3)
+        assert aof_app.panel.handle_event(up_event_large)
+        assert aof_app.panel.precompute_simulations_per_cell == 11000
+
     def test_action_switch_updates_matrix(self, aof_app):
         before = [c["value"] for c in aof_app.panel.payload["cells"]]
         before_context = dict(aof_app.panel.payload["context"])
