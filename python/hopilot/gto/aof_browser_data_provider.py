@@ -5,7 +5,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -202,6 +202,7 @@ class AoFBrowserDataProvider:
         pot_size: float = 20.0,
         bet_amount: float = 10.0,
         strict_current_action: bool = False,
+        on_cell_complete: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         try:
             context = self._build_context(
@@ -295,6 +296,11 @@ class AoFBrowserDataProvider:
                         "display": format_metric_value(metric, value),
                     }
                 )
+                if on_cell_complete is not None:
+                    try:
+                        on_cell_complete(cells[-1])
+                    except Exception as exc:
+                        self.logger.warning("AoF provider cell callback failed for %s: %s", key, exc)
                 if status_message:
                     context["status_message"] = status_message
 

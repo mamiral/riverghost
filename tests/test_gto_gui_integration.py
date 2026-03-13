@@ -2,7 +2,12 @@ import pytest
 import pygame
 import yaml
 import time
+import os
+import sys
 from unittest.mock import Mock, patch, MagicMock, mock_open, mock_open
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.gto.gto_optimizer import GTOOptimizer
 from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
@@ -260,6 +265,9 @@ class TestAoFBrowserIntegration:
         else:
             assert before != after
 
+    def test_precompute_max_workers_loaded_from_config(self, aof_app):
+        assert aof_app.panel.precompute_max_workers == 3
+
     def test_action_switch_updates_matrix(self, aof_app):
         before = [c["value"] for c in aof_app.panel.payload["cells"]]
         event = pygame.event.Event(
@@ -318,6 +326,39 @@ class TestAoFBrowserIntegration:
         aof_app.panel.handle_event(event)
         elapsed = time.perf_counter() - start
         assert elapsed <= 1.0
+
+    def test_precompute_panel_control_rendering_and_state_enable(self, aof_app):
+        start_rect = aof_app.panel.precompute_buttons["start"]
+        pause_rect = aof_app.panel.precompute_buttons["pause"]
+        resume_rect = aof_app.panel.precompute_buttons["resume"]
+
+        start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+        assert aof_app.panel.handle_event(start_event)
+        assert aof_app.panel.precompute_session is not None
+        assert aof_app.panel.precompute_session.run_state.value == "RUNNING"
+
+        pause_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pause_rect.center)
+        assert aof_app.panel.handle_event(pause_event)
+        assert aof_app.panel.precompute_session.run_state.value == "PAUSED"
+
+        resume_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=resume_rect.center)
+        assert aof_app.panel.handle_event(resume_event)
+        assert aof_app.panel.precompute_session.run_state.value == "RUNNING"
+
+    def test_scenario_controls_locked_while_precompute_running(self, aof_app):
+        start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_buttons["start"].center)
+        assert aof_app.panel.handle_event(start_event)
+        assert aof_app.panel.precompute_session is not None
+        assert aof_app.panel.precompute_session.run_state.value == "RUNNING"
+
+        before = aof_app.panel.state.selected_position
+        switch_event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.action_selector.card_rects["BB"].center,
+        )
+        aof_app.panel.handle_event(switch_event)
+
+        assert aof_app.panel.state.selected_position == before
 
     def test_p95_latency_under_1s_for_200_switches(self):
         pygame.init()

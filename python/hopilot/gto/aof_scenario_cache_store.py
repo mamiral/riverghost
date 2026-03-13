@@ -207,6 +207,16 @@ class AoFScenarioCacheStore:
         with self._session_factory() as session:
             return session.get(OfflinePrecomputeRunModel, int(run_id))
 
+    def get_latest_run_id(self, statuses: tuple[str, ...] | None = None) -> int | None:
+        with self._session_factory() as session:
+            query = session.query(OfflinePrecomputeRunModel)
+            if statuses:
+                query = query.filter(OfflinePrecomputeRunModel.status.in_(tuple(statuses)))
+            run = query.order_by(OfflinePrecomputeRunModel.run_id.desc()).first()
+            if run is None:
+                return None
+            return int(run.run_id)
+
     def update_run_progress(self, run_id: int, *, completed: int, failed: int, resume_cursor: int) -> None:
         with self._session_factory() as session:
             run = session.get(OfflinePrecomputeRunModel, int(run_id))
@@ -216,6 +226,38 @@ class AoFScenarioCacheStore:
             run.failed_scenarios = int(failed)
             run.resume_cursor = int(resume_cursor)
             session.commit()
+
+    def persist_gui_checkpoint(
+        self,
+        run_id: int,
+        *,
+        resume_cursor: int,
+        completed_cells: int,
+        failed_cells: int,
+        status: str,
+    ) -> None:
+        with self._session_factory() as session:
+            run = session.get(OfflinePrecomputeRunModel, int(run_id))
+            if run is None:
+                return
+            run.resume_cursor = int(resume_cursor)
+            run.completed_scenarios = int(completed_cells)
+            run.failed_scenarios = int(failed_cells)
+            run.status = str(status)
+            session.commit()
+
+    def get_gui_checkpoint_cursor(self, run_id: int) -> dict[str, int | str] | None:
+        with self._session_factory() as session:
+            run = session.get(OfflinePrecomputeRunModel, int(run_id))
+            if run is None:
+                return None
+            return {
+                "run_id": int(run.run_id),
+                "resume_cursor": int(run.resume_cursor or 0),
+                "completed_cells": int(run.completed_scenarios or 0),
+                "failed_cells": int(run.failed_scenarios or 0),
+                "status": str(run.status),
+            }
 
     def finalize_run(self, run_id: int, status: str) -> None:
         with self._session_factory() as session:
