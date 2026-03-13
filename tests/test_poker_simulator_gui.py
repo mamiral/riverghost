@@ -42,6 +42,8 @@ class TestPokerSimulatorGUI:
         assert len(gui_app.board_slots) == 5  # Flop, turn, river
         assert gui_app.simulation_panel is not None
         assert gui_app.num_simulations == 10000
+        # Regression guard: simulator stays decoupled from standalone AoF/GTO browser flows.
+        assert gui_app.gto_solver_panel is None
 
     def test_add_remove_villain(self, gui_app):
         """Test adding and removing villains."""

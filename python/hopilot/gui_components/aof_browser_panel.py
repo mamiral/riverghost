@@ -48,10 +48,7 @@ class AoFBrowserPanel:
             self.state.selected_metric,
             self.state.position_actions,
         )
-        if any(c["status"] != "AVAILABLE" for c in self.payload["cells"]):
-            self.state.status_message = "Some hands are unavailable for this context"
-        else:
-            self.state.status_message = None
+        self.state.status_message = self.payload.get("status_message")
 
     def handle_event(self, event):
         position_action = self.action_selector.handle_event(event)

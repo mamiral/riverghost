@@ -45,8 +45,12 @@ class AoFHandMatrixPanel:
                         color = (205, 110, 72)
                     else:
                         color = (62, 126, 190)
-                elif status == "INVALID":
-                    color = (120, 50, 50)
+                elif status == "NO_CONTEST":
+                    color = (68, 68, 68)
+                elif status == "TIMEOUT":
+                    color = (128, 92, 42)
+                elif status == "ERROR":
+                    color = (110, 44, 44)
                 else:
                     color = (55, 55, 55)
                 pygame.draw.rect(surface, color, rect)

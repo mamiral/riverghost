@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 POSITIONS = ("UTG", "BTN", "SB", "BB")
 ACTIONS = ("FOLD", "ALL_IN")
@@ -45,3 +46,63 @@ class AoFBrowserViewState:
         if metric not in METRICS:
             raise ValueError(f"Unsupported metric: {metric}")
         self.selected_metric = metric
+
+
+def normalize_position_actions(position_actions: dict[str, str] | None) -> dict[str, str]:
+    normalized: dict[str, str] = {position: "FOLD" for position in POSITIONS}
+    if not position_actions:
+        return normalized
+    for position, action in position_actions.items():
+        if position not in POSITIONS:
+            raise ValueError(f"Unsupported position in context: {position}")
+        if action not in ACTIONS:
+            raise ValueError(f"Unsupported action in context: {action}")
+        normalized[position] = action
+    return normalized
+
+
+def validate_metric(metric: str) -> str:
+    if metric not in METRICS:
+        raise ValueError(f"Unsupported metric: {metric}")
+    return metric
+
+
+def build_browser_context(
+    selected_position: str,
+    metric: str,
+    position_actions: dict[str, str] | None,
+    pot_size: float,
+    bet_amount: float,
+    num_simulations: int,
+    timeout_ms: int,
+    strict_current_action: bool,
+) -> dict[str, Any]:
+    if selected_position not in POSITIONS:
+        raise ValueError(f"Unsupported selected position: {selected_position}")
+    validate_metric(metric)
+    if pot_size <= 0:
+        raise ValueError("pot_size must be positive")
+    if bet_amount <= 0:
+        raise ValueError("bet_amount must be positive")
+    if num_simulations <= 0:
+        raise ValueError("num_simulations must be positive")
+    if timeout_ms <= 0:
+        raise ValueError("timeout_ms must be positive")
+
+    actions = normalize_position_actions(position_actions)
+    active_players = sum(1 for action in actions.values() if action == "ALL_IN")
+    selected_action = actions[selected_position]
+    effective_mode = "strict-current-action" if strict_current_action else "analysis"
+
+    return {
+        "position": selected_position,
+        "action": selected_action,
+        "metric": metric,
+        "position_actions": actions,
+        "active_players": active_players,
+        "pot_size": float(pot_size),
+        "bet_amount": float(bet_amount),
+        "num_simulations": int(num_simulations),
+        "timeout_ms": int(timeout_ms),
+        "effective_mode": effective_mode,
+    }
