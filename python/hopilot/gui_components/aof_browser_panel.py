@@ -33,10 +33,12 @@ class AoFBrowserPanel:
         self.control_h = 160
         self.side_panel_w = 300
         self.outer_margin = 20
+        self.side_x = self.width - self.side_panel_w + self.outer_margin
+        self.side_w = self.side_panel_w - (self.outer_margin * 2)
 
         matrix_region_width = width - self.side_panel_w - (self.outer_margin * 2)
         self.action_selector = AoFActionSelector(self.outer_margin, self.top_margin + 28, width=matrix_region_width)
-        self.metric_dropdown = AoFMetricDropdown(width - self.side_panel_w + 54, self.top_margin + 24)
+        self.metric_dropdown = AoFMetricDropdown(self.side_x, self.top_margin + 24, width=self.side_w)
         self.matrix = AoFHandMatrixPanel(self.outer_margin, self.top_margin + self.control_h + 10)
         self._reflow_layout()
         self._build_precompute_controls()
@@ -51,17 +53,20 @@ class AoFBrowserPanel:
         self._restore_precompute_checkpoint_if_available()
 
     def _reflow_layout(self) -> None:
+        self.side_x = self.width - self.side_panel_w + self.outer_margin
+        self.side_w = self.side_panel_w - (self.outer_margin * 2)
         matrix_x = self.outer_margin
         matrix_y = self.top_margin + self.control_h + 10
         matrix_w = self.width - self.side_panel_w - (self.outer_margin * 2)
         matrix_h = self.height - matrix_y - self.outer_margin
         self.matrix.set_bounds(matrix_x, matrix_y, matrix_w, matrix_h)
+        self.metric_dropdown.set_bounds(self.side_x, self.top_margin + 24, self.side_w)
         self._build_precompute_controls()
 
     def _build_precompute_controls(self) -> None:
-        side_x = self.width - self.side_panel_w + 20
-        start_y = self.top_margin + 86
-        button_w = self.side_panel_w - 40
+        side_x = self.side_x
+        start_y = self.top_margin + 56
+        button_w = self.side_w
         button_h = 24
         gap = 6
         self.precompute_buttons = {
@@ -288,9 +293,9 @@ class AoFBrowserPanel:
 
         self.matrix.draw(screen, self.small_font, self.payload["cells"], self.state.selected_metric)
 
-        info_x = self.width - self.side_panel_w + 20
+        info_x = self.side_x
         info_y = self.top_margin + self.control_h + 10
-        info_rect = pygame.Rect(info_x, info_y, self.side_panel_w - 40, 220)
+        info_rect = pygame.Rect(info_x, info_y, self.side_w, 220)
         pygame.draw.rect(screen, (31, 31, 31), info_rect, border_radius=6)
         pygame.draw.rect(screen, (90, 90, 90), info_rect, 1, border_radius=6)
 
