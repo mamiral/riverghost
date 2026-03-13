@@ -8,7 +8,7 @@ using professional shorthand notation (e.g., "AKs", "QJo", "22", "A5s-A2s", "KTs
 from typing import List, Set, Dict, Optional, Tuple
 import re
 from datetime import datetime
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, field_validator
 from hopilot.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -27,10 +27,11 @@ class PokerRange(BaseModel):
     description: Optional[str] = None
     hands: List[str]  # List of shorthand hand notations (e.g., ["AA", "AKs", "QQ"])
     tags: Optional[List[str]] = None  # e.g., ["broadway", "premium", "suited"]
-    created: datetime = datetime.now()
-    modified: datetime = datetime.now()
+    created: datetime = Field(default_factory=datetime.now)
+    modified: datetime = Field(default_factory=datetime.now)
 
-    @validator('hands')
+    @field_validator('hands')
+    @classmethod
     def validate_hands(cls, v):
         """Ensure all hands are valid poker hand notations."""
         for hand in v:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ import yaml
 
 from hopilot.gto.aof_browser_state import METRICS, POSITIONS, build_browser_context, normalize_position_actions
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
+from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures
 from hopilot.gto.aof_solver_adapter import AoFSolverAdapter, SolverRuntimeConfig
 from hopilot.logging_config import get_logger
 
@@ -23,14 +25,39 @@ SOLVER_SIGNATURE = "aof-solver-v1"
 
 
 class AoFBrowserDataProvider:
-    def __init__(self, fixture_path: str | None = None):
+    def __init__(self, fixture_path: str | None = None, cache_enabled: bool | None = None, cache_db_path: str | None = None):
         self.logger = get_logger(__name__)
         self._matrix_keys = build_matrix_keys()
         self._fixture_data: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
         self._cache: dict[str, dict[str, Any]] = {}
+        self._cache_store: AoFScenarioCacheStore | None = None
         self._runtime = self._load_runtime_config()
+        self._cache_cfg = self._load_cache_config()
         self._solver = AoFSolverAdapter(runtime=self._runtime)
         self._baseline_equity_cache: dict[str, float] = {}
+
+        enabled = bool(self._cache_cfg.get("enabled", False)) if cache_enabled is None else bool(cache_enabled)
+        # Keep legacy tests isolated from persistent cache unless explicitly enabled.
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            enabled = bool(cache_enabled)
+
+        if enabled:
+            try:
+                db_path = cache_db_path or str(self._cache_cfg.get("db_path", "python/hopilot/cache/aof_scenario_cache.sqlite3"))
+                schema_version = str(self._cache_cfg.get("schema_version", "1"))
+                policy_signature = str(self._cache_cfg.get("policy_signature", "aof-cache-policy-v1"))
+                self._cache_store = AoFScenarioCacheStore(
+                    db_path=db_path,
+                    signatures=CacheSignatures(
+                        schema_version=schema_version,
+                        solver_signature=SOLVER_SIGNATURE,
+                        policy_signature=policy_signature,
+                        runtime_signature=self._runtime_signature_base(),
+                    ),
+                )
+            except Exception as exc:
+                self.logger.warning("Failed to initialize AoF persistent cache store: %s", exc)
+                self._cache_store = None
 
         if fixture_path and Path(fixture_path).exists():
             with open(fixture_path, "r", encoding="utf-8") as f:
@@ -57,6 +84,97 @@ class AoFBrowserDataProvider:
             timeout_ms=int(runtime_cfg.get("timeout_ms", default.timeout_ms)),
             seed=int(runtime_cfg.get("seed", default.seed)),
         )
+
+    def _load_cache_config(self) -> dict[str, Any]:
+        cfg_path = Path(__file__).resolve().parents[3] / "config" / "gto_defaults.yaml"
+        if not cfg_path.exists():
+            return {
+                "enabled": False,
+                "db_path": "python/hopilot/cache/aof_scenario_cache.sqlite3",
+                "schema_version": "1",
+                "policy_signature": "aof-cache-policy-v1",
+            }
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+            return loaded.get("aof_browser_cache", {})
+        except Exception as exc:
+            self.logger.warning("Failed to load AoF cache config: %s", exc)
+            return {"enabled": False}
+
+    def _runtime_signature_base(self) -> str:
+        payload = {
+            "num_simulations": self._runtime.num_simulations,
+            "combo_samples": self._runtime.combo_samples,
+            "timeout_ms": self._runtime.timeout_ms,
+            "seed": self._runtime.seed,
+            "fixture_enabled": bool(self._fixture_data),
+        }
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _runtime_signature(self, context: dict[str, Any]) -> str:
+        canonical = self._canonical_solver_payload(context)
+        payload = {
+            "runtime": self._runtime_signature_base(),
+            "metric": canonical["metric"],
+            "selected_action": canonical["selected_action"],
+            "num_opponents": canonical["num_opponents"],
+            "pot_size": canonical["pot_size"],
+            "bet_amount": canonical["bet_amount"],
+            "effective_mode": canonical["effective_mode"],
+        }
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _canonical_solver_payload(self, context: dict[str, Any]) -> dict[str, Any]:
+        selected_action = str(context["action"])
+        num_opponents = int(self._resolve_num_opponents(selected_action, context["position_actions"]))
+        return {
+            "solver_signature": SOLVER_SIGNATURE,
+            "metric": str(context["metric"]),
+            "selected_action": selected_action,
+            "num_opponents": num_opponents,
+            "pot_size": float(context["pot_size"]),
+            "bet_amount": float(context["bet_amount"]),
+            "effective_mode": context.get("effective_mode"),
+            "runtime": {
+                "num_simulations": self._runtime.num_simulations,
+                "combo_samples": self._runtime.combo_samples,
+                "timeout_ms": self._runtime.timeout_ms,
+                "seed": self._runtime.seed,
+            },
+            "fixture_enabled": bool(self._fixture_data),
+        }
+
+    def _build_solver_equivalence_key(self, context: dict[str, Any]) -> str:
+        payload = self._canonical_solver_payload(context)
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _build_context(
+        self,
+        *,
+        position: str,
+        metric: str,
+        position_actions: dict[str, str] | None,
+        pot_size: float = 20.0,
+        bet_amount: float = 10.0,
+        strict_current_action: bool = False,
+    ) -> dict[str, Any]:
+        return build_browser_context(
+            selected_position=position,
+            metric=metric,
+            position_actions=position_actions,
+            pot_size=pot_size,
+            bet_amount=bet_amount,
+            num_simulations=self._runtime.num_simulations,
+            timeout_ms=self._runtime.timeout_ms,
+            strict_current_action=strict_current_action,
+        )
+
+    def _log_event(self, event: str, **fields: Any) -> None:
+        self.logger.info("AoF provider event=%s fields=%s", event, fields)
 
     def clear_cache(self) -> None:
         self._cache.clear()
@@ -86,14 +204,12 @@ class AoFBrowserDataProvider:
         strict_current_action: bool = False,
     ) -> dict[str, Any]:
         try:
-            context = build_browser_context(
-                selected_position=position,
+            context = self._build_context(
+                position=position,
                 metric=metric,
                 position_actions=position_actions,
                 pot_size=pot_size,
                 bet_amount=bet_amount,
-                num_simulations=self._runtime.num_simulations,
-                timeout_ms=self._runtime.timeout_ms,
                 strict_current_action=strict_current_action,
             )
         except ValueError:
@@ -120,8 +236,8 @@ class AoFBrowserDataProvider:
                 )
             raise
 
-        cache_key = self._build_cache_key(context)
-        cached = self._cache.get(cache_key)
+        request_key = self._build_cache_key(context)
+        cached = self._cache.get(request_key)
         if cached:
             return cached
 
@@ -129,7 +245,7 @@ class AoFBrowserDataProvider:
         active_players = context["active_players"]
         if active_players == 0:
             payload = self._build_status_payload(context, STATUS_NO_CONTEST, "All positions are folded")
-            self._cache[cache_key] = payload
+            self._cache[request_key] = payload
             return payload
 
         if selected_action == "FOLD" and context["effective_mode"] == "strict-current-action":
@@ -138,12 +254,28 @@ class AoFBrowserDataProvider:
                 STATUS_NO_CONTEST,
                 "Selected position is folded in strict-current-action mode",
             )
-            self._cache[cache_key] = payload
+            self._cache[request_key] = payload
             return payload
+
+        solver_key = self._build_solver_equivalence_key(context)
+        runtime_signature = self._runtime_signature(context)
+        if self._cache_store is not None:
+            store_payload = self._cache_store.get_payload(solver_key, runtime_signature)
+            if store_payload is not None:
+                hydrated = {
+                    "context": context,
+                    "cells": store_payload["cells"],
+                    "status_message": store_payload.get("status_message"),
+                }
+                self._log_event("cache_hit", source="persistent", scenario_key_hash=solver_key)
+                self._cache[request_key] = hydrated
+                return hydrated
+            self._log_event("cache_miss", source="persistent", scenario_key_hash=solver_key)
 
         cells: list[dict[str, Any]] = []
         request_start = time.perf_counter()
         timeout_budget_ms = int(context["timeout_ms"])
+        self._log_event("fallback_compute_started", scenario_key_hash=solver_key, timeout_ms=timeout_budget_ms)
         for row in range(13):
             for col in range(13):
                 key = self._matrix_keys[row][col]
@@ -171,7 +303,21 @@ class AoFBrowserDataProvider:
             "cells": cells,
             "status_message": context.get("status_message"),
         }
-        self._cache[cache_key] = payload
+        self._cache[request_key] = payload
+
+        if self._cache_store is not None:
+            statuses = {cell.get("status") for cell in cells}
+            if STATUS_TIMEOUT in statuses or STATUS_ERROR in statuses:
+                if STATUS_TIMEOUT in statuses:
+                    self._log_event("fallback_compute_timeout", scenario_key_hash=solver_key)
+                if STATUS_ERROR in statuses:
+                    self._log_event("fallback_compute_error", scenario_key_hash=solver_key)
+                self._log_event("write_back_skipped", reason="degraded_status", scenario_key_hash=solver_key)
+            else:
+                try:
+                    self._cache_store.upsert_payload(solver_key, payload, runtime_signature)
+                except Exception as exc:
+                    self.logger.warning("AoF provider write-back failed key=%s error=%s", solver_key, exc)
         return payload
 
     def _value_for_hand(
