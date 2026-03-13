@@ -533,57 +533,26 @@ class TestPokerSimulatorGUI:
         assert board_slot.card == "Qd"
 
     def test_panel_navigation(self, gui_app):
-        """Test navigation between simulator and GTO solver panels."""
-        # Start with simulator panel
+        """Test simulator-only panel state remains stable."""
         assert gui_app.current_panel == 'simulator'
         assert gui_app.simulation_panel is not None
         assert gui_app.gto_solver_panel is None
-
-        # Switch to GTO solver panel
-        gui_app.current_panel = 'gto_solver'
-        gui_app._setup_layout()
-
-        assert gui_app.current_panel == 'gto_solver'
-        assert gui_app.simulation_panel is None
-        assert gui_app.gto_solver_panel is not None
-        assert len(gui_app.player_seats) == 0  # No player seats in GTO solver
-        assert len(gui_app.board_slots) == 0   # No board slots in GTO solver
-
-        # Switch back to simulator panel
-        gui_app.current_panel = 'simulator'
-        gui_app._setup_layout()
-
-        assert gui_app.current_panel == 'simulator'
-        assert gui_app.simulation_panel is not None
-        assert gui_app.gto_solver_panel is None
-        assert len(gui_app.player_seats) > 0   # Player seats restored
-        assert len(gui_app.board_slots) > 0    # Board slots restored
+        assert len(gui_app.player_seats) > 0
+        assert len(gui_app.board_slots) > 0
 
     def test_navigation_button_events(self, gui_app):
-        """Test navigation button click handling."""
-        # Mock navigation button click for GTO solver
-        gto_button_center = gui_app.nav_buttons['gto_solver'].center
+        """Test simulator header button click handling."""
+        simulator_button_center = gui_app.nav_buttons['simulator'].center
         event = Mock()
         event.type = pygame.MOUSEBUTTONDOWN
-        event.pos = gto_button_center
-
-        # Handle the event
-        result = gui_app.handle_event(event)
-
-        assert result == True
-        assert gui_app.current_panel == 'gto_solver'
-        assert gui_app.gto_solver_panel is not None
-
-        # Mock navigation button click for simulator
-        simulator_button_center = gui_app.nav_buttons['simulator'].center
         event.pos = simulator_button_center
 
-        # Handle the event
         result = gui_app.handle_event(event)
 
         assert result == True
         assert gui_app.current_panel == 'simulator'
         assert gui_app.simulation_panel is not None
+        assert gui_app.gto_solver_panel is None
 
 
 # PyAutoGUI-based integration tests (run separately)

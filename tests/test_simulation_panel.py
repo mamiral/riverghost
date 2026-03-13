@@ -195,6 +195,11 @@ class TestSimulationPanel:
         panel.set_results(results)
         assert panel.results == results
 
+    def test_simulation_panel_no_gto_trigger(self, screen, analyzer):
+        """Regression: simulation panel no longer exposes a run_gto action."""
+        panel = SimulationPanel(screen, analyzer, 800, 100)
+        assert not hasattr(panel, "gto_button_rect")
+
     def test_simulation_panel_add_convergence_point(self, screen, analyzer):
         """Test adding convergence data points."""
         panel = SimulationPanel(screen, analyzer, 800, 100)

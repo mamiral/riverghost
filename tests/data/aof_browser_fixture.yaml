@@ -1,0 +1,54 @@
+data:
+  UTG:
+    FOLD:
+      WIN_LOSE_PROBABILITY:
+        AA: 0.81
+        AKs: 0.68
+      EV:
+        AA: 1.25
+        AKs: 0.47
+      EQUITY:
+        AA: 0.84
+        AKs: 0.62
+      EQR:
+        AA: 0.79
+        AKs: 0.58
+    ALL_IN:
+      WIN_LOSE_PROBABILITY:
+        AA: 0.87
+      EV:
+        AA: 2.1
+      EQUITY:
+        AA: 0.89
+      EQR:
+        AA: 0.82
+  BTN:
+    FOLD:
+      WIN_LOSE_PROBABILITY:
+        AA: 0.8
+      EV:
+        AA: 1.2
+      EQUITY:
+        AA: 0.83
+      EQR:
+        AA: 0.77
+  SB:
+    FOLD:
+      WIN_LOSE_PROBABILITY:
+        AA: 0.79
+      EV:
+        AA: 1.0
+      EQUITY:
+        AA: 0.82
+      EQR:
+        AA: 0.75
+  BB:
+    FOLD:
+      WIN_LOSE_PROBABILITY:
+        AA: 0.78
+      EV:
+        AA: 0.98
+      EQUITY:
+        AA: 0.8
+      EQR:
+        AA: 0.73

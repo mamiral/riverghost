@@ -1,9 +1,11 @@
 import pytest
 import pygame
 import yaml
+import time
 from unittest.mock import Mock, patch, MagicMock, mock_open, mock_open
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.gto.gto_optimizer import GTOOptimizer
+from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
 
 
 @pytest.fixture
@@ -230,6 +232,81 @@ class TestGTOGUIIntegration:
         assert panel.num_opponents == 7
         assert panel.pot_size == 35.0
         assert panel.bet_amount == 17.5
+
+
+class TestAoFBrowserIntegration:
+    @pytest.fixture
+    def aof_app(self):
+        pygame.init()
+        app = AoFGTOBrowserGUI(width=1000, height=760)
+        yield app
+        pygame.quit()
+
+    def test_position_switch_updates_matrix(self, aof_app):
+        before = [c["value"] for c in aof_app.panel.payload["cells"]]
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.position_selector.rects["BB"].center,
+        )
+        aof_app.panel.handle_event(event)
+        after = [c["value"] for c in aof_app.panel.payload["cells"]]
+
+        assert aof_app.panel.state.selected_position == "BB"
+        assert before != after
+
+    def test_action_switch_updates_matrix(self, aof_app):
+        before = [c["value"] for c in aof_app.panel.payload["cells"]]
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.action_selector.rects["ALL_IN"].center,
+        )
+        aof_app.panel.handle_event(event)
+        after = [c["value"] for c in aof_app.panel.payload["cells"]]
+
+        assert aof_app.panel.state.selected_action == "ALL_IN"
+        assert before != after
+
+    def test_metric_switch_updates_matrix(self, aof_app):
+        before = [c["display"] for c in aof_app.panel.payload["cells"]]
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.metric_dropdown.rect.center,
+        )
+        aof_app.panel.handle_event(event)
+        after = [c["display"] for c in aof_app.panel.payload["cells"]]
+
+        assert aof_app.panel.state.selected_metric != "WIN_LOSE_PROBABILITY"
+        assert before != after
+
+    def test_position_switch_latency_under_1s(self, aof_app):
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.position_selector.rects["SB"].center,
+        )
+        start = time.perf_counter()
+        aof_app.panel.handle_event(event)
+        elapsed = time.perf_counter() - start
+        assert elapsed <= 1.0
+
+    def test_action_switch_latency_under_1s(self, aof_app):
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.action_selector.rects["ALL_IN"].center,
+        )
+        start = time.perf_counter()
+        aof_app.panel.handle_event(event)
+        elapsed = time.perf_counter() - start
+        assert elapsed <= 1.0
+
+    def test_metric_switch_latency_under_1s(self, aof_app):
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.metric_dropdown.rect.center,
+        )
+        start = time.perf_counter()
+        aof_app.panel.handle_event(event)
+        elapsed = time.perf_counter() - start
+        assert elapsed <= 1.0
 
     def test_error_recovery_workflow(self, mock_pygame_setup, mock_analyzer, mock_optimizer):
         """Test error handling and recovery in GUI workflow."""
