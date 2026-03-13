@@ -246,7 +246,7 @@ class TestAoFBrowserIntegration:
         before = [c["value"] for c in aof_app.panel.payload["cells"]]
         event = pygame.event.Event(
             pygame.MOUSEBUTTONDOWN,
-            pos=aof_app.panel.position_selector.rects["BB"].center,
+            pos=aof_app.panel.action_selector.card_rects["BB"].center,
         )
         aof_app.panel.handle_event(event)
         after = [c["value"] for c in aof_app.panel.payload["cells"]]
@@ -258,12 +258,12 @@ class TestAoFBrowserIntegration:
         before = [c["value"] for c in aof_app.panel.payload["cells"]]
         event = pygame.event.Event(
             pygame.MOUSEBUTTONDOWN,
-            pos=aof_app.panel.action_selector.rects["ALL_IN"].center,
+            pos=aof_app.panel.action_selector.rects[("UTG", "ALL_IN")].center,
         )
         aof_app.panel.handle_event(event)
         after = [c["value"] for c in aof_app.panel.payload["cells"]]
 
-        assert aof_app.panel.state.selected_action == "ALL_IN"
+        assert aof_app.panel.state.get_position_action("UTG") == "ALL_IN"
         assert before != after
 
     def test_metric_switch_updates_matrix(self, aof_app):
@@ -281,7 +281,7 @@ class TestAoFBrowserIntegration:
     def test_position_switch_latency_under_1s(self, aof_app):
         event = pygame.event.Event(
             pygame.MOUSEBUTTONDOWN,
-            pos=aof_app.panel.position_selector.rects["SB"].center,
+            pos=aof_app.panel.action_selector.card_rects["SB"].center,
         )
         start = time.perf_counter()
         aof_app.panel.handle_event(event)
@@ -291,7 +291,7 @@ class TestAoFBrowserIntegration:
     def test_action_switch_latency_under_1s(self, aof_app):
         event = pygame.event.Event(
             pygame.MOUSEBUTTONDOWN,
-            pos=aof_app.panel.action_selector.rects["ALL_IN"].center,
+            pos=aof_app.panel.action_selector.rects[("UTG", "ALL_IN")].center,
         )
         start = time.perf_counter()
         aof_app.panel.handle_event(event)

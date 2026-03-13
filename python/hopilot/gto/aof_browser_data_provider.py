@@ -41,29 +41,54 @@ class AoFBrowserDataProvider:
                     data[position][action][metric] = metric_map
         return data
 
-    def get_matrix_payload(self, position: str, action: str, metric: str) -> dict[str, Any]:
-        context = {"position": position, "action": action, "metric": metric}
+    def get_matrix_payload(
+        self,
+        position: str,
+        metric: str,
+        position_actions: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        actions = position_actions or {p: "FOLD" for p in POSITIONS}
+        action = actions.get(position, "FOLD")
+        context = {
+            "position": position,
+            "action": action,
+            "metric": metric,
+            "position_actions": actions,
+            "active_players": sum(1 for v in actions.values() if v == "ALL_IN"),
+        }
         if position not in self._data or action not in self._data[position] or metric not in self._data[position][action]:
             return self._build_missing_payload(context)
 
         metric_map = self._data[position][action][metric]
+        active_players = context["active_players"]
         cells: list[dict[str, Any]] = []
         for row in range(13):
             for col in range(13):
                 key = self._matrix_keys[row][col]
                 value = metric_map.get(key)
+                adjusted_value = self._adjust_for_active_players(metric, value, active_players)
                 status = "AVAILABLE" if value is not None else "MISSING"
                 cells.append(
                     {
                         "row": row,
                         "col": col,
                         "hand_key": key,
-                        "value": value,
+                        "value": adjusted_value,
                         "status": status,
-                        "display": format_metric_value(metric, value),
+                        "display": format_metric_value(metric, adjusted_value),
                     }
                 )
         return {"context": context, "cells": cells}
+
+    @staticmethod
+    def _adjust_for_active_players(metric: str, value: float | None, active_players: int) -> float | None:
+        if value is None:
+            return None
+        # As more positions commit all-in, matrix values are shifted to reflect a denser all-in environment.
+        pressure = max(0, active_players - 1)
+        if metric == "EV":
+            return round(value - (pressure * 0.07), 4)
+        return round(min(0.99, max(0.01, value - (pressure * 0.025))), 4)
 
     def _build_missing_payload(self, context: dict[str, str]) -> dict[str, Any]:
         cells: list[dict[str, Any]] = []
