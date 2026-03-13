@@ -419,6 +419,111 @@ class TestAoFBrowserIntegration:
         elapsed = time.perf_counter() - start
         assert elapsed <= 1.0
 
+    def test_metric_switch_updates_selected_cell_detail_model(self, aof_app):
+        row, col = 0, 0
+        aof_app.panel.payload["cells"][row * 13 + col].update(
+            {
+                "status": "AVAILABLE",
+                "value": 0.62,
+                "display": "62.0%",
+                "metrics": {
+                    "WIN_LOSE_PROBABILITY": 0.62,
+                    "EV": 1.25,
+                    "EQUITY": 0.58,
+                    "EQR": 0.61,
+                    "TIE": 0.03,
+                },
+            }
+        )
+        select_cell = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.matrix.get_cell_rect(row, col).center,
+        )
+        metric_switch = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.metric_dropdown.rect.center,
+        )
+
+        assert aof_app.panel.handle_event(select_cell)
+        before_metric = aof_app.panel.selected_cell_detail["metric"]
+        before_segments = list(aof_app.panel.selected_cell_detail["segments"])
+
+        assert aof_app.panel.handle_event(metric_switch)
+        after_metric = aof_app.panel.selected_cell_detail["metric"]
+        after_segments = aof_app.panel.selected_cell_detail["segments"]
+
+        assert before_metric != after_metric
+        assert after_metric == aof_app.panel.state.selected_metric
+        assert before_segments != after_segments
+
+    def test_scenario_context_refresh_keeps_selected_cell_and_refreshes_detail(self, aof_app):
+        row, col = 0, 0
+        select_cell = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.matrix.get_cell_rect(row, col).center,
+        )
+        assert aof_app.panel.handle_event(select_cell)
+
+        before = dict(aof_app.panel.selected_cell_detail)
+        before_context = dict(aof_app.panel.payload["context"])
+
+        # Changing position triggers payload context refresh.
+        position_switch = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.action_selector.card_rects["BB"].center,
+        )
+        assert aof_app.panel.handle_event(position_switch)
+
+        after = aof_app.panel.selected_cell_detail
+        after_context = aof_app.panel.payload["context"]
+
+        assert aof_app.panel.state.selected_cell is not None
+        assert before_context["position"] != after_context["position"]
+        assert after["row"] == before["row"]
+        assert after["col"] == before["col"]
+
+    def test_layout_keeps_matrix_detail_right_columns_visible_and_non_overlapping(self, aof_app):
+        surface = pygame.Surface((aof_app.width, aof_app.height))
+        aof_app.panel.draw(surface)
+
+        matrix_rect = pygame.Rect(
+            aof_app.panel.matrix.x,
+            aof_app.panel.matrix.y,
+            aof_app.panel.matrix.width,
+            aof_app.panel.matrix.height,
+        )
+        detail_rect = aof_app.panel.cell_detail_panel.rect
+
+        assert matrix_rect.left >= 0
+        assert detail_rect.right <= aof_app.width
+        assert matrix_rect.right <= detail_rect.left
+        assert detail_rect.right <= aof_app.panel.side_x
+
+    def test_right_side_controls_work_with_middle_panel_active(self, aof_app):
+        # Activate middle panel selection state first.
+        select_cell = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.matrix.get_cell_rect(0, 0).center,
+        )
+        assert aof_app.panel.handle_event(select_cell)
+
+        workers_before = aof_app.panel.precompute_max_workers
+        up_workers = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.precompute_worker_buttons["up"].center,
+        )
+        assert aof_app.panel.handle_event(up_workers)
+        assert aof_app.panel.precompute_max_workers == min(16, workers_before + 1)
+
+        sims_before = aof_app.panel.precompute_simulations_per_cell
+        up_sims = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            pos=aof_app.panel.precompute_sim_buttons["up"].center,
+            button=1,
+        )
+        assert aof_app.panel.handle_event(up_sims)
+        assert aof_app.panel.precompute_simulations_per_cell == sims_before + 100
+
     def test_precompute_panel_control_rendering_and_state_enable(self, aof_app):
         start_rect = aof_app.panel.precompute_buttons["start"]
         pause_rect = aof_app.panel.precompute_buttons["pause"]

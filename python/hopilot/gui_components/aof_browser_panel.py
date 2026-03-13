@@ -8,6 +8,7 @@ from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
 from hopilot.gto.aof_browser_state import AoFBrowserViewState
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiPrecomputeRunSession, GuiRunState
 from hopilot.gui_components.aof_action_selector import AoFActionSelector
+from hopilot.gui_components.aof_cell_detail_panel import AoFCellDetailPanel
 from hopilot.gui_components.aof_hand_matrix_panel import AoFHandMatrixPanel
 from hopilot.gui_components.aof_metric_dropdown import AoFMetricDropdown
 from hopilot.logging_config import get_logger
@@ -37,14 +38,18 @@ class AoFBrowserPanel:
         self.top_margin = 20
         self.control_h = 190
         self.side_panel_w = 300
+        self.middle_panel_w = 220
+        self.middle_panel_gap = 12
         self.outer_margin = 20
         self.side_x = self.width - self.side_panel_w + self.outer_margin
         self.side_w = self.side_panel_w - (self.outer_margin * 2)
 
-        matrix_region_width = width - self.side_panel_w - (self.outer_margin * 2)
+        matrix_region_width, detail_width = self._compute_column_widths(width)
+        self.middle_panel_w = detail_width
         self.action_selector = AoFActionSelector(self.outer_margin, self.top_margin + 28, width=matrix_region_width)
         self.metric_dropdown = AoFMetricDropdown(self.side_x, self.top_margin + 24, width=self.side_w)
         self.matrix = AoFHandMatrixPanel(self.outer_margin, self.top_margin + self.control_h + 10)
+        self.cell_detail_panel = AoFCellDetailPanel(self.outer_margin, self.top_margin + self.control_h + 10, self.middle_panel_w, 220)
         self._reflow_layout()
         self._build_precompute_controls()
 
@@ -56,6 +61,7 @@ class AoFBrowserPanel:
             self.state.position_actions,
             allow_compute=False,
         )
+        self.selected_cell_detail = self._build_selected_cell_detail_model()
         self._restore_precompute_checkpoint_if_available()
 
     def _reflow_layout(self) -> None:
@@ -63,11 +69,27 @@ class AoFBrowserPanel:
         self.side_w = self.side_panel_w - (self.outer_margin * 2)
         matrix_x = self.outer_margin
         matrix_y = self.top_margin + self.control_h + 10
-        matrix_w = self.width - self.side_panel_w - (self.outer_margin * 2)
+        matrix_w, detail_w = self._compute_column_widths(self.width)
+        self.middle_panel_w = detail_w
         matrix_h = self.height - matrix_y - self.outer_margin
         self.matrix.set_bounds(matrix_x, matrix_y, matrix_w, matrix_h)
+        detail_x = self.matrix.x + self.matrix.width + self.middle_panel_gap
+        self.cell_detail_panel.set_bounds(detail_x, matrix_y, self.middle_panel_w, matrix_h)
         self.metric_dropdown.set_bounds(self.side_x, self.top_margin + 24, self.side_w)
         self._build_precompute_controls()
+
+    def _compute_column_widths(self, total_width: int) -> tuple[int, int]:
+        available = max(13 * 28 + 180, total_width - self.side_panel_w - self.middle_panel_gap - (self.outer_margin * 2))
+        min_matrix = 13 * 28
+        min_detail = 180
+        preferred_detail = 220
+
+        detail = min(preferred_detail, max(min_detail, int(available * 0.35)))
+        matrix = max(min_matrix, available - detail)
+
+        if matrix + detail > available:
+            detail = max(min_detail, available - matrix)
+        return matrix, detail
 
     def _build_precompute_controls(self) -> None:
         side_x = self.side_x
@@ -143,7 +165,133 @@ class AoFBrowserPanel:
             self.state.position_actions,
             allow_compute=False,
         )
+        self._invalidate_selected_cell_if_needed()
         self.state.status_message = self.payload.get("status_message")
+        self.selected_cell_detail = self._build_selected_cell_detail_model()
+
+    def _invalidate_selected_cell_if_needed(self) -> None:
+        if self.state.selected_cell is None:
+            return
+        row, col, hand_key = self.state.selected_cell
+        cell = self._find_payload_cell(row, col)
+        if cell is None or str(cell.get("hand_key", "")) != str(hand_key):
+            self.state.clear_selected_cell()
+            self.state.status_message = "Selected cell cleared after context refresh"
+
+    def _find_payload_cell(self, row: int, col: int) -> dict | None:
+        index = int(row) * 13 + int(col)
+        cells = self.payload.get("cells", [])
+        if index < 0 or index >= len(cells):
+            return None
+        cell = cells[index]
+        if int(cell.get("row", -1)) != int(row) or int(cell.get("col", -1)) != int(col):
+            return None
+        return cell
+
+    def _build_selected_cell_detail_model(self) -> dict:
+        if self.state.selected_cell is None:
+            return {"selected": False, "status": "UNSELECTED", "status_message": "Select a matrix cell to inspect details."}
+
+        row, col, hand_key = self.state.selected_cell
+        cell = self._find_payload_cell(row, col)
+        if cell is None:
+            status = "MISSING"
+            return {
+                "selected": True,
+                "row": row,
+                "col": col,
+                "hand_key": hand_key,
+                "metric": self.state.selected_metric,
+                "status": status,
+                "value": None,
+                "display_value": "-",
+                "segments": [],
+                "status_message": AoFCellDetailPanel.fallback_message_for_status(status),
+            }
+
+        metric = self.state.selected_metric
+        status = str(cell.get("status", "MISSING"))
+        metrics = cell.get("metrics") if isinstance(cell.get("metrics"), dict) else {}
+        value = metrics.get(metric) if isinstance(metrics, dict) else cell.get("value")
+        if value is None:
+            value = cell.get("value")
+
+        model = {
+            "selected": True,
+            "row": row,
+            "col": col,
+            "hand_key": str(cell.get("hand_key", hand_key)),
+            "metric": metric,
+            "status": status,
+            "value": value,
+            "display_value": str(cell.get("display", "-")),
+            "segments": [],
+            "status_message": None,
+        }
+
+        if status != "AVAILABLE":
+            model["status_message"] = AoFCellDetailPanel.fallback_message_for_status(status)
+            return model
+
+        def _metric_value(*keys: str, default: float = 0.0) -> float:
+            for key in keys:
+                if isinstance(metrics, dict) and metrics.get(key) is not None:
+                    return float(metrics[key])
+            return float(default)
+
+        if metric == "WIN_LOSE_PROBABILITY":
+            win = _metric_value("WIN", "WIN_PROBABILITY", default=float(value or 0.0))
+            tie = _metric_value("TIE", "TIE_PROBABILITY", default=0.0)
+            loss_value = metrics.get("LOSS") if isinstance(metrics, dict) else None
+            if loss_value is None and isinstance(metrics, dict):
+                loss_value = metrics.get("LOSS_PROBABILITY")
+            if loss_value is None:
+                loss = max(0.0, 1.0 - win - tie)
+            else:
+                loss = float(loss_value)
+            total = max(0.0001, win + tie + loss)
+            model["segments"] = [
+                {
+                    "label": "Win",
+                    "value": win,
+                    "display": f"{win * 100:.1f}%",
+                    "weight": max(0.0, win / total),
+                    "color_role": "positive",
+                },
+                {
+                    "label": "Tie",
+                    "value": tie,
+                    "display": f"{tie * 100:.1f}%",
+                    "weight": max(0.0, tie / total),
+                    "color_role": "neutral",
+                },
+                {
+                    "label": "Loss",
+                    "value": loss,
+                    "display": f"{loss * 100:.1f}%",
+                    "weight": max(0.0, loss / total),
+                    "color_role": "negative",
+                },
+            ]
+        else:
+            scalar_value = float(value) if value is not None else 0.0
+            if metric in ("EQUITY", "EQR"):
+                scalar_weight = max(0.0, min(1.0, scalar_value))
+                scalar_display = f"{scalar_value * 100:.1f}%"
+            else:
+                scalar_weight = max(0.05, min(1.0, abs(scalar_value) / 3.0))
+                scalar_display = f"{scalar_value:+.2f}"
+            model["segments"] = [
+                {
+                    "label": metric,
+                    "value": scalar_value,
+                    "display": scalar_display,
+                    "weight": scalar_weight,
+                    "color_role": "neutral",
+                }
+            ]
+
+        return model
 
     def _restore_precompute_checkpoint_if_available(self) -> None:
         context = self._build_current_context()
@@ -192,6 +340,7 @@ class AoFBrowserPanel:
             ],
             "status_message": "Precompute started",
         }
+        self.selected_cell_detail = self._build_selected_cell_detail_model()
 
     def _persist_completed_precompute_payload(self) -> None:
         if self.precompute_payload_persisted:
@@ -267,6 +416,8 @@ class AoFBrowserPanel:
             self.payload["cells"][index] = cell
             self.payload["context"] = dict(self.precompute_context)
             self.payload["status_message"] = self.precompute_context.get("status_message")
+
+        self.selected_cell_detail = self._build_selected_cell_detail_model()
 
         if self.precompute_session.run_state == GuiRunState.COMPLETED and not self.precompute_futures:
             self._persist_completed_precompute_payload()
@@ -383,6 +534,16 @@ class AoFBrowserPanel:
             self._refresh()
             return True
 
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            cell_indices = self.matrix.get_cell_indices_at(event.pos)
+            if cell_indices is not None:
+                row, col = cell_indices
+                cell = self._find_payload_cell(row, col)
+                if cell is not None:
+                    self.state.set_selected_cell(row, col, str(cell.get("hand_key", "")))
+                    self.selected_cell_detail = self._build_selected_cell_detail_model()
+                    return True
+
         return False
 
     def draw(self, screen: pygame.Surface):
@@ -401,6 +562,7 @@ class AoFBrowserPanel:
         self.metric_dropdown.draw(screen, self.font, self.state.selected_metric)
 
         self.matrix.draw(screen, self.small_font, self.payload["cells"], self.state.selected_metric)
+        self.cell_detail_panel.draw(screen, self.small_font, self.selected_cell_detail)
 
         info_x = self.side_x
         info_y = self.top_margin + self.control_h + 10

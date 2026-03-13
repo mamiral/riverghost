@@ -65,6 +65,22 @@ class AoFHandMatrixPanel:
             if active_metric != "WIN_LOSE_PROBABILITY":
                 surface.blit(value, (rect.x + 3, value_y))
 
+    def get_cell_rect(self, row: int, col: int) -> pygame.Rect:
+        return pygame.Rect(self.x + col * self.cell_size, self.y + row * self.cell_size, self.cell_size, self.cell_size)
+
+    def get_cell_indices_at(self, pos: tuple[int, int]) -> tuple[int, int] | None:
+        px, py = pos
+        if px < self.x or py < self.y:
+            return None
+        if px >= self.x + self.width or py >= self.y + self.height:
+            return None
+
+        col = (px - self.x) // self.cell_size
+        row = (py - self.y) // self.cell_size
+        if row < 0 or row > 12 or col < 0 or col > 12:
+            return None
+        return int(row), int(col)
+
     @staticmethod
     def _draw_probability_stack(surface: pygame.Surface, rect: pygame.Rect, value: float | None) -> None:
         if value is None:

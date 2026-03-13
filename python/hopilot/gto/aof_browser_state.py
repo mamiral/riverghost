@@ -23,6 +23,7 @@ class AoFBrowserViewState:
     selected_position: str = "UTG"
     position_actions: dict[str, str] | None = None
     selected_metric: str = "WIN_LOSE_PROBABILITY"
+    selected_cell: tuple[int, int, str] | None = None
     hover_hand: str | None = None
     status_message: str | None = None
 
@@ -56,6 +57,18 @@ class AoFBrowserViewState:
         if metric not in METRICS:
             raise ValueError(f"Unsupported metric: {metric}")
         self.selected_metric = metric
+
+    def set_selected_cell(self, row: int, col: int, hand_key: str) -> None:
+        if row < 0 or row > 12:
+            raise ValueError(f"Selected row out of bounds: {row}")
+        if col < 0 or col > 12:
+            raise ValueError(f"Selected col out of bounds: {col}")
+        if not hand_key:
+            raise ValueError("hand_key must be non-empty")
+        self.selected_cell = (int(row), int(col), str(hand_key))
+
+    def clear_selected_cell(self) -> None:
+        self.selected_cell = None
 
 
 def normalize_position_actions(position_actions: dict[str, str] | None) -> dict[str, str]:
