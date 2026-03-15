@@ -14,7 +14,7 @@ from hopilot.gto.aof_browser_data_provider import (
     STATUS_TIMEOUT,
 )
 from hopilot.gto.aof_hand_matrix import format_metric_value
-from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore
+from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, AggregationService
 from hopilot.logging_config import get_logger
 
 
@@ -91,10 +91,11 @@ class RunnerTelemetrySnapshot:
 
 
 class AoFPrecomputeRunner:
-    def __init__(self, provider: AoFBrowserDataProvider, store: AoFScenarioCacheStore | None):
+    def __init__(self, provider: AoFBrowserDataProvider, store: AoFScenarioCacheStore | None, aggregation_db_path: str | None = None):
         self.logger = get_logger(__name__)
         self.provider = provider
         self.store = store
+        self.aggregation_service = AggregationService(aggregation_db_path) if aggregation_db_path else None
 
     def create_gui_session(
         self,
@@ -254,12 +255,43 @@ class AoFPrecomputeRunner:
         hand_key = self.provider._matrix_keys[row][col]  # pylint: disable=protected-access
         metric = str(context["metric"])
         try:
-            metrics, status, status_message = self.provider._metrics_for_hand(  # pylint: disable=protected-access
+            # Get individual simulation outcomes instead of aggregated metrics
+            individual_outcomes = self._get_individual_outcomes_for_hand(
                 context,
                 hand_key,
                 int(context["timeout_ms"]),
             )
-            value = metrics.get(metric)
+
+            if individual_outcomes:
+                # Calculate aggregated metrics for backward compatibility
+                wins = sum(1 for outcome in individual_outcomes if outcome['outcome'] == 'WIN')
+                ties = sum(1 for outcome in individual_outcomes if outcome['outcome'] == 'TIE')
+                total_sims = len(individual_outcomes)
+
+                win_prob = wins / total_sims if total_sims > 0 else 0.0
+                equity = win_prob + (ties / total_sims * 0.5) if total_sims > 0 else 0.0
+                ev = sum(outcome['ev_chips'] for outcome in individual_outcomes) / total_sims if total_sims > 0 else 0.0
+
+                metrics = {
+                    "WIN_LOSE_PROBABILITY": round(win_prob, 4),
+                    "EQUITY": round(equity, 4),
+                    "EV": round(ev, 4),
+                    "EQR": round(max(0.0, min(1.0, equity / max(1e-6, self._baseline_equity(hand_key)))), 4),
+                }
+                value = metrics.get(metric)
+                status = "AVAILABLE"
+                status_message = None
+            else:
+                metrics = {
+                    "WIN_LOSE_PROBABILITY": None,
+                    "EQUITY": None,
+                    "EV": None,
+                    "EQR": None,
+                }
+                value = None
+                status = "MISSING"
+                status_message = "No simulation outcomes generated"
+
         except Exception as exc:  # pragma: no cover - defensive execution path
             metrics = {
                 "WIN_LOSE_PROBABILITY": None,
@@ -267,7 +299,8 @@ class AoFPrecomputeRunner:
                 "EV": None,
                 "EQR": None,
             }
-            value, status, status_message = None, STATUS_ERROR, str(exc)
+            value, status, status_message = None, "ERROR", str(exc)
+            individual_outcomes = []
 
         return {
             "row": row,
@@ -277,7 +310,54 @@ class AoFPrecomputeRunner:
             "value": value,
             "status": status,
             "display": format_metric_value(metric, value),
+            "individual_outcomes": individual_outcomes,  # Include individual outcomes
         }, status_message
+
+    def _get_individual_outcomes_for_hand(
+        self,
+        context: dict[str, Any],
+        hand_key: str,
+        remaining_timeout_ms: int,
+    ) -> list[dict[str, Any]] | None:
+        """Get individual simulation outcomes for a hand key."""
+        action = context["action"]
+        active_players = int(context["active_players"])
+        pot_size = float(context["pot_size"])
+        bet_amount = float(context["bet_amount"])
+
+        # Selected all-in with no opponents is an uncontested capture.
+        if action == "ALL_IN" and active_players == 1:
+            # Return a single outcome for uncontested win
+            return [{
+                'hero_hand': hand_key,
+                'villain_hand': 'NONE',  # No opponent
+                'outcome': 'WIN',
+                'hero_equity': 1.0,
+                'ev_chips': pot_size,
+                'board_cards': ''
+            }]
+
+        num_opponents = self.provider._resolve_num_opponents(action, context["position_actions"])  # pylint: disable=protected-access
+
+        # Call solver directly to get individual outcomes
+        solved = self.provider._solver.evaluate_hand_key(  # pylint: disable=protected-access
+            hand_key=hand_key,
+            num_opponents=num_opponents,
+            pot_size=pot_size,
+            bet_amount=bet_amount,
+            timeout_ms=max(1, int(remaining_timeout_ms)),
+        )
+
+        solved_status = solved.get("status")
+        if solved_status != "AVAILABLE":
+            return None
+
+        # Extract individual outcomes from solver result
+        individual_outcomes = solved.get("individual_outcomes", [])
+        if not individual_outcomes:
+            return None
+
+        return individual_outcomes
 
     def apply_gui_cell_result(
         self,
@@ -290,6 +370,47 @@ class AoFPrecomputeRunner:
         status = str(cell.get("status"))
         hand_key = str(cell.get("hand_key"))
         cell_index = int(cell.get("row", 0)) * 13 + int(cell.get("col", 0))
+
+        # Store individual outcomes if available
+        individual_outcomes = cell.get("individual_outcomes", [])
+        if individual_outcomes and self.aggregation_service:
+            try:
+                from hopilot.gto.aof_scenario_cache_store import SimulationOutcome, RunData
+                from datetime import datetime, UTC
+
+                # Convert individual outcomes to SimulationOutcome objects
+                simulation_outcomes = []
+                for outcome in individual_outcomes:
+                    sim_outcome = SimulationOutcome(
+                        hero_hand=outcome['hero_hand'],
+                        villain_hand=outcome['villain_hand'],
+                        outcome=outcome['outcome'],
+                        hero_equity=outcome['hero_equity'],
+                        ev_chips=outcome['ev_chips'],
+                        board_cards=outcome.get('board_cards', ''),
+                    )
+                    simulation_outcomes.append(sim_outcome)
+
+                if simulation_outcomes:
+                    # Create scenario key from context
+                    scenario_key = self._build_scenario_key(context)
+
+                    # Create run data
+                    run_data = RunData(
+                        timestamp=datetime.now(UTC),
+                        sim_count=len(simulation_outcomes),
+                        combo_samples=4,  # Default value
+                        timeout=30.0,  # Default value
+                        seed=42,  # Default value
+                        outcomes=simulation_outcomes
+                    )
+
+                    # Store the run
+                    self.aggregation_service.store_run(scenario_key, run_data)
+                    self.logger.info("Stored %d individual outcomes for hand %s", len(simulation_outcomes), hand_key)
+
+            except Exception as exc:
+                self.logger.warning("Failed to store individual outcomes for hand %s: %s", hand_key, exc)
 
         if status in (STATUS_TIMEOUT, STATUS_ERROR):
             session.failed_cells += 1
@@ -333,6 +454,23 @@ class AoFPrecomputeRunner:
             next_cell_index=session.next_cell_index,
             status=session.run_state.value,
         )
+
+    def _build_scenario_key(self, context: dict[str, Any]) -> str:
+        """Build a scenario key from context for storing individual outcomes."""
+        import hashlib
+        import json
+
+        # Create a simplified scenario key based on key context parameters
+        scenario_data = {
+            "position": context.get("position"),
+            "action": context.get("action"),
+            "active_players": context.get("active_players"),
+            "pot_size": context.get("pot_size"),
+            "bet_amount": context.get("bet_amount"),
+            "position_actions": context.get("position_actions"),
+        }
+        encoded = json.dumps(scenario_data, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
 
     def run_gui_scenario(
         self,

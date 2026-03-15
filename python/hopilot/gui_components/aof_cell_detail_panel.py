@@ -48,12 +48,28 @@ class AoFCellDetailPanel:
         ]
         if status == "AVAILABLE":
             lines.append(f"Value: {value}")
+            
+            # Add aggregation metadata if available
+            sample_count = detail_model.get("sample_count")
+            confidence = detail_model.get("confidence")
+            if sample_count is not None:
+                lines.append(f"Samples: {sample_count}")
+            if confidence is not None:
+                lines.append(f"Confidence: {confidence:.1%}")
+                
         elif status_message:
             lines.append(str(status_message))
 
+        # Draw text lines
         for idx, line in enumerate(lines):
             text = font.render(line, True, (210, 210, 210))
             surface.blit(text, (self.rect.x + 10, self.rect.y + 36 + idx * 20))
+
+        # Draw confidence indicator if available
+        confidence = detail_model.get("confidence")
+        if status == "AVAILABLE" and confidence is not None:
+            confidence_indicator_y = self.rect.y + 36 + len(lines) * 20 + 5
+            self._draw_confidence_indicator(surface, confidence, confidence_indicator_y)
 
         if status != "AVAILABLE":
             badge_rect = pygame.Rect(self.rect.x + 10, self.rect.y + self.rect.height - 32, self.rect.width - 20, 22)
@@ -139,3 +155,34 @@ class AoFCellDetailPanel:
         label = str(segment.get("label", "Value"))
         text = font.render(f"{label}: {display}", True, (220, 220, 220))
         surface.blit(text, (bar_rect.right + 12, chart_rect.y + 10))
+
+    def _draw_confidence_indicator(
+        self,
+        surface: pygame.Surface,
+        confidence: float,
+        y: int,
+    ) -> None:
+        """Draw a visual confidence indicator bar."""
+        bar_width = 80
+        bar_height = 8
+        bar_x = self.rect.x + 10
+        bar_rect = pygame.Rect(bar_x, y, bar_width, bar_height)
+        
+        # Background
+        pygame.draw.rect(surface, (60, 60, 60), bar_rect, border_radius=2)
+        
+        # Fill based on confidence level
+        fill_width = int(bar_width * confidence)
+        if fill_width > 0:
+            fill_rect = pygame.Rect(bar_x, y, fill_width, bar_height)
+            # Color coding: red (< 0.5), yellow (0.5-0.8), green (> 0.8)
+            if confidence < 0.5:
+                color = (205, 92, 92)  # Red
+            elif confidence < 0.8:
+                color = (205, 205, 92)  # Yellow
+            else:
+                color = (92, 205, 92)  # Green
+            pygame.draw.rect(surface, color, fill_rect, border_radius=2)
+        
+        # Border
+        pygame.draw.rect(surface, (120, 120, 120), bar_rect, 1, border_radius=2)

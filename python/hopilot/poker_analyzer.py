@@ -355,6 +355,134 @@ class PokerAnalyzer:
         self.logger.info(f"Range odds result: {result}")
         return result
 
+    def simulate_individual_outcomes(
+        self,
+        hero_hole_cards: List[str],
+        board_cards: List[str],
+        num_opponents: int,
+        num_simulations: int = 10000
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Run Monte Carlo simulations and return individual outcomes for each simulation.
+
+        Args:
+            hero_hole_cards: Hero's hole cards (2 cards)
+            board_cards: Community cards (0-5 cards)
+            num_opponents: Number of random opponents
+            num_simulations: Number of simulations to run
+
+        Returns:
+            List of individual simulation outcomes, each containing:
+            - hero_hand: Hero's hand in shorthand format
+            - villain_hand: Villain's hand in shorthand format
+            - outcome: 'WIN', 'LOSS', or 'TIE'
+            - hero_equity: 1.0 for win, 0.0 for loss, 0.5 for tie
+            - ev_chips: EV in chips (pot_size for win, -bet_amount for loss, 0 for tie)
+            - board_cards: Final board cards used in simulation
+        """
+        self.logger.info(f"Simulating individual outcomes: hero={hero_hole_cards}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
+
+        # Check for duplicates in input
+        all_input_cards = hero_hole_cards + board_cards
+        if len(set(all_input_cards)) < len(all_input_cards):
+            self.logger.error("Duplicate cards in input")
+            return None
+
+        # Convert hero and board
+        hero = [self.card_name_to_pokerkit(c) for c in hero_hole_cards]
+        board = [self.card_name_to_pokerkit(c) for c in board_cards]
+
+        if any(c is None for c in hero + board):
+            self.logger.error("Invalid card names")
+            return None
+
+        if len(board) > 5:
+            self.logger.error(f"Board cannot have more than 5 cards, got {len(board)}")
+            return None
+
+        # Get hero hand shorthand for output
+        hero_shorthand = HandRange.shorthand_from_cards(hero_hole_cards)
+
+        # Determine known cards
+        known_cards = set(hero + board)
+
+        outcomes = []
+
+        for sim_idx in range(num_simulations):
+            # Create fresh deck for each simulation
+            deck_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
+            import random
+            random.shuffle(deck_cards)
+
+            # Generate random opponents
+            if len(deck_cards) < num_opponents * 2:
+                continue  # Not enough cards
+
+            opponent_holes = []
+            for _ in range(num_opponents):
+                hole = [deck_cards.pop(), deck_cards.pop()]
+                opponent_holes.append(hole)
+
+            # Deal remaining board cards
+            remaining_board_needed = 5 - len(board)
+            if len(deck_cards) < remaining_board_needed:
+                continue  # Not enough cards for board
+
+            remaining_board = [deck_cards.pop() for _ in range(remaining_board_needed)]
+            full_board = board + remaining_board
+
+            try:
+                # Evaluate all hands
+                hero_hand = StandardHighHand.from_game(hero, full_board)
+                opp_hands = [StandardHighHand.from_game(opp_hole, full_board) for opp_hole in opponent_holes]
+                hero_score = -hero_hand.entry.index
+                opp_scores = [-h.entry.index for h in opp_hands]
+
+                # Determine if hero wins, ties, or loses
+                hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
+                hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
+
+                # Get a representative villain hand (first opponent) for shorthand
+                villain_cards = [self.pokerkit_to_card_name(c) for c in opponent_holes[0]]
+                villain_shorthand = HandRange.shorthand_from_cards(villain_cards)
+
+                # Convert board cards to string format
+                board_card_names = [self.pokerkit_to_card_name(c) for c in full_board]
+                board_string = ','.join(board_card_names)
+
+                if hero_better_than_all:
+                    outcome = 'WIN'
+                    hero_equity = 1.0
+                    ev_chips = 20.0  # Assuming standard pot size
+                elif hero_ties_all:
+                    outcome = 'TIE'
+                    hero_equity = 0.5
+                    ev_chips = 0.0
+                else:
+                    outcome = 'LOSS'
+                    hero_equity = 0.0
+                    ev_chips = -10.0  # Assuming standard bet amount
+
+                outcomes.append({
+                    'hero_hand': hero_shorthand,
+                    'villain_hand': villain_shorthand,
+                    'outcome': outcome,
+                    'hero_equity': hero_equity,
+                    'ev_chips': ev_chips,
+                    'board_cards': board_string
+                })
+
+            except Exception as e:
+                self.logger.warning(f"Simulation {sim_idx} failed: {type(e).__name__}: {e}")
+                continue
+
+        if not outcomes:
+            self.logger.error("No valid simulations completed")
+            return None
+
+        self.logger.info(f"Generated {len(outcomes)} individual simulation outcomes")
+        return outcomes
+
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
         """
         Evaluate hand strength.

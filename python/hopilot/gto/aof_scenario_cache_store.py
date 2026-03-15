@@ -22,6 +22,12 @@ try:
         ScenarioPayloadModel,
         ScenarioWriteResultModel,
     )
+    from hopilot.gto.aof_aggregation_models import (
+        ScenarioModel,
+        RunModel,
+        SimulationOutcomeModel,
+    )
+    from hopilot.gto.aof_aggregation_math import aggregate_run_data
 except Exception:  # pragma: no cover - optional dependency guard for environments not yet provisioned
     create_engine = None
     SQLAlchemyError = Exception
@@ -325,6 +331,76 @@ class AoFScenarioCacheStore:
                 )
                 time.sleep(self._lock_retry_delay_seconds * attempt)
 
+    def migrate_legacy_payloads_to_aggregation(
+        self,
+        aggregation_store: "AoFAggregationCacheStore",  # type: ignore
+        scenario_key_builder: Callable[[dict[str, Any]], str],
+    ) -> dict[str, str]:
+        """Migrate existing snapshot payloads to aggregation format.
+        
+        Returns dict of scenario_key -> migration_status
+        """
+        results = {}
+        
+        def _migrate() -> None:
+            with self._session_factory() as session:
+                # Get all current payloads
+                payloads = session.query(ScenarioPayloadModel).all()
+                
+                for payload in payloads:
+                    try:
+                        # Parse payload data
+                        context = self._json_loads(payload.context_json)
+                        cells = self._json_loads(payload.cells_json)
+                        
+                        # Build scenario key (excluding runtime)
+                        scenario_key = scenario_key_builder(context)
+                        
+                        # Create run data from legacy payload - convert aggregated results to synthetic outcomes
+                        # Note: This creates one synthetic outcome per hand representing the aggregated result
+                        synthetic_outcomes = []
+                        for hand, metrics in cells.items():
+                            # Create a synthetic outcome representing the aggregated result
+                            # We use a dummy villain hand since we don't have individual matchups
+                            equity = metrics.get('EQUITY', metrics.get('WIN_LOSE_PROBABILITY', 0.5))
+                            ev = metrics.get('EV', 0.0)
+                            
+                            outcome = SimulationOutcome(
+                                hero_hand=hand,
+                                villain_hand='SYNTHETIC',  # Placeholder
+                                outcome='WIN' if equity > 0.5 else 'LOSS' if equity < 0.5 else 'TIE',
+                                hero_equity=equity,
+                                ev_chips=ev,
+                                board_cards=''
+                            )
+                            synthetic_outcomes.append(outcome)
+                        
+                        run_data = RunData(
+                            timestamp=payload.created_at,
+                            sim_count=len(synthetic_outcomes),  # One "simulation" per hand
+                            combo_samples=context.get("runtime", {}).get("combo_samples", 4),
+                            timeout=context.get("runtime", {}).get("timeout_ms", 900) / 1000.0,
+                            seed=context.get("runtime", {}).get("seed", 42),
+                            outcomes=synthetic_outcomes
+                        )
+                        
+                        # Store in aggregation
+                        aggregation_store.store_run(scenario_key, run_data)
+                        
+                        results[scenario_key] = "MIGRATED"
+                        
+                    except Exception as exc:
+                        self.logger.warning("Failed to migrate payload %s: %s", payload.scenario_key_hash, exc)
+                        results[payload.scenario_key_hash] = f"FAILED: {exc}"
+        
+        try:
+            _migrate()
+        except Exception as exc:
+            self.logger.error("Migration failed: %s", exc)
+            results["MIGRATION_ERROR"] = str(exc)
+        
+        return results
+
     @staticmethod
     def _is_retryable_db_error(exc: SQLAlchemyError) -> bool:
         if isinstance(exc, IntegrityError):
@@ -334,3 +410,235 @@ class AoFScenarioCacheStore:
             message = str(exc).lower()
             return "database is locked" in message or "database is busy" in message
         return False
+
+
+@dataclass
+class SimulationOutcome:
+    """Individual simulation outcome data."""
+    hero_hand: str  # treys format
+    villain_hand: str  # treys format
+    outcome: str  # 'WIN', 'LOSS', 'TIE'
+    hero_equity: float  # 1.0 for win, 0.0 for loss, 0.5 for tie
+    ev_chips: float  # EV in chips for this simulation
+    board_cards: str = ""  # Optional: final board cards
+
+
+@dataclass
+class RunData:
+    timestamp: datetime
+    sim_count: int
+    combo_samples: int
+    timeout: float
+    seed: int
+    outcomes: list[SimulationOutcome]  # Individual simulation outcomes
+
+
+@dataclass
+class AggregatedResults:
+    scenario_key: str
+    statistics: dict[str, dict[str, Statistic]]  # hand -> metric -> stats
+
+
+@dataclass
+class Statistic:
+    value: float
+    sample_count: int
+    confidence: float
+
+
+class AggregationService:
+    """Service for aggregating AoF run statistics across multiple executions."""
+
+    def __init__(self, db_path: str, cache_size: int = 100):
+        self.logger = get_logger(__name__)
+        if create_engine is None or sessionmaker is None or Base is None:
+            raise RuntimeError("SQLAlchemy is unavailable in current environment")
+
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._engine = create_engine(f"sqlite:///{self.db_path}", connect_args={"check_same_thread": False})
+        self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
+        
+        # Simple LRU cache for aggregated results
+        self._cache: dict[str, tuple[AggregatedResults, datetime]] = {}
+        self._cache_size = cache_size
+        self._cache_order: list[str] = []  # For LRU tracking
+        
+        self.bootstrap_schema()
+
+    def bootstrap_schema(self) -> None:
+        Base.metadata.create_all(self._engine)
+
+    def _get_cached_result(self, scenario_key: str) -> AggregatedResults | None:
+        """Get cached result if available and not stale."""
+        if scenario_key in self._cache:
+            result, cached_time = self._cache[scenario_key]
+            # Cache for 5 minutes
+            if (datetime.now(UTC) - cached_time).total_seconds() < 300:
+                # Move to end of LRU order
+                if scenario_key in self._cache_order:
+                    self._cache_order.remove(scenario_key)
+                self._cache_order.append(scenario_key)
+                return result
+            else:
+                # Remove stale cache entry
+                del self._cache[scenario_key]
+                if scenario_key in self._cache_order:
+                    self._cache_order.remove(scenario_key)
+        return None
+
+    def _cache_result(self, scenario_key: str, result: AggregatedResults) -> None:
+        """Cache an aggregated result."""
+        self._cache[scenario_key] = (result, datetime.now(UTC))
+        
+        # Maintain LRU order
+        if scenario_key in self._cache_order:
+            self._cache_order.remove(scenario_key)
+        self._cache_order.append(scenario_key)
+        
+        # Evict oldest if cache is full
+        if len(self._cache) > self._cache_size:
+            oldest_key = self._cache_order.pop(0)
+            if oldest_key in self._cache:
+                del self._cache[oldest_key]
+
+    def clear_cache(self) -> None:
+        """Clear the aggregation cache."""
+        self._cache.clear()
+        self._cache_order.clear()
+
+    def store_run(self, scenario_key: str, run_data: RunData) -> None:
+        """Store a new run with individual simulation outcomes for aggregation."""
+        def _op() -> None:
+            with self._session_factory() as session:
+                # Get or create scenario
+                scenario = session.query(ScenarioModel).filter_by(scenario_key=scenario_key).first()
+                if scenario is None:
+                    scenario = ScenarioModel(scenario_key=scenario_key)
+                    session.add(scenario)
+                    session.flush()  # Ensure scenario exists
+
+                # Create run record
+                run = RunModel(
+                    scenario_key=scenario_key,
+                    timestamp=run_data.timestamp,
+                    sim_count=run_data.sim_count,
+                    combo_samples=run_data.combo_samples,
+                    timeout=run_data.timeout,
+                    seed=run_data.seed,
+                )
+                session.add(run)
+                session.flush()  # Get run_id
+
+                # Store individual simulation outcomes
+                outcome_objects = []
+                for outcome in run_data.outcomes:
+                    outcome_obj = SimulationOutcomeModel(
+                        run_id=run.run_id,
+                        hero_hand=outcome.hero_hand,
+                        villain_hand=outcome.villain_hand,
+                        outcome=outcome.outcome,
+                        hero_equity=outcome.hero_equity,
+                        ev_chips=outcome.ev_chips,
+                        board_cards=outcome.board_cards,
+                    )
+                    outcome_objects.append(outcome_obj)
+
+                session.add_all(outcome_objects)
+                session.commit()
+                
+                self.logger.info("Stored run %d for scenario %s with %d simulation outcomes", 
+                               run.run_id, scenario_key, len(run_data.outcomes))
+                
+                # Clear cache for this scenario since we have new data
+                if scenario_key in self._cache:
+                    del self._cache[scenario_key]
+                    if scenario_key in self._cache_order:
+                        self._cache_order.remove(scenario_key)
+
+        try:
+            _op()
+        except Exception as exc:
+            self.logger.error("Failed to store run for scenario %s: %s", scenario_key, exc)
+            raise
+
+    def get_aggregated_stats(self, scenario_key: str) -> AggregatedResults:
+        """Retrieve aggregated statistics for a scenario by querying individual simulation outcomes."""
+        # Check cache first
+        cached_result = self._get_cached_result(scenario_key)
+        if cached_result is not None:
+            self.logger.debug("Returning cached result for scenario %s", scenario_key)
+            return cached_result
+        
+        def _op() -> AggregatedResults:
+            with self._session_factory() as session:
+                # Get scenario
+                scenario = session.query(ScenarioModel).filter_by(scenario_key=scenario_key).first()
+                if scenario is None:
+                    result = AggregatedResults(scenario_key=scenario_key, statistics={})
+                    self._cache_result(scenario_key, result)
+                    return result
+
+                # Get all simulation outcomes for this scenario
+                outcomes = session.query(SimulationOutcomeModel).join(RunModel).filter(
+                    RunModel.scenario_key == scenario_key
+                ).all()
+                
+                self.logger.debug("Found %d simulation outcomes for scenario %s", len(outcomes), scenario_key)
+                
+                if not outcomes:
+                    result = AggregatedResults(scenario_key=scenario_key, statistics={})
+                    self._cache_result(scenario_key, result)
+                    return result
+                
+                # Aggregate outcomes by hero hand
+                hand_stats = {}
+                for outcome in outcomes:
+                    hero_hand = outcome.hero_hand
+                    
+                    if hero_hand not in hand_stats:
+                        hand_stats[hero_hand] = {
+                            'equity_sum': 0.0,
+                            'ev_sum': 0.0,
+                            'count': 0
+                        }
+                    
+                    hand_stats[hero_hand]['equity_sum'] += outcome.hero_equity
+                    hand_stats[hero_hand]['ev_sum'] += outcome.ev_chips
+                    hand_stats[hero_hand]['count'] += 1
+                
+                # Calculate final statistics
+                statistics = {}
+                for hero_hand, stats in hand_stats.items():
+                    count = stats['count']
+                    avg_equity = stats['equity_sum'] / count
+                    avg_ev = stats['ev_sum'] / count
+                    
+                    # Calculate confidence based on sample size
+                    confidence = min(1.0, count / 1000.0)  # Simple confidence calculation
+                    
+                    statistics[hero_hand] = {
+                        'EQUITY': Statistic(
+                            value=avg_equity,
+                            sample_count=count,
+                            confidence=confidence
+                        ),
+                        'EV': Statistic(
+                            value=avg_ev,
+                            sample_count=count,
+                            confidence=confidence
+                        )
+                    }
+                
+                self.logger.info("Aggregated %d simulation outcomes for scenario %s into %d hands", 
+                               len(outcomes), scenario_key, len(statistics))
+                
+                result = AggregatedResults(scenario_key=scenario_key, statistics=statistics)
+                self._cache_result(scenario_key, result)
+                return result
+
+        try:
+            return _op()
+        except Exception as exc:
+            self.logger.error("Failed to get aggregated stats for scenario %s: %s", scenario_key, exc)
+            raise

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,7 +12,7 @@ import yaml
 
 from hopilot.gto.aof_browser_state import METRICS, POSITIONS, build_browser_context, normalize_position_actions
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
-from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures
+from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures, AggregationService, RunData, AggregatedResults
 from hopilot.gto.aof_solver_adapter import AoFSolverAdapter, SolverRuntimeConfig
 from hopilot.logging_config import get_logger
 
@@ -37,8 +38,10 @@ class AoFBrowserDataProvider:
         self._fixture_data: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
         self._cache: dict[str, dict[str, Any]] = {}
         self._cache_store: AoFScenarioCacheStore | None = None
+        self._aggregation_service: AggregationService | None = None
         self._runtime = self._load_runtime_config()
         self._cache_cfg = self._load_cache_config()
+        self._aggregation_cfg = self._load_aggregation_config()
         if persist_degraded_payloads is None:
             self._persist_degraded_payloads = bool(self._cache_cfg.get("persist_degraded_payloads", True))
         else:
@@ -69,6 +72,17 @@ class AoFBrowserDataProvider:
             except Exception as exc:
                 self.logger.warning("Failed to initialize AoF persistent cache store: %s", exc)
                 self._cache_store = None
+
+        # Initialize aggregation service if enabled
+        aggregation_enabled = bool(self._aggregation_cfg.get("enabled", False))
+        if aggregation_enabled:
+            try:
+                db_path_raw = str(self._aggregation_cfg.get("db_path", "python/hopilot/cache/aof_aggregation.sqlite3"))
+                db_path = self._resolve_cache_db_path(db_path_raw)
+                self._aggregation_service = AggregationService(db_path=db_path)
+            except Exception as exc:
+                self.logger.warning("Failed to initialize aggregation service: %s", exc)
+                self._aggregation_service = None
 
         if fixture_path and Path(fixture_path).exists():
             with open(fixture_path, "r", encoding="utf-8") as f:
@@ -121,6 +135,25 @@ class AoFBrowserDataProvider:
             return loaded.get("aof_browser_cache", {})
         except Exception as exc:
             self.logger.warning("Failed to load AoF cache config: %s", exc)
+            return {"enabled": False}
+
+    def _load_aggregation_config(self) -> dict[str, Any]:
+        cfg_path = Path(__file__).resolve().parents[3] / "config" / "gto_defaults.yaml"
+        if not cfg_path.exists():
+            return {
+                "enabled": False,
+                "migration_mode": "coexist",
+                "db_path": "python/hopilot/cache/aof_aggregation.sqlite3",
+                "schema_version": "1",
+                "min_runs_for_aggregation": 3,
+                "confidence_threshold": 0.8,
+            }
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+            return loaded.get("aggregation", {})
+        except Exception as exc:
+            self.logger.warning("Failed to load aggregation config: %s", exc)
             return {"enabled": False}
 
     def _runtime_signature_base(self) -> str:
@@ -189,8 +222,24 @@ class AoFBrowserDataProvider:
         payload["metric"] = str(context["metric"])
         return payload
 
-    def _build_solver_equivalence_key(self, context: dict[str, Any]) -> str:
-        payload = self._canonical_solver_payload(context)
+    def _build_scenario_equivalence_key(self, context: dict[str, Any]) -> str:
+        """Build scenario key excluding runtime parameters for aggregation.
+        
+        This allows merging results across different runtime configurations.
+        """
+        selected_action = str(context["action"])
+        active_players = int(context["active_players"])
+        num_opponents = int(self._resolve_num_opponents(selected_action, context["position_actions"]))
+        payload = {
+            "solver_signature": SOLVER_SIGNATURE,
+            "selected_action": selected_action,
+            "active_players": active_players,
+            "num_opponents": num_opponents,
+            "pot_size": float(context["pot_size"]),
+            "bet_amount": float(context["bet_amount"]),
+            "effective_mode": context.get("effective_mode"),
+            "fixture_enabled": bool(self._fixture_data),
+        }
         encoded = json.dumps(payload, sort_keys=True)
         return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
 
@@ -374,6 +423,20 @@ class AoFBrowserDataProvider:
         if cached:
             return cached
 
+        # Check for aggregated data if enabled
+        if self._aggregation_service is not None:
+            scenario_key = self._build_scenario_equivalence_key(context)
+            try:
+                aggregated = self._aggregation_service.get_aggregated_stats(scenario_key)
+                if aggregated.statistics:  # Only use if we have aggregated data
+                    payload = self._build_payload_from_aggregated_data(context, aggregated, metric)
+                    if payload is not None:
+                        self._cache[request_key] = payload  # Cache the result
+                        self._log_event("aggregation_hit", scenario_key=scenario_key, hands_count=len(aggregated.statistics))
+                        return payload
+            except Exception as exc:
+                self.logger.warning("Failed to retrieve aggregated data for scenario %s: %s", scenario_key, exc)
+
         selected_action = context["action"]
         active_players = context["active_players"]
         if active_players == 0:
@@ -484,7 +547,154 @@ class AoFBrowserDataProvider:
                         self._log_event("write_back_persisted", reason="degraded_status", scenario_key_hash=solver_key)
                 except Exception as exc:
                     self.logger.warning("AoF provider write-back failed key=%s error=%s", solver_key, exc)
+
+        # Store aggregation data if enabled
+        if self._aggregation_service is not None and allow_compute:
+            try:
+                scenario_key = self._build_scenario_equivalence_key(context)
+                # Extract results from computed cells
+                results = {}
+                for cell in cells:
+                    hand_key = cell["hand_key"]
+                    metrics = cell["metrics"]
+                    if metrics:  # Only include cells with computed metrics
+                        results[hand_key] = metrics
+                
+                if results:  # Only store if we have results
+                    run_data = RunData(
+                        timestamp=datetime.now(UTC),
+                        sim_count=context.get("num_simulations", self._runtime.num_simulations),
+                        combo_samples=self._runtime.combo_samples,
+                        timeout=context.get("timeout_ms", self._runtime.timeout_ms) / 1000.0,  # Convert to seconds
+                        seed=self._runtime.seed,
+                        results=results
+                    )
+                    self._aggregation_service.store_run(scenario_key, run_data)
+                    self._log_event("aggregation_stored", scenario_key=scenario_key, hands_count=len(results))
+            except Exception as exc:
+                self.logger.warning("AoF provider aggregation storage failed: %s", exc)
+
         return payload
+
+    def _canonical_solver_payload(self, context: dict[str, Any]) -> dict[str, Any]:
+        selected_action = str(context["action"])
+        active_players = int(context["active_players"])
+        num_opponents = int(self._resolve_num_opponents(selected_action, context["position_actions"]))
+        return {
+            "solver_signature": SOLVER_SIGNATURE,
+            "selected_action": selected_action,
+            "active_players": active_players,
+            "num_opponents": num_opponents,
+            "pot_size": float(context["pot_size"]),
+            "bet_amount": float(context["bet_amount"]),
+            "effective_mode": str(context["effective_mode"]),
+            "runtime": {
+                "num_simulations": self._runtime.num_simulations,
+                "combo_samples": self._runtime.combo_samples,
+                "timeout_ms": self._runtime.timeout_ms,
+                "seed": self._runtime.seed,
+            },
+            "fixture_enabled": bool(self._fixture_data),
+        }
+
+    def _build_solver_equivalence_key(self, context: dict[str, Any]) -> str:
+        payload = self._canonical_solver_payload(context)
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _runtime_signature_base(self) -> str:
+        payload = {
+            "num_simulations": self._runtime.num_simulations,
+            "combo_samples": self._runtime.combo_samples,
+            "timeout_ms": self._runtime.timeout_ms,
+            "seed": self._runtime.seed,
+            "fixture_enabled": bool(self._fixture_data),
+        }
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _runtime_signature(self, context: dict[str, Any]) -> str:
+        canonical = self._canonical_solver_payload(context)
+        payload = {
+            "runtime": self._runtime_signature_base(),
+            "selected_action": canonical["selected_action"],
+            "active_players": canonical["active_players"],
+            "num_opponents": canonical["num_opponents"],
+            "pot_size": canonical["pot_size"],
+            "bet_amount": canonical["bet_amount"],
+            "effective_mode": canonical["effective_mode"],
+        }
+        encoded = json.dumps(payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _build_scenario_equivalence_key(self, context: dict[str, Any]) -> str:
+        """Build scenario key for aggregation (excluding runtime parameters)."""
+        # Use the same canonical payload but exclude runtime-specific fields
+        canonical = self._canonical_solver_payload(context)
+        
+        # Remove runtime-specific fields that shouldn't affect scenario equivalence
+        scenario_payload = {k: v for k, v in canonical.items() 
+                          if k not in ['runtime', 'fixture_enabled']}
+        
+        encoded = json.dumps(scenario_payload, sort_keys=True)
+        return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _build_payload_from_aggregated_data(
+        self, 
+        context: dict[str, Any], 
+        aggregated: "AggregatedResults", 
+        target_metric: str
+    ) -> dict[str, Any] | None:
+        """Build payload from aggregated statistics data."""
+        cells = []
+        
+        for hand_key, metrics in aggregated.statistics.items():
+            if target_metric in metrics:
+                stat = metrics[target_metric]
+                cells.append({
+                    "row": 0,  # Will be set by matrix building logic
+                    "col": 0,  # Will be set by matrix building logic  
+                    "hand_key": hand_key,
+                    "metrics": {target_metric: stat.value},  # Only include the target metric
+                    "value": stat.value,
+                    "status": STATUS_AVAILABLE,
+                    "sample_count": stat.sample_count,
+                    "confidence": stat.confidence
+                })
+            else:
+                # Hand exists in aggregation but not for this metric
+                cells.append({
+                    "row": 0,
+                    "col": 0,
+                    "hand_key": hand_key,
+                    "metrics": {},
+                    "value": None,
+                    "status": STATUS_MISSING,
+                    "sample_count": 0,
+                    "confidence": 0.0
+                })
+        
+        if not cells:
+            return None
+            
+        # Build the matrix from cells (reuse existing logic)
+        matrix_keys = build_matrix_keys()
+        matrix = [[None for _ in range(13)] for _ in range(13)]
+        
+        for cell in cells:
+            hand_key = cell["hand_key"]
+            if hand_key in matrix_keys:
+                row, col = matrix_keys[hand_key]
+                cell["row"] = row
+                cell["col"] = col
+                matrix[row][col] = cell
+        
+        return {
+            "context": context,
+            "cells": cells,
+            "matrix": matrix,
+            "status_message": f"Aggregated from {len(aggregated.statistics)} hands"
+        }
 
     def _metrics_for_hand(
         self,

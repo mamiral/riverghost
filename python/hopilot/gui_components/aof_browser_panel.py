@@ -229,6 +229,12 @@ class AoFBrowserPanel:
             "status_message": None,
         }
 
+        # Add aggregation metadata if available
+        if cell.get("sample_count") is not None:
+            model["sample_count"] = int(cell["sample_count"])
+        if cell.get("confidence") is not None:
+            model["confidence"] = float(cell["confidence"])
+
         if status != "AVAILABLE":
             model["status_message"] = AoFCellDetailPanel.fallback_message_for_status(status)
             return model

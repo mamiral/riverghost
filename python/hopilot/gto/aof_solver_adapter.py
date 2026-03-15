@@ -54,6 +54,7 @@ class AoFSolverAdapter:
             }
 
         combo_results: list[dict[str, Any]] = []
+        all_individual_outcomes: list[dict[str, Any]] = []
         for idx, combo in enumerate(combos):
             if time.perf_counter() - start > timeout_limit:
                 return {
@@ -61,6 +62,7 @@ class AoFSolverAdapter:
                     "reason": "TIME_BUDGET_EXCEEDED",
                     "value": None,
                     "combo_results": combo_results,
+                    "individual_outcomes": all_individual_outcomes,
                 }
             score = self._evaluate_combo(
                 hand_key=hand_key,
@@ -73,6 +75,10 @@ class AoFSolverAdapter:
             )
             combo_results.append(score)
 
+            # Collect individual outcomes from this combo
+            if score.get("is_valid", False) and "individual_outcomes" in score:
+                all_individual_outcomes.extend(score["individual_outcomes"])
+
         valid = [r for r in combo_results if r.get("is_valid", True)]
         if not valid:
             return {
@@ -80,6 +86,7 @@ class AoFSolverAdapter:
                 "reason": "NO_VALID_COMBOS",
                 "value": None,
                 "combo_results": combo_results,
+                "individual_outcomes": all_individual_outcomes,
             }
 
         win_prob = sum(float(r["win_probability"]) for r in valid) / len(valid)
@@ -94,6 +101,7 @@ class AoFSolverAdapter:
             "source": "solver",
             "sampled_combos": len(combos),
             "combo_results": combo_results,
+            "individual_outcomes": all_individual_outcomes,  # All individual simulation outcomes
         }
 
     def resolve_num_opponents(
@@ -158,24 +166,29 @@ class AoFSolverAdapter:
             return cached
 
         try:
-            result = self.solver.analyze_hand_strategy(
-                hole_cards=[combo[0], combo[1]],
+            # Use new method to get individual simulation outcomes
+            individual_outcomes = self.analyzer.simulate_individual_outcomes(
+                hero_hole_cards=[combo[0], combo[1]],
+                board_cards=[],
                 num_opponents=max(1, int(num_opponents)),
-                pot_size=float(pot_size),
-                bet_amount=float(bet_amount),
                 num_simulations=max(100, int(self.runtime.num_simulations)),
             )
+
+            if not individual_outcomes:
+                return {"combo": combo, "is_valid": False, "invalid_reason": "no_simulation_outcomes"}
+
+            # Calculate aggregated metrics for backward compatibility
+            wins = sum(1 for outcome in individual_outcomes if outcome['outcome'] == 'WIN')
+            ties = sum(1 for outcome in individual_outcomes if outcome['outcome'] == 'TIE')
+            total_sims = len(individual_outcomes)
+
+            win_prob = wins / total_sims if total_sims > 0 else 0.0
+            equity = win_prob + (ties / total_sims * 0.5) if total_sims > 0 else 0.0
+            ev = sum(outcome['ev_chips'] for outcome in individual_outcomes) / total_sims if total_sims > 0 else 0.0
+
         except Exception as exc:
             self.logger.warning("AoF combo solve failed for %s (%s): %s", hand_key, combo, exc)
             return {"combo": combo, "is_valid": False, "invalid_reason": "solver_exception"}
-
-        if not result or "equity" not in result or "ev" not in result:
-            return {"combo": combo, "is_valid": False, "invalid_reason": "missing_solver_fields"}
-
-        equity = float(result["equity"])
-        ev = float(result["ev"])
-        # Solver output is win-rate based in this module; keep mapping explicit.
-        win_prob = equity
 
         if timeout_ms is not None and timeout_ms <= 0:
             return {"combo": combo, "is_valid": False, "invalid_reason": "timeout"}
@@ -186,6 +199,7 @@ class AoFSolverAdapter:
             "win_probability": round(max(0.0, min(1.0, win_prob)), 4),
             "equity": round(max(0.0, min(1.0, equity)), 4),
             "ev": round(ev, 4),
+            "individual_outcomes": individual_outcomes,  # Store individual outcomes
         }
         self._combo_eval_cache[cache_key] = score
         return score
