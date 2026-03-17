@@ -57,6 +57,9 @@ class SchemaManager:
         # Create indexes for performance
         self._create_indexes()
 
+        # Create views for efficient querying
+        self._create_views()
+
         logger.info("Database schema created successfully")
 
     def drop_schema(self) -> None:
@@ -115,7 +118,65 @@ class SchemaManager:
                 ON jackpots (jackpot_type);
             """))
 
+            # Indexes to support view performance (index underlying tables)
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_simulations_parameters_position
+                ON simulations (json_extract(parameters, '$.position'));
+            """))
+
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_simulations_parameters_action
+                ON simulations (json_extract(parameters, '$.action'));
+            """))
+
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_aggregated_metrics_convergence
+                ON aggregated_metrics (convergence_status);
+            """))
+
             logger.debug("Database indexes created")
+
+    def _create_views(self) -> None:
+        """
+        Create database views for efficient querying.
+        """
+        with self.connection.session_scope() as session:
+            # View for position-based filtering
+            session.execute(text("""
+                CREATE VIEW IF NOT EXISTS simulation_positions AS
+                SELECT
+                    id,
+                    name,
+                    json_extract(parameters, '$.position') as position,
+                    json_extract(parameters, '$.action') as action,
+                    start_timestamp,
+                    end_timestamp
+                FROM simulations
+                WHERE json_extract(parameters, '$.position') IS NOT NULL;
+            """))
+
+            # View for matrix data with position context
+            session.execute(text("""
+                CREATE VIEW IF NOT EXISTS matrix_data_with_context AS
+                SELECT
+                    am.cell_id,
+                    mc.matrix_id,
+                    mc.row_index,
+                    mc.col_index,
+                    mc.hand_combination,
+                    am.equity,
+                    am.jackpot_adjusted_ev,
+                    am.convergence_status,
+                    sp.position,
+                    sp.action
+                FROM aggregated_metrics am
+                JOIN matrix_cells mc ON am.cell_id = mc.id
+                JOIN hand_matrices hm ON mc.matrix_id = hm.id
+                JOIN simulation_positions sp ON hm.simulation_id = sp.id
+                WHERE am.convergence_status = 'CONVERGED';
+            """))
+
+            logger.debug("Database views created")
 
     def validate_schema(self) -> bool:
         """

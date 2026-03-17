@@ -22,8 +22,8 @@ def build_matrix_keys() -> list[list[str]]:
 def format_metric_value(metric: str, value: float | None) -> str:
     if value is None:
         return "--"
-    if metric in ("WIN_LOSE_PROBABILITY", "EQUITY", "EQR"):
+    if metric in ("WIN_LOSE_PROBABILITY", "EQUITY"):
         return f"{_clamp_01(value) * 100:.1f}%"
-    if metric == "EV":
+    if metric in ("EV", "EQR"):
         return f"{value:+.2f}"
     return f"{value:.3f}"

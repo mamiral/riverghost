@@ -63,6 +63,8 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m hopilot.aof_gto_
 - SQLite with SQLAlchemy ORM (001-aggregated-aof-stats)
 - Python 3.x (existing project standard) + SQLAlchemy (ORM for database abstraction), SQLite (built-in Python support) (001-normalized-db-schema)
 - SQLite database file with SQLAlchemy ORM abstraction for future PostgreSQL migration (001-normalized-db-schema)
+- Python 3.x (existing project standard) + SQLAlchemy (ORM for database abstraction), SQLite (built-in Python support), existing browser components (AoFBrowserDataProvider, AoFBrowserPanel) (001-db-schema-browser-integration)
+- SQLite database with normalized relational schema (9 tables: Simulations, HandMatrices, MatrixCells, GameStates, Players, Bets, BoardCards, Jackpots, AggregatedMetrics) (001-db-schema-browser-integration)
 
 ## Operational Notes
 - Keep standalone AoF browser decoupled from simulator flow.

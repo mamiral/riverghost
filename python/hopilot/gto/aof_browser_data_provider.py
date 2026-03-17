@@ -32,6 +32,7 @@ class AoFBrowserDataProvider:
         cache_enabled: bool | None = None,
         cache_db_path: str | None = None,
         persist_degraded_payloads: bool | None = None,
+        database_url: str | None = None,
     ):
         self.logger = get_logger(__name__)
         self._matrix_keys = build_matrix_keys()
@@ -39,6 +40,7 @@ class AoFBrowserDataProvider:
         self._cache: dict[str, dict[str, Any]] = {}
         self._cache_store: AoFScenarioCacheStore | None = None
         self._aggregation_service: AggregationService | None = None
+        self._database_provider: NormalizedDatabaseProvider | None = None
         self._runtime = self._load_runtime_config()
         self._cache_cfg = self._load_cache_config()
         self._aggregation_cfg = self._load_aggregation_config()
@@ -48,6 +50,16 @@ class AoFBrowserDataProvider:
             self._persist_degraded_payloads = bool(persist_degraded_payloads)
         self._solver = AoFSolverAdapter(runtime=self._runtime)
         self._baseline_equity_cache: dict[str, float] = {}
+
+        # Initialize database provider if URL provided
+        if database_url:
+            try:
+                from hopilot.gto.normalized_db_provider import NormalizedDatabaseProvider
+                self._database_provider = NormalizedDatabaseProvider(database_url)
+                self.logger.info("Database provider initialized for AoF browser")
+            except Exception as exc:
+                self.logger.warning("Failed to initialize database provider: %s", exc)
+                self._database_provider = None
 
         enabled = bool(self._cache_cfg.get("enabled", False)) if cache_enabled is None else bool(cache_enabled)
         # Keep legacy tests isolated from persistent cache unless explicitly enabled.
@@ -385,6 +397,23 @@ class AoFBrowserDataProvider:
         allow_compute: bool = True,
         on_cell_complete: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        # Check if database provider is available and use it for data retrieval
+        if self._database_provider is not None:
+            try:
+                return self._database_provider.get_matrix_payload(
+                    position=position,
+                    metric=metric,
+                    position_actions=position_actions,
+                    pot_size=pot_size,
+                    bet_amount=bet_amount,
+                    strict_current_action=strict_current_action,
+                    allow_compute=allow_compute,
+                    on_cell_complete=on_cell_complete,
+                )
+            except Exception as exc:
+                self.logger.warning("Database provider failed, falling back to cache/solver: %s", exc)
+                # Fall through to existing cache/solver logic
+
         try:
             context = self._build_context(
                 position=position,

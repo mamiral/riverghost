@@ -30,3 +30,10 @@ aggregation:
   enabled: false  # Feature flag for backward-safe rollout
   migration_mode: "coexistence"  # coexistence or migration
   db_path: "python/hopilot/cache/aof_aggregation_cache.sqlite3"
+
+database:
+  path: "python/hopilot/data/normalized_poker.db"
+  connection_pool_size: 5
+  timeout_ms: 500
+  enable_migration: true
+  schema_version: "1.0"

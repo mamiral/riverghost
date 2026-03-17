@@ -11,16 +11,17 @@ from hopilot.gui_components.aof_action_selector import AoFActionSelector
 from hopilot.gui_components.aof_cell_detail_panel import AoFCellDetailPanel
 from hopilot.gui_components.aof_hand_matrix_panel import AoFHandMatrixPanel
 from hopilot.gui_components.aof_metric_dropdown import AoFMetricDropdown
+from hopilot.gui_components.convergence_panel import ConvergencePanel
 from hopilot.logging_config import get_logger
 
 
 class AoFBrowserPanel:
-    def __init__(self, width: int, height: int, fixture_path: str | None = None):
+    def __init__(self, width: int, height: int, fixture_path: str | None = None, database_url: str | None = None):
         self.logger = get_logger(__name__)
         self.width = width
         self.height = height
         self.state = AoFBrowserViewState()
-        self.provider = AoFBrowserDataProvider(fixture_path=fixture_path)
+        self.provider = AoFBrowserDataProvider(fixture_path=fixture_path, database_url=database_url)
         self.runner = AoFPrecomputeRunner(self.provider, getattr(self.provider, "_cache_store", None))
         self.precompute_session: GuiPrecomputeRunSession | None = None
         self.precompute_context: dict | None = None
@@ -50,6 +51,7 @@ class AoFBrowserPanel:
         self.metric_dropdown = AoFMetricDropdown(self.side_x, self.top_margin + 24, width=self.side_w)
         self.matrix = AoFHandMatrixPanel(self.outer_margin, self.top_margin + self.control_h + 10)
         self.cell_detail_panel = AoFCellDetailPanel(self.outer_margin, self.top_margin + self.control_h + 10, self.middle_panel_w, 220)
+        self.convergence_panel = ConvergencePanel(self.outer_margin, self.top_margin + self.control_h + 10, 400, 200)
         self._reflow_layout()
         self._build_precompute_controls()
 
@@ -62,7 +64,12 @@ class AoFBrowserPanel:
             allow_compute=False,
         )
         self.selected_cell_detail = self._build_selected_cell_detail_model()
+        self._load_convergence_data()
         self._restore_precompute_checkpoint_if_available()
+
+        # Database loading state
+        self.is_loading = False
+        self.loading_task = None
 
     def _reflow_layout(self) -> None:
         self.side_x = self.width - self.side_panel_w + self.outer_margin
@@ -71,10 +78,18 @@ class AoFBrowserPanel:
         matrix_y = self.top_margin + self.control_h + 10
         matrix_w, detail_w = self._compute_column_widths(self.width)
         self.middle_panel_w = detail_w
-        matrix_h = self.height - matrix_y - self.outer_margin
+        matrix_h = self.height - matrix_y - self.outer_margin - 220  # Leave space for convergence panel
         self.matrix.set_bounds(matrix_x, matrix_y, matrix_w, matrix_h)
         detail_x = self.matrix.x + self.matrix.width + self.middle_panel_gap
         self.cell_detail_panel.set_bounds(detail_x, matrix_y, self.middle_panel_w, matrix_h)
+
+        # Position convergence panel below matrix/detail panels
+        convergence_y = matrix_y + matrix_h + 10
+        convergence_x = self.outer_margin
+        convergence_w = self.width - self.side_panel_w - (self.outer_margin * 2)
+        convergence_h = 200
+        self.convergence_panel = ConvergencePanel(convergence_x, convergence_y, convergence_w, convergence_h)
+
         self.metric_dropdown.set_bounds(self.side_x, self.top_margin + 24, self.side_w)
         self._build_precompute_controls()
 
@@ -159,15 +174,103 @@ class AoFBrowserPanel:
             return fallback
 
     def _refresh(self):
-        self.payload = self.provider.get_matrix_payload(
-            self.state.selected_position,
-            self.state.selected_metric,
-            self.state.position_actions,
-            allow_compute=False,
-        )
-        self._invalidate_selected_cell_if_needed()
-        self.state.status_message = self.payload.get("status_message")
-        self.selected_cell_detail = self._build_selected_cell_detail_model()
+        # Check if database provider is available
+        if hasattr(self.provider, '_database_provider') and self.provider._database_provider is not None:
+            # Database mode - handle async loading
+            if not self.is_loading:
+                self.is_loading = True
+                self._start_async_refresh()
+        else:
+            # Legacy cache/solver mode - synchronous
+            self.payload = self.provider.get_matrix_payload(
+                self.state.selected_position,
+                self.state.selected_metric,
+                self.state.position_actions,
+                allow_compute=False,
+            )
+            self._invalidate_selected_cell_if_needed()
+            self.state.status_message = self.payload.get("status_message")
+            self.selected_cell_detail = self._build_selected_cell_detail_model()
+            self._load_convergence_data()
+
+    def _start_async_refresh(self):
+        """Start async database refresh in background thread."""
+        import threading
+        import asyncio
+
+        def async_refresh():
+            try:
+                # Create new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                # Get payload from database provider
+                payload = self.provider.get_matrix_payload(
+                    self.state.selected_position,
+                    self.state.selected_metric,
+                    self.state.position_actions,
+                    allow_compute=False,
+                )
+
+                # Post result to main thread
+                import pygame
+                pygame.event.post(pygame.event.Event(pygame.USEREVENT, {
+                    "type": "database_refresh",
+                    "payload": payload,
+                    "success": True
+                }))
+
+            except Exception as e:
+                self.logger.error(f"Async refresh failed: {e}")
+                import pygame
+                pygame.event.post(pygame.event.Event(pygame.USEREVENT, {
+                    "type": "database_refresh",
+                    "error": str(e),
+                    "success": False
+                }))
+
+        # Start background thread
+        thread = threading.Thread(target=async_refresh, daemon=True)
+        thread.start()
+
+    def _handle_async_refresh_result(self, data: dict) -> None:
+        """Handle result from async database refresh."""
+        if data.get("success"):
+            self.payload = data["payload"]
+            self._invalidate_selected_cell_if_needed()
+            self.state.status_message = self.payload.get("status_message")
+            self.selected_cell_detail = self._build_selected_cell_detail_model()
+            self._load_convergence_data()
+        else:
+            self.state.status_message = f"Database error: {data.get('error', 'Unknown error')}"
+
+        self.is_loading = False
+
+    def _load_convergence_data(self):
+        """Load convergence data for current position/action."""
+        try:
+            # Check if database provider supports convergence data
+            if hasattr(self.provider, '_database_provider') and self.provider._database_provider is not None:
+                if hasattr(self.provider._database_provider, 'get_convergence_data'):
+                    convergence_data = self.provider._database_provider.get_convergence_data(
+                        self.state.selected_position,
+                        self.state.position_actions
+                    )
+                    current_action = self.state.get_position_action(self.state.selected_position)
+                    self.convergence_panel.set_convergence_data(
+                        convergence_data,
+                        self.state.selected_position,
+                        current_action
+                    )
+                else:
+                    # Clear convergence data if not supported
+                    self.convergence_panel.set_convergence_data([], "", "")
+            else:
+                # Clear convergence data for legacy mode
+                self.convergence_panel.set_convergence_data([], "", "")
+        except Exception as e:
+            self.logger.warning(f"Failed to load convergence data: {e}")
+            self.convergence_panel.set_convergence_data([], "", "")
 
     def _invalidate_selected_cell_if_needed(self) -> None:
         if self.state.selected_cell is None:
@@ -464,6 +567,12 @@ class AoFBrowserPanel:
             self._persist_completed_precompute_payload()
 
     def handle_event(self, event):
+        if event.type == pygame.USEREVENT:
+            # Handle async database refresh completion
+            if hasattr(event, 'data') and event.data.get('type') == 'database_refresh':
+                self._handle_async_refresh_result(event.data)
+                return True
+
         if event.type == pygame.MOUSEBUTTONDOWN:
             if self.precompute_worker_buttons.get("down") and self.precompute_worker_buttons["down"].collidepoint(event.pos):
                 if not self.precompute_futures and (self.precompute_session is None or self.precompute_session.run_state != GuiRunState.RUNNING):
@@ -569,6 +678,7 @@ class AoFBrowserPanel:
 
         self.matrix.draw(screen, self.small_font, self.payload["cells"], self.state.selected_metric)
         self.cell_detail_panel.draw(screen, self.small_font, self.selected_cell_detail)
+        self.convergence_panel.draw(screen)
 
         info_x = self.side_x
         info_y = self.top_margin + self.control_h + 10
@@ -604,6 +714,14 @@ class AoFBrowserPanel:
             msg = self.font.render(self.state.status_message, True, (255, 205, 100))
             status_y = self.top_margin + self.control_h - 8
             screen.blit(msg, msg.get_rect(center=(self.width // 2, status_y)))
+
+        # Show loading indicator when database is loading
+        if self.is_loading:
+            loading_msg = self.font.render("Loading from database...", True, (100, 200, 255))
+            loading_y = self.top_margin + self.control_h - 8
+            if self.state.status_message:
+                loading_y -= 24  # Position above status message if present
+            screen.blit(loading_msg, loading_msg.get_rect(center=(self.width // 2, loading_y)))
 
         precompute_state = "IDLE"
         snapshot = None
