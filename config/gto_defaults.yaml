@@ -25,3 +25,8 @@ aof_browser_cache:
   schema_version: "1"
   policy_signature: "aof-cache-policy-v1"
   persist_degraded_payloads: true
+
+aggregation:
+  enabled: false  # Feature flag for backward-safe rollout
+  migration_mode: "coexistence"  # coexistence or migration
+  db_path: "python/hopilot/cache/aof_aggregation_cache.sqlite3"
