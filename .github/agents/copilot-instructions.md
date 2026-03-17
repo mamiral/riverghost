@@ -23,16 +23,24 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m pytest ...
 ```text
 python/
 	hopilot/
-tests/
+tests/                    # ← Test files go HERE (root level)
 config/
 specs/
 ```
+
+**CRITICAL**: Test files must be in root `tests/` directory, NOT `python/tests/`
 
 ## Commands
 - Run tests from repository root:
 
 ```powershell
 c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m pytest tests -q
+```
+
+- Run specific test file:
+
+```powershell
+c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m pytest tests/test_file.py
 ```
 
 - Run app modules from `python/` directory:
@@ -53,6 +61,8 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m hopilot.aof_gto_
 - N/A (read-only UI over existing in-memory payload) (001-cell-detail-panel)
 - Python 3.11 + pygame, sqlalchemy, pydantic, treys, numpy (001-aggregated-aof-stats)
 - SQLite with SQLAlchemy ORM (001-aggregated-aof-stats)
+- Python 3.x (existing project standard) + SQLAlchemy (ORM for database abstraction), SQLite (built-in Python support) (001-normalized-db-schema)
+- SQLite database file with SQLAlchemy ORM abstraction for future PostgreSQL migration (001-normalized-db-schema)
 
 ## Operational Notes
 - Keep standalone AoF browser decoupled from simulator flow.

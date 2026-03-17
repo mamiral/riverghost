@@ -1,8 +1,8 @@
 <!--
 Sync Impact Report:
-- Version change: 2.1.0 → 2.2.0 (MINOR bump: added Established Design Patterns principle)
+- Version change: 2.2.0 → 2.2.1 (PATCH bump: added Testing Directory Structure requirement)
 - Modified principles: None
-- Added sections: XI. Established Design Patterns
+- Added sections: Testing Directory Structure under Additional Requirements
 - Removed sections: None
 - Templates requiring updates: None
 - Follow-up TODOs: None
@@ -70,10 +70,18 @@ Code MUST use established software design patterns instead of inventing custom s
 ## Additional Requirements
 All code must run from the python/ directory with relative imports. Use venv for environment management. Comprehensive testing with pytest. Consistent logging via centralized config.
 
+### Testing Directory Structure
+- Test files MUST be placed in the root `tests/` directory
+- pytest.ini in root configures `testpaths = tests` for proper test discovery
+- Run tests with: `python -m pytest tests/test_file.py` (from project root)
+- NEVER create test directories under `python/` - use the root `tests/` directory only
+
+**Rationale:** Maintains consistent project structure and proper test discovery.
+
 ## Development Workflow
 Run commands from python/ directory. Use venv for dependencies. Test with pytest. Document in plans/ and docs/.
 
 ## Governance
 This constitution supersedes all prior project practices. Amendments require documentation and approval. All changes must comply with principles. Versioning follows semantic rules: MAJOR for breaking/removal, MINOR for new/expanded, PATCH for clarifications.
 
-**Version**: 2.2.0 | **Ratified**: 2025-11-05 | **Last Amended**: 2026-03-15
+**Version**: 2.2.1 | **Ratified**: 2025-11-05 | **Last Amended**: 2026-03-15
