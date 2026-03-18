@@ -322,3 +322,310 @@ def test_detail_panel_fallback_status_messages(app, status, expected):
 
     assert app.panel.selected_cell_detail["status"] == status
     assert app.panel.selected_cell_detail["status_message"] == expected
+
+
+def test_start_button_initially_enabled(app):
+    """Test that START button is enabled when no precompute session exists."""
+    # Initially no session
+    assert app.panel.precompute_session is None
+    
+    # START button should be enabled
+    start_rect = app.panel.precompute_buttons["start"]
+    assert start_rect is not None
+
+
+def test_start_button_click_starts_precompute(app):
+    """Test that clicking START button creates a precompute session."""
+    # Ensure no session initially
+    assert app.panel.precompute_session is None
+    
+    # Click START button
+    start_rect = app.panel.precompute_buttons["start"]
+    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(event)
+    
+    # Session should be created and running
+    assert app.panel.precompute_session is not None
+    from hopilot.gto.aof_precompute_runner import GuiRunState
+    assert app.panel.precompute_session.run_state == GuiRunState.RUNNING
+    
+    # Status message should indicate started
+    assert "Precompute started" in app.panel.state.status_message
+
+
+def test_pause_button_enabled_when_running(app):
+    """Test that PAUSE button is enabled when precompute is running."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # PAUSE button should be enabled
+    pause_rect = app.panel.precompute_buttons["pause"]
+    assert pause_rect is not None
+
+
+def test_pause_button_clicks_precompute(app):
+    """Test that clicking PAUSE button pauses the precompute session."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Click PAUSE button
+    pause_rect = app.panel.precompute_buttons["pause"]
+    pause_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pause_rect.center)
+    app.panel.handle_event(pause_event)
+    
+    # Session should be paused
+    from hopilot.gto.aof_precompute_runner import GuiRunState
+    assert app.panel.precompute_session.run_state == GuiRunState.PAUSED
+    
+    # Status message should indicate paused
+    assert "Precompute paused" in app.panel.state.status_message
+
+
+def test_resume_button_enabled_when_paused(app):
+    """Test that RESUME button is enabled when precompute is paused."""
+    # Start and pause precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    pause_rect = app.panel.precompute_buttons["pause"]
+    pause_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pause_rect.center)
+    app.panel.handle_event(pause_event)
+    
+    # RESUME button should be enabled
+    resume_rect = app.panel.precompute_buttons["resume"]
+    assert resume_rect is not None
+
+
+def test_stop_button_enabled_when_running(app):
+    """Test that STOP button is enabled when precompute is running."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # STOP button should be enabled
+    stop_rect = app.panel.precompute_buttons["stop"]
+    assert stop_rect is not None
+
+
+def test_stop_button_clicks_precompute(app):
+    """Test that clicking STOP button stops the precompute session."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Click STOP button
+    stop_rect = app.panel.precompute_buttons["stop"]
+    stop_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=stop_rect.center)
+    app.panel.handle_event(stop_event)
+    
+    # Session should be reset to None
+    assert app.panel.precompute_session is None
+    
+    # Status message should indicate stopped and reset
+    assert "Precompute stopped and reset" in app.panel.state.status_message
+
+
+def test_buttons_disabled_during_scenario_locked_state(app):
+    """Test that control buttons are disabled when scenario is locked during precompute."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Try to change position - should be blocked
+    pos_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=app.panel.action_selector.card_rects["BB"].center)
+    result = app.panel.handle_event(pos_event)
+    
+    # Event should be blocked (return False)
+    assert result is False
+    
+    # Status message should indicate locked
+    assert "locked" in app.panel.state.status_message.lower()
+
+
+def test_precompute_checkpoint_restoration_loads_cached_payload(app, monkeypatch):
+    """Test that checkpoint restoration loads cached payload data."""
+    # Mock the runner to return a restored session
+    from hopilot.gto.aof_precompute_runner import GuiPrecomputeRunSession, GuiRunState
+    
+    mock_session = GuiPrecomputeRunSession(
+        run_id="test-run",
+        scenario_fingerprint="test-fingerprint", 
+        simulations_per_cell=1000,
+        total_cells=169,
+        run_state=GuiRunState.PAUSED
+    )
+    
+    def mock_restore(*args, **kwargs):
+        return mock_session
+    
+    monkeypatch.setattr(app.panel.runner, "restore_latest_gui_session", mock_restore)
+    
+    # Mock cached payload
+    cached_payload = {
+        "context": app.panel._build_current_context(),
+        "cells": [
+            {
+                "row": 0,
+                "col": 0,
+                "hand_key": "AA",
+                "value": 0.85,
+                "status": "AVAILABLE",
+                "display": "85.0%"
+            }
+        ] * 169,
+        "status_message": "Cached results"
+    }
+    
+    def mock_get_payload(*args, **kwargs):
+        return cached_payload
+    
+    monkeypatch.setattr(app.panel.provider, "get_matrix_payload", mock_get_payload)
+    
+    # Trigger checkpoint restoration
+    app.panel._restore_precompute_checkpoint_if_available()
+    
+    # Should have restored session
+    assert app.panel.precompute_session is not None
+    assert app.panel.precompute_session.run_id == "test-run"
+    
+    # Should have loaded cached payload
+    assert app.panel.payload == cached_payload
+    assert app.panel.state.status_message == "Precompute checkpoint restored"
+
+
+def test_resume_button_works_after_pause(app):
+    """Test that RESUME button properly resumes a paused precompute session."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Pause it
+    pause_rect = app.panel.precompute_buttons["pause"]
+    pause_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pause_rect.center)
+    app.panel.handle_event(pause_event)
+    
+    # Verify paused
+    from hopilot.gto.aof_precompute_runner import GuiRunState
+    assert app.panel.precompute_session.run_state == GuiRunState.PAUSED
+    
+    # Resume it
+    resume_rect = app.panel.precompute_buttons["resume"]
+    resume_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=resume_rect.center)
+    app.panel.handle_event(resume_event)
+    
+    # Should be running again
+    assert app.panel.precompute_session.run_state == GuiRunState.RUNNING
+    assert "Precompute resumed" in app.panel.state.status_message
+
+
+def test_stop_button_resets_session_state(app):
+    """Test that STOP button properly resets the session to allow new starts."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Stop it
+    stop_rect = app.panel.precompute_buttons["stop"]
+    stop_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=stop_rect.center)
+    app.panel.handle_event(stop_event)
+    
+    # Session should be reset (None)
+    assert app.panel.precompute_session is None
+    
+    # Should be able to start again
+    start_event2 = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    result = app.panel.handle_event(start_event2)
+    assert result is True
+    
+    # Should have a new session
+    from hopilot.gto.aof_precompute_runner import GuiRunState
+    assert app.panel.precompute_session.run_state == GuiRunState.RUNNING
+
+
+def test_precompute_state_persistence_across_app_restarts(app, monkeypatch, tmp_path):
+    """Test that precompute state persists correctly across app restarts."""
+    import json
+    
+    # Start precompute and let it run briefly
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Simulate some progress
+    app.panel.precompute_session.completed_cells = 10
+    app.panel.precompute_session.next_cell_index = 15
+    
+    # Mock persistence
+    persisted_data = None
+    def mock_persist(data):
+        nonlocal persisted_data
+        persisted_data = data
+    
+    # Simulate app shutdown by calling persist
+    app.panel._persist_completed_precompute_payload()
+    
+    # Create new app instance (simulating restart)
+    from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
+    pygame.quit()
+    pygame.init()
+    new_app = AoFGTOBrowserGUI(width=1000, height=760)
+    
+    # Mock restoration to return our persisted session
+    def mock_restore(*args, **kwargs):
+        return app.panel.precompute_session
+    
+    monkeypatch.setattr(new_app.panel.runner, "restore_latest_gui_session", mock_restore)
+    
+    # Mock cached payload loading
+    def mock_get_payload(*args, **kwargs):
+        return app.panel.payload
+    
+    monkeypatch.setattr(new_app.panel.provider, "get_matrix_payload", mock_get_payload)
+    
+    # Trigger restoration
+    new_app.panel._restore_precompute_checkpoint_if_available()
+    
+    # Should have restored the session with progress
+    assert new_app.panel.precompute_session is not None
+    assert new_app.panel.precompute_session.completed_cells == 10
+    assert new_app.panel.precompute_session.next_cell_index == 15
+    
+    pygame.quit()
+
+
+def test_precompute_flow_completes_and_resets_properly(app):
+    """Test complete precompute flow from start to completion."""
+    # Start precompute
+    start_rect = app.panel.precompute_buttons["start"]
+    start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    app.panel.handle_event(start_event)
+    
+    # Simulate completion
+    from hopilot.gto.aof_precompute_runner import GuiRunState
+    app.panel.precompute_session.completed_cells = 169
+    app.panel.precompute_session.failed_cells = 0
+    app.panel.runner.transition_session_state(app.panel.precompute_session, GuiRunState.COMPLETED)
+    
+    # Tick to handle completion
+    app.panel._tick_precompute()
+    
+    # Should be completed
+    assert app.panel.precompute_session.run_state == GuiRunState.COMPLETED
+    
+    # Should be able to start new precompute
+    start_event2 = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
+    result = app.panel.handle_event(start_event2)
+    assert result is True
+    
+    # Should have new session
+    assert app.panel.precompute_session.run_state == GuiRunState.RUNNING

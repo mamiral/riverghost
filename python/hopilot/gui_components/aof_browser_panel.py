@@ -410,6 +410,18 @@ class AoFBrowserPanel:
             return
         self.precompute_context = context
         self.precompute_session = restored
+        
+        # Try to load cached payload for the restored session
+        cached_payload = self.provider.get_matrix_payload(
+            self.state.selected_position,
+            self.state.selected_metric,
+            self.state.position_actions,
+            allow_compute=False,
+        )
+        if cached_payload and cached_payload.get("cells"):
+            self.payload = cached_payload
+            self.selected_cell_detail = self._build_selected_cell_detail_model()
+        
         self.state.status_message = "Precompute checkpoint restored"
 
     def _build_current_context(self) -> dict:
@@ -450,6 +462,7 @@ class AoFBrowserPanel:
             "status_message": "Precompute started",
         }
         self.selected_cell_detail = self._build_selected_cell_detail_model()
+        self.state.status_message = "Precompute started"
 
     def _persist_completed_precompute_payload(self) -> None:
         if self.precompute_payload_persisted:
@@ -622,10 +635,14 @@ class AoFBrowserPanel:
                         self.state.status_message = "Resume blocked: scenario changed"
                     return True
             if self.precompute_buttons.get("stop") and self.precompute_buttons["stop"].collidepoint(event.pos):
-                if self.precompute_session and self.precompute_session.run_state == GuiRunState.RUNNING:
-                    self.runner.stop_gui_session(self.precompute_session)
+                if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
+                    if self.precompute_session.run_state == GuiRunState.RUNNING:
+                        self.runner.stop_gui_session(self.precompute_session)
                     self._cancel_pending_precompute_futures()
-                    self.state.status_message = "Precompute stopped"
+                    # Reset session to allow fresh start
+                    self.precompute_session = None
+                    self.precompute_context = None
+                    self.state.status_message = "Precompute stopped and reset"
                     return True
 
         if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.STOPPING):
