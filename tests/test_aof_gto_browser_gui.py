@@ -629,3 +629,47 @@ def test_precompute_flow_completes_and_resets_properly(app):
     
     # Should have new session
     assert app.panel.precompute_session.run_state == GuiRunState.RUNNING
+
+
+def test_convergence_plot_shows_mock_data_with_precompute_results(app):
+    """Test that convergence plot displays mock data when precompute results are available."""
+    # Simulate having some computed results
+    app.panel.payload = {
+        "cells": [
+            {"status": "AVAILABLE", "value": 0.75},
+            {"status": "AVAILABLE", "value": 0.82},
+            {"status": "AVAILABLE", "value": 0.68},
+            {"status": "MISSING", "value": None},
+        ] * 43,  # 169 cells total
+        "context": {},
+        "status_message": "Test results"
+    }
+    
+    # Load convergence data
+    app.panel._load_convergence_data()
+    
+    # Should have convergence data
+    assert len(app.panel.convergence_panel.convergence_data) > 0
+    assert app.panel.convergence_panel.position == app.panel.state.selected_position
+    
+    # Check data structure
+    for point in app.panel.convergence_panel.convergence_data:
+        assert "num_simulations" in point
+        assert "average_equity" in point
+        assert 0.0 <= point["average_equity"] <= 1.0
+
+
+def test_convergence_plot_empty_when_no_results(app):
+    """Test that convergence plot shows no data when no results are available."""
+    # Clear payload
+    app.panel.payload = {
+        "cells": [{"status": "MISSING", "value": None}] * 169,
+        "context": {},
+        "status_message": "No results"
+    }
+    
+    # Load convergence data
+    app.panel._load_convergence_data()
+    
+    # Should have no convergence data
+    assert len(app.panel.convergence_panel.convergence_data) == 0
