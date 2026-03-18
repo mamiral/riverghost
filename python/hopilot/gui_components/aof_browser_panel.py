@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import pygame
 import yaml
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
 from hopilot.gto.aof_browser_state import AoFBrowserViewState
@@ -24,6 +24,7 @@ class AoFBrowserPanel:
         self.state = AoFBrowserViewState()
         self.provider = AoFBrowserDataProvider(fixture_path=fixture_path, database_url=database_url)
         self.runner = AoFPrecomputeRunner(self.provider, getattr(self.provider, "_cache_store", None))
+        self.state_machine_controller = None
         self.precompute_session: GuiPrecomputeRunSession | None = None
         self.precompute_context: dict | None = None
         self.precompute_simulations_per_cell = 1000
@@ -36,6 +37,9 @@ class AoFBrowserPanel:
         self.precompute_executor: ThreadPoolExecutor | None = None
         self.precompute_futures: dict[Future, int] = {}
         self.precompute_payload_persisted = False
+
+        # Attempt to restore previous session
+        self._restore_precompute_checkpoint_if_available()
 
         self.top_margin = 20
         self.control_h = 190
@@ -249,6 +253,10 @@ class AoFBrowserPanel:
 
     def _load_convergence_data(self):
         """Load convergence data for current position/action or selected cell."""
+        if not hasattr(self, 'convergence_panel') or self.convergence_panel is None:
+            self.logger.warning("Convergence panel not initialized, skipping convergence data loading")
+            return
+            
         try:
             current_action = self.state.get_position_action(self.state.selected_position)
             
@@ -292,7 +300,8 @@ class AoFBrowserPanel:
                 
         except Exception as e:
             self.logger.warning(f"Failed to load convergence data: {e}")
-            self.convergence_panel.set_convergence_data([], "", "")
+            if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
+                self.convergence_panel.set_convergence_data([], "", "")
 
     def _generate_cell_convergence_data(self) -> List[Dict[str, Any]]:
         """Generate mock convergence data for the selected cell."""
@@ -644,6 +653,13 @@ class AoFBrowserPanel:
 
         if self.precompute_session.run_state == GuiRunState.COMPLETED and not self.precompute_futures:
             self._persist_completed_precompute_payload()
+            if self.state_machine_controller:
+                self.state_machine_controller.mark_completed()
+            return
+
+        if self.precompute_session.run_state == GuiRunState.FAILED:
+            if self.state_machine_controller:
+                self.state_machine_controller.mark_failed()
             return
 
         if self.precompute_session.run_state != GuiRunState.RUNNING:
@@ -686,6 +702,12 @@ class AoFBrowserPanel:
             if hasattr(event, 'data') and event.data.get('type') == 'database_refresh':
                 self._handle_async_refresh_result(event.data)
                 return True
+
+        # Route state machine events if controller is attached
+        if hasattr(self, 'state_machine_controller') and self.state_machine_controller:
+            state_machine_result = self._handle_state_machine_event(event)
+            if state_machine_result is not None:
+                return state_machine_result
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             if self.precompute_worker_buttons.get("down") and self.precompute_worker_buttons["down"].collidepoint(event.pos):
@@ -780,6 +802,174 @@ class AoFBrowserPanel:
 
         return False
 
+    # State Machine Integration Methods
+
+    def set_state_machine_controller(self, controller) -> None:
+        """Attach a state machine controller for managing precompute operations.
+
+        Args:
+            controller: StateMachineController instance to attach
+        """
+        self.state_machine_controller = controller
+        controller.panel = self
+        controller.update_config(controller.config)
+        
+        # Synchronize state machine state with any restored session
+        if self.precompute_session:
+            controller.sync_with_run_state(self.precompute_session.run_state)
+            
+        self.logger.info("State machine controller attached and synchronized")
+
+    def update_precompute_config(self, config) -> None:
+        """Update precompute configuration settings.
+
+        Args:
+            config: PrecomputeConfig with new settings
+        """
+        self.precompute_max_workers = config.max_workers
+        self.precompute_simulations_per_cell = config.simulations_per_cell
+        self.logger.info(f"Precompute config updated: workers={config.max_workers}, sims={config.simulations_per_cell}")
+
+    def start_precompute(self) -> bool:
+        """Start precompute operation through state machine.
+
+        Returns:
+            True if precompute started successfully
+        """
+        try:
+            if self.precompute_session is None or self.precompute_session.run_state in (GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED):
+                self._start_precompute()
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to start precompute: {e}")
+            return False
+
+    def pause_precompute(self) -> bool:
+        """Pause active precompute operation.
+
+        Returns:
+            True if paused successfully
+        """
+        try:
+            if self.precompute_session and self.precompute_session.run_state == GuiRunState.RUNNING:
+                self.runner.pause_gui_session(self.precompute_session)
+                self._cancel_pending_precompute_futures()
+                self.state.status_message = "Precompute paused"
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to pause precompute: {e}")
+            return False
+
+    def resume_precompute(self) -> bool:
+        """Resume paused precompute operation.
+
+        Returns:
+            True if resumed successfully
+        """
+        try:
+            if self.precompute_session and self.precompute_session.run_state == GuiRunState.PAUSED:
+                self.runner.resume_gui_session(self.precompute_session, current_context=self._build_current_context())
+                self.state.status_message = "Precompute resumed"
+                return True
+            return False
+        except ValueError as e:
+            self.logger.warning(f"Resume blocked: {e}")
+            self.state.status_message = "Resume blocked: scenario changed"
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to resume precompute: {e}")
+            return False
+
+    def stop_precompute(self) -> bool:
+        """Stop precompute operation and reset session.
+
+        Returns:
+            True if stopped successfully
+        """
+        try:
+            if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
+                if self.precompute_session.run_state == GuiRunState.RUNNING:
+                    self.runner.stop_gui_session(self.precompute_session)
+                self._cancel_pending_precompute_futures()
+                # Reset session to allow fresh start
+                self.precompute_session = None
+                self.precompute_context = None
+                self.state.status_message = "Precompute stopped and reset"
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to stop precompute: {e}")
+            return False
+
+    def reset_precompute(self) -> None:
+        """Reset precompute state to idle."""
+        self.precompute_session = None
+        self.precompute_context = None
+        if self.precompute_executor is not None:
+            self.precompute_executor.shutdown(wait=False)
+            self.precompute_executor = None
+        self.precompute_futures.clear()
+        self.state.status_message = "Precompute reset"
+
+    def get_precompute_status(self) -> Dict[str, Any]:
+        """Get comprehensive precompute status information.
+
+        Returns:
+            Dictionary with current status and capabilities
+        """
+        from .precompute_config import PrecomputeConfig
+
+        config = PrecomputeConfig(
+            max_workers=self.precompute_max_workers,
+            simulations_per_cell=self.precompute_simulations_per_cell
+        )
+
+        status = {
+            'state': self.precompute_session.run_state.value if self.precompute_session else 'IDLE',
+            'config': config.to_dict(),
+            'can_start': self.precompute_session is None or self.precompute_session.run_state in (GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED),
+            'can_pause': self.precompute_session is not None and self.precompute_session.run_state == GuiRunState.RUNNING,
+            'can_resume': self.precompute_session is not None and self.precompute_session.run_state == GuiRunState.PAUSED,
+            'can_stop': self.precompute_session is not None and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED),
+        }
+
+        if self.precompute_session:
+            status['progress'] = {
+                'completed_cells': self.precompute_session.completed_cells,
+                'total_cells': self.precompute_session.total_cells,
+                'failed_cells': self.precompute_session.failed_cells,
+                'current_cell': self.precompute_session.current_cell_index,
+            }
+
+        return status
+
+    def _handle_state_machine_event(self, event) -> Optional[bool]:
+        """Handle events routed to the state machine controller.
+
+        Args:
+            event: Pygame event to process
+
+        Returns:
+            True if event was handled by state machine, None otherwise
+        """
+        if not hasattr(self, 'state_machine_controller') or not self.state_machine_controller:
+            return None
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            # Route precompute button clicks to state machine
+            if self.precompute_buttons.get("start") and self.precompute_buttons["start"].collidepoint(event.pos):
+                return self.state_machine_controller.trigger_event('start')
+            elif self.precompute_buttons.get("pause") and self.precompute_buttons["pause"].collidepoint(event.pos):
+                return self.state_machine_controller.trigger_event('pause')
+            elif self.precompute_buttons.get("resume") and self.precompute_buttons["resume"].collidepoint(event.pos):
+                return self.state_machine_controller.trigger_event('resume')
+            elif self.precompute_buttons.get("stop") and self.precompute_buttons["stop"].collidepoint(event.pos):
+                return self.state_machine_controller.trigger_event('stop')
+
+        return None
+
     def draw(self, screen: pygame.Surface):
         self._reflow_layout()
         self._tick_precompute()
@@ -797,7 +987,8 @@ class AoFBrowserPanel:
 
         self.matrix.draw(screen, self.small_font, self.payload["cells"], self.state.selected_metric)
         self.cell_detail_panel.draw(screen, self.small_font, self.selected_cell_detail)
-        self.convergence_panel.draw(screen)
+        if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
+            self.convergence_panel.draw(screen)
 
         info_x = self.side_x
         info_y = self.top_margin + self.control_h + 10
@@ -812,10 +1003,18 @@ class AoFBrowserPanel:
             status = str(cell.get("status", "MISSING"))
             status_counts[status] = status_counts.get(status, 0) + 1
         total_cells = sum(status_counts.values())
+        
+        # Get state machine status
+        state_machine_status = "No State Machine"
+        if self.state_machine_controller:
+            status_info = self.state_machine_controller.get_status_info()
+            state_machine_status = f"State: {status_info.get('state', 'unknown').title()}"
+        
         lines = [
             f"Position: {self.state.selected_position}",
             f"Action: {current_action}",
             f"Metric: {self.state.selected_metric.replace('_', ' ')}",
+            state_machine_status,
             f"All-in players: {ctx.get('active_players', 0)}",
             (
                 f"Cells: {total_cells} "
@@ -909,18 +1108,33 @@ class AoFBrowserPanel:
 
         for name, rect in self.precompute_buttons.items():
             enabled = True
-            if self.precompute_session is None:
-                enabled = name == "start"
-            else:
-                state = self.precompute_session.run_state
+            if self.state_machine_controller:
+                # Use state machine status to determine button enablement
+                status_info = self.state_machine_controller.get_status_info()
                 if name == "start":
-                    enabled = state in (GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED)
+                    enabled = status_info.get('can_start', False)
                 elif name == "pause":
-                    enabled = state == GuiRunState.RUNNING
+                    enabled = status_info.get('can_pause', False)
                 elif name == "resume":
-                    enabled = state == GuiRunState.PAUSED
+                    enabled = status_info.get('can_resume', False)
                 elif name == "stop":
-                    enabled = state == GuiRunState.RUNNING
+                    enabled = status_info.get('can_stop', False)
+                elif name == "reset":
+                    enabled = status_info.get('can_reset', True)  # Reset is always available
+            else:
+                # Fallback to session-based logic if no state machine
+                if self.precompute_session is None:
+                    enabled = name == "start"
+                else:
+                    state = self.precompute_session.run_state
+                    if name == "start":
+                        enabled = state in (GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED)
+                    elif name == "pause":
+                        enabled = state == GuiRunState.RUNNING
+                    elif name == "resume":
+                        enabled = state == GuiRunState.PAUSED
+                    elif name == "stop":
+                        enabled = state == GuiRunState.RUNNING
 
             color = (56, 98, 74) if enabled else (56, 56, 56)
             pygame.draw.rect(screen, color, rect, border_radius=4)

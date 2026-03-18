@@ -17,74 +17,82 @@
   the iteration process.
 -->
 
-**Language/Version**: Python 3.8+  
-**Primary Dependencies**: transitions==0.9.3, pygame, concurrent.futures  
-**Storage**: File system (JSON checkpoints), in-memory state  
-**Testing**: pytest with mocking  
-**Target Platform**: Windows desktop  
-**Project Type**: Desktop GUI application  
-**Performance Goals**: Real-time UI responsiveness, efficient simulation processing  
-**Constraints**: Thread-safe operations, maintain existing GUI patterns, preserve performance  
-**Scale/Scope**: Single-user desktop app, 1000+ simulation cells, real-time control
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-**Status**: ✅ PASSED - No violations detected
-
-**Principle Compliance**:
-- ✅ **I. Real-Time Poker Analysis**: State machine enables reliable real-time simulation control
-- ✅ **II. Computer Vision Accuracy**: Existing CV components preserved, state machine doesn't affect
-- ✅ **III. Modular Design**: State machine provides clean separation of control logic
-- ✅ **IV. Configuration Management**: Transitions library integrates with existing YAML config
-- ✅ **V. Real-Time Screen Capture**: State machine doesn't interfere with capture operations
-- ✅ **VI. Comprehensive Testing**: State machine design enables thorough unit testing
-- ✅ **VII. Consistent Logging**: State machine uses centralized logging via callbacks
-- ✅ **VIII. Virtual Environment Management**: Implementation follows venv requirements
-- ✅ **IX. DRY Principle**: Eliminates scattered state management code
-- ✅ **X. Single Responsibility Principle**: State machine handles only state transitions
-- ✅ **XI. Established Design Patterns**: Uses proven state machine pattern via transitions library
-
-**Additional Requirements Compliance**:
-- ✅ **Testing Directory Structure**: Tests will be placed in root `tests/` directory
-- ✅ **Run from python/ directory**: Implementation maintains existing project structure
-
-**Risk Assessment**: Low - transitions library is well-established and aligns with project patterns
+[Gates determined based on constitution file]
 
 ## Project Structure
 
 ### Documentation (this feature)
 
 ```text
-specs/001-gui-state-refactor/
-├── spec.md              # Feature specification
-├── plan.md              # This implementation plan
-├── research.md          # Library analysis and best practices
-├── data-model.md        # Entity relationships and validation
-├── quickstart.md        # Usage guide and examples
-├── contracts/           # Interface contracts
-│   └── state_machine_interface.md
-├── checklists/          # Quality validation
-│   └── requirements.md
-└── tasks.md             # Implementation tasks (Phase 2)
+specs/[###-feature]/
+├── plan.md              # This file (/speckit.plan command output)
+├── research.md          # Phase 0 output (/speckit.plan command)
+├── data-model.md        # Phase 1 output (/speckit.plan command)
+├── quickstart.md        # Phase 1 output (/speckit.plan command)
+├── contracts/           # Phase 1 output (/speckit.plan command)
+└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
 ```
 
 ### Source Code (repository root)
+<!--
+  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
+  for this feature. Delete unused options and expand the chosen structure with
+  real paths (e.g., apps/admin, packages/something). The delivered plan must
+  not include Option labels.
+-->
 
 ```text
-python/
-├── hopilot/
-│   └── aof_gto_browser.py    # Main GUI class (MODIFIED)
-│       ├── State machine integration
-│       ├── Callback implementations
-│       └── Thread-safe operations
+# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
+src/
+├── models/
+├── services/
+├── cli/
+└── lib/
+
+tests/
+├── contract/
+├── integration/
+└── unit/
+
+# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
+backend/
+├── src/
+│   ├── models/
+│   ├── services/
+│   └── api/
 └── tests/
-    ├── test_aof_gto_browser_state_machine.py  # New state machine tests
-    └── test_simulation_control_integration.py # Integration tests
+
+frontend/
+├── src/
+│   ├── components/
+│   ├── pages/
+│   └── services/
+└── tests/
+
+# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+api/
+└── [same as backend above]
+
+ios/ or android/
+└── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
-**Structure Decision**: Modified existing aof_gto_browser.py to integrate state machine while preserving existing GUI structure. New tests added to validate state machine behavior.
+**Structure Decision**: [Document the selected structure and reference the real
+directories captured above]
 
 ## Complexity Tracking
 

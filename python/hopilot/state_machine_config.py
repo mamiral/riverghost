@@ -41,7 +41,7 @@ SIMULATION_TRANSITIONS = [
     # Start simulation
     {
         'trigger': SimulationTrigger.START_SIMULATION,
-        'source': SimulationState.IDLE,
+        'source': [SimulationState.IDLE, SimulationState.COMPLETED, SimulationState.FAILED],
         'dest': SimulationState.RUNNING,
         'prepare': 'validate_scenario',
         'conditions': 'has_valid_config',

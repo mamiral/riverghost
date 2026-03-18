@@ -12,7 +12,7 @@ from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.gto.gto_optimizer import GTOOptimizer
 from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner
-from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
+from hopilot.aof_gto_browser_gui import GuiApplication
 
 
 @pytest.fixture
@@ -245,7 +245,7 @@ class TestAoFBrowserIntegration:
     @pytest.fixture
     def aof_app(self):
         pygame.init()
-        app = AoFGTOBrowserGUI(width=1000, height=760)
+        app = GuiApplication(width=1000, height=760)
         yield app
         pygame.quit()
 
@@ -813,7 +813,7 @@ class TestAoFBrowserIntegration:
 
     def test_p95_latency_under_1s_for_200_switches(self):
         pygame.init()
-        app = AoFGTOBrowserGUI(width=1000, height=760)
+        app = GuiApplication(width=1000, height=760)
 
         class _FastSolver:
             def evaluate_hand_key(self, *args, **kwargs):

@@ -1,8 +1,13 @@
 # Unit tests for AOF GTO Browser state machine
 # Feature: 001-gui-state-refactor
 
+import os
+import sys
+
 import pytest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 from hopilot.aof_gto_browser import GuiApplication
 from hopilot.state_machine_config import SimulationState, SimulationTrigger

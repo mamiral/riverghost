@@ -7,14 +7,14 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
+from hopilot.aof_gto_browser_gui import GuiApplication
 from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
 
 
 @pytest.fixture
 def app():
     pygame.init()
-    gui = AoFGTOBrowserGUI(width=1000, height=760)
+    gui = GuiApplication(width=1000, height=760)
     yield gui
     pygame.quit()
 
@@ -183,7 +183,7 @@ def test_data_provider_has_169_cells():
 def test_startup_time_under_30_seconds():
     pygame.init()
     start = time.perf_counter()
-    gui = AoFGTOBrowserGUI(width=1000, height=760)
+    gui = GuiApplication(width=1000, height=760)
     elapsed = time.perf_counter() - start
     assert elapsed <= 30.0
     assert gui.panel is not None
@@ -575,10 +575,10 @@ def test_precompute_state_persistence_across_app_restarts(app, monkeypatch, tmp_
     app.panel._persist_completed_precompute_payload()
     
     # Create new app instance (simulating restart)
-    from hopilot.aof_gto_browser_gui import AoFGTOBrowserGUI
+    from hopilot.aof_gto_browser_gui import GuiApplication
     pygame.quit()
     pygame.init()
-    new_app = AoFGTOBrowserGUI(width=1000, height=760)
+    new_app = GuiApplication(width=1000, height=760)
     
     # Mock restoration to return our persisted session
     def mock_restore(*args, **kwargs):
