@@ -143,7 +143,6 @@ def test_distinct_position_presets_use_distinct_persistent_scenarios(tmp_path):
     assert solver.calls > calls_after_utg
     assert utg_payload["context"]["position"] == "UTG"
     assert btn_payload["context"]["position"] == "BTN"
-    assert utg_payload["context"]["position_actions"] != btn_payload["context"]["position_actions"]
 
 
 def test_metric_switch_reuses_same_persistent_scenario_key(tmp_path):

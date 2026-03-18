@@ -8,8 +8,12 @@ in YAML format with proper validation and error handling.
 import pytest
 import tempfile
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch, mock_open
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+
 from hopilot.gto.range_manager import RangeManager
 from hopilot.hand_range import PokerRange
 

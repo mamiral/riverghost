@@ -401,7 +401,7 @@ class TestAoFBrowserIntegration:
 
     def test_repeated_scenario_runs_increase_sample_counts(self, tmp_path):
         """Test that running the same scenario multiple times increases aggregated sample counts."""
-        from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData
+        from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData, SimulationOutcome
         from datetime import datetime, UTC
 
         # Setup aggregation service
@@ -412,16 +412,26 @@ class TestAoFBrowserIntegration:
         scenario_key = "test_scenario_123"
 
         # First run data
+        outcomes1 = []
+        for hand, metrics in {
+            "AA": {"EV": 1.0, "Equity": 0.85},
+            "KK": {"EV": 0.8, "Equity": 0.75}
+        }.items():
+            outcomes1.append(SimulationOutcome(
+                hero_hand=hand,
+                villain_hand="RANDOM",
+                outcome="WIN" if metrics["Equity"] > 0.5 else "LOSS",
+                hero_equity=metrics["Equity"],
+                ev_chips=metrics["EV"],
+                board_cards=""
+            ))
         run_data1 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=9.0,
             seed=42,
-            results={
-                "AA": {"EV": 1.0, "Equity": 0.85},
-                "KK": {"EV": 0.8, "Equity": 0.75}
-            }
+            outcomes=outcomes1
         )
 
         # Store first run
@@ -434,16 +444,26 @@ class TestAoFBrowserIntegration:
         assert stats1.statistics["KK"]["EV"].sample_count == 1000
 
         # Second run data (same scenario, different results)
+        outcomes2 = []
+        for hand, metrics in {
+            "AA": {"EV": 1.2, "Equity": 0.87},
+            "KK": {"EV": 0.9, "Equity": 0.77}
+        }.items():
+            outcomes2.append(SimulationOutcome(
+                hero_hand=hand,
+                villain_hand="RANDOM",
+                outcome="WIN" if metrics["Equity"] > 0.5 else "LOSS",
+                hero_equity=metrics["Equity"],
+                ev_chips=metrics["EV"],
+                board_cards=""
+            ))
         run_data2 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=9.0,
             seed=43,
-            results={
-                "AA": {"EV": 1.2, "Equity": 0.87},
-                "KK": {"EV": 0.9, "Equity": 0.77}
-            }
+            outcomes=outcomes2
         )
 
         # Store second run
@@ -461,7 +481,7 @@ class TestAoFBrowserIntegration:
 
     def test_scenario_loading_with_aggregated_data(self, tmp_path, mock_pygame_setup):
         """Test that scenarios load aggregated data correctly in the GUI."""
-        from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData
+        from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData, SimulationOutcome
         from datetime import datetime, UTC
         import tempfile
         import yaml
@@ -508,16 +528,26 @@ class TestAoFBrowserIntegration:
 
             # Store multiple runs for the same scenario
             for i in range(3):
+                outcomes = []
+                for hand, metrics in {
+                    "AA": {"WIN_LOSE_PROBABILITY": 0.8 + i * 0.02},  # Slightly different values
+                    "KK": {"WIN_LOSE_PROBABILITY": 0.7 + i * 0.02}
+                }.items():
+                    outcomes.append(SimulationOutcome(
+                        hero_hand=hand,
+                        villain_hand="RANDOM",
+                        outcome="WIN" if metrics["WIN_LOSE_PROBABILITY"] > 0.5 else "LOSS",
+                        hero_equity=metrics["WIN_LOSE_PROBABILITY"],
+                        ev_chips=0.0,
+                        board_cards=""
+                    ))
                 run_data = RunData(
                     timestamp=datetime.now(UTC),
                     sim_count=1000,
                     combo_samples=4,
                     timeout=9.0,
                     seed=42 + i,
-                    results={
-                        "AA": {"WIN_LOSE_PROBABILITY": 0.8 + i * 0.02},  # Slightly different values
-                        "KK": {"WIN_LOSE_PROBABILITY": 0.7 + i * 0.02}
-                    }
+                    outcomes=outcomes
                 )
                 service.store_run(scenario_key, run_data)
 

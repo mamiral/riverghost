@@ -611,6 +611,7 @@ class AoFBrowserDataProvider:
         num_opponents = int(self._resolve_num_opponents(selected_action, context["position_actions"]))
         return {
             "solver_signature": SOLVER_SIGNATURE,
+            "position": str(context["position"]),
             "selected_action": selected_action,
             "active_players": active_players,
             "num_opponents": num_opponents,

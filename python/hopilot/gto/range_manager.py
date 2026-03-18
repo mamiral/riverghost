@@ -32,7 +32,7 @@ class RangeManager:
             hopilot_dir = Path(__file__).parent
             storage_dir = hopilot_dir.parent / "config" / "ranges"
         
-        self.storage_dir = Path(storage_dir)
+        self.storage_dir = Path(storage_dir).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"RangeManager initialized with storage dir: {self.storage_dir}")
 
