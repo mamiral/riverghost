@@ -7,6 +7,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 import pytest
+import pygame
 from unittest.mock import Mock, patch, MagicMock, call
 from hopilot.gui_components.strategy_visualizer import StrategyVisualizer
 
@@ -23,7 +24,10 @@ class TestStrategyVisualizer:
     def visualizer(self, mock_screen):
         """Create StrategyVisualizer instance for testing."""
         with patch('pygame.font.SysFont') as mock_font:
-            mock_font.return_value = Mock()
+            mock_title = Mock()
+            mock_label = Mock()
+            mock_small = Mock()
+            mock_font.side_effect = [mock_title, mock_label, mock_small]
             return StrategyVisualizer(mock_screen, x=0, y=0, width=800, height=600)
 
     @pytest.fixture
@@ -153,7 +157,7 @@ class TestStrategyVisualizer:
 
         # Mock mouse event at grid position (0,0) which should be AA
         event = Mock()
-        event.type = 5  # MOUSEBUTTONDOWN
+        event.type = pygame.MOUSEBUTTONDOWN
         event.pos = (visualizer.grid_x + 10, visualizer.grid_y + 10)  # Click on first cell
 
         with patch.object(visualizer, '_select_hand') as mock_select:
@@ -171,7 +175,7 @@ class TestStrategyVisualizer:
 
         # Mock scroll down event
         event = Mock()
-        event.type = 4  # MOUSEWHEEL
+        event.type = pygame.MOUSEWHEEL
         event.y = -1  # Scroll down
 
         visualizer.handle_event(event)

@@ -220,7 +220,7 @@ class StrategyVisualizer:
         pygame.draw.rect(self.screen, self.BORDER_COLOR, (panel_x, panel_y, panel_width, panel_height), 2)
 
         # Hand name
-        hand_name = self.selected_hand_info.get('hand', 'Unknown')
+        hand_name = self.selected_hand
         name_render = self.label_font.render(f"Hand: {hand_name}", True, self.TEXT_COLOR)
         self.screen.blit(name_render, (panel_x + 10, panel_y + 10))
 

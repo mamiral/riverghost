@@ -132,7 +132,7 @@ class TestStrategyVisualizerGUI:
 
         # Select AKs (different position)
         event2 = pygame.event.Event(pygame.MOUSEBUTTONDOWN,
-                                  pos=(visualizer.grid_x + 10, visualizer.grid_y + 35))  # Second row
+                                  pos=(visualizer.grid_x + 10, visualizer.grid_y + 47))  # Second row
         visualizer.handle_event(event2)
         assert visualizer.selected_hand == "AKs"
 
