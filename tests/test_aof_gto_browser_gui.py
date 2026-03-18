@@ -645,6 +645,9 @@ def test_convergence_plot_shows_mock_data_with_precompute_results(app):
         "status_message": "Test results"
     }
     
+    # Ensure no cell is selected
+    app.panel.state.clear_selected_cell()
+    
     # Load convergence data
     app.panel._load_convergence_data()
     
@@ -659,6 +662,33 @@ def test_convergence_plot_shows_mock_data_with_precompute_results(app):
         assert 0.0 <= point["average_equity"] <= 1.0
 
 
+def test_convergence_plot_shows_cell_specific_data_when_selected(app):
+    """Test that convergence plot displays cell-specific data when a cell is selected."""
+    # Simulate having some computed results
+    app.panel.payload = {
+        "cells": [
+            {"row": 0, "col": 0, "hand_key": "AA", "status": "AVAILABLE", "value": 0.85},
+            {"row": 0, "col": 1, "hand_key": "AKs", "status": "AVAILABLE", "value": 0.75},
+        ] + [{"status": "MISSING", "value": None}] * 167,
+        "context": {},
+        "status_message": "Test results"
+    }
+    
+    # Select a cell
+    app.panel.state.set_selected_cell(0, 0, "AA")
+    
+    # Load convergence data
+    app.panel._load_convergence_data()
+    
+    # Should have convergence data specific to the selected cell
+    assert len(app.panel.convergence_panel.convergence_data) > 0
+    assert "AA" in app.panel.convergence_panel.position  # Should include hand key
+    
+    # Check that the final convergence value is close to the cell's value
+    final_point = app.panel.convergence_panel.convergence_data[-1]
+    assert abs(final_point["average_equity"] - 0.85) < 0.1  # Should converge to cell's value
+
+
 def test_convergence_plot_empty_when_no_results(app):
     """Test that convergence plot shows no data when no results are available."""
     # Clear payload
@@ -667,6 +697,9 @@ def test_convergence_plot_empty_when_no_results(app):
         "context": {},
         "status_message": "No results"
     }
+    
+    # Ensure no cell is selected
+    app.panel.state.clear_selected_cell()
     
     # Load convergence data
     app.panel._load_convergence_data()

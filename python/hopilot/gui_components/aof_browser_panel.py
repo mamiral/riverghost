@@ -248,11 +248,23 @@ class AoFBrowserPanel:
         self.is_loading = False
 
     def _load_convergence_data(self):
-        """Load convergence data for current position/action."""
+        """Load convergence data for current position/action or selected cell."""
         try:
             current_action = self.state.get_position_action(self.state.selected_position)
             
-            # Try database first
+            # If a cell is selected, show cell-specific convergence data
+            if self.state.selected_cell is not None:
+                cell_convergence_data = self._generate_cell_convergence_data()
+                if cell_convergence_data:
+                    row, col, hand_key = self.state.selected_cell
+                    self.convergence_panel.set_convergence_data(
+                        cell_convergence_data,
+                        f"{self.state.selected_position} - {hand_key}",
+                        current_action
+                    )
+                    return
+            
+            # Try database first for position-level convergence
             if hasattr(self.provider, '_database_provider') and self.provider._database_provider is not None:
                 if hasattr(self.provider._database_provider, 'get_convergence_data'):
                     convergence_data = self.provider._database_provider.get_convergence_data(
@@ -281,6 +293,44 @@ class AoFBrowserPanel:
         except Exception as e:
             self.logger.warning(f"Failed to load convergence data: {e}")
             self.convergence_panel.set_convergence_data([], "", "")
+
+    def _generate_cell_convergence_data(self) -> List[Dict[str, Any]]:
+        """Generate mock convergence data for the selected cell."""
+        if self.state.selected_cell is None:
+            return []
+        
+        row, col, hand_key = self.state.selected_cell
+        cell = self._find_payload_cell(row, col)
+        
+        if cell is None or cell.get("status") != "AVAILABLE" or cell.get("value") is None:
+            return []
+        
+        # Use the cell's current equity value as the final converged value
+        final_equity = float(cell["value"])
+        
+        # Generate convergence points showing progression toward the cell's final equity
+        simulation_counts = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000]
+        convergence_data = []
+        
+        for i, sim_count in enumerate(simulation_counts):
+            if i == 0:
+                # Start with some noise around the final value
+                equity = final_equity + (0.1 * (0.5 - i/len(simulation_counts)))
+            else:
+                # Gradually converge to final value with decreasing variance
+                noise = 0.03 * (1 - i/len(simulation_counts)) * (0.5 - i/len(simulation_counts))
+                equity = final_equity + noise
+            
+            # Ensure equity stays within reasonable bounds
+            equity = max(0.0, min(1.0, equity))
+            
+            convergence_data.append({
+                "num_simulations": sim_count,
+                "average_equity": equity,
+                "timestamp": None  # Mock data doesn't have timestamps
+            })
+        
+        return convergence_data
 
     def _generate_mock_convergence_data(self) -> List[Dict[str, Any]]:
         """Generate mock convergence data for demonstration purposes."""
@@ -328,6 +378,7 @@ class AoFBrowserPanel:
         if cell is None or str(cell.get("hand_key", "")) != str(hand_key):
             self.state.clear_selected_cell()
             self.state.status_message = "Selected cell cleared after context refresh"
+            self._load_convergence_data()  # Update convergence plot back to position-level
 
     def _find_payload_cell(self, row: int, col: int) -> dict | None:
         index = int(row) * 13 + int(col)
@@ -724,6 +775,7 @@ class AoFBrowserPanel:
                 if cell is not None:
                     self.state.set_selected_cell(row, col, str(cell.get("hand_key", "")))
                     self.selected_cell_detail = self._build_selected_cell_detail_model()
+                    self._load_convergence_data()  # Update convergence plot for selected cell
                     return True
 
         return False
