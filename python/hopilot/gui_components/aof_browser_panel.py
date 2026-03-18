@@ -610,8 +610,30 @@ class AoFBrowserPanel:
             self.logger.warning("Failed to persist threaded precompute payload: %s", exc)
 
     def _cancel_pending_precompute_futures(self) -> None:
-        for future in list(self.precompute_futures.keys()):
-            future.cancel()
+        """Cancel pending futures and reset cell index to reprocess them on resume.
+        
+        When futures are cancelled due to pause, we must track which cells had pending
+        work and reset next_cell_index to the minimum, otherwise those cells are skipped
+        on resume (Bug: cells skipped when PAUSE/RESUME).
+        """
+        if self.precompute_futures:
+            # Get all pending cell indices before clearing
+            pending_cell_indices = list(self.precompute_futures.values())
+            min_pending_index = min(pending_cell_indices)
+            
+            # Cancel all futures
+            for future in list(self.precompute_futures.keys()):
+                future.cancel()
+            
+            # Reset next_cell_index to the minimum pending cell
+            # This ensures cancelled cells will be reprocessed on resume
+            if self.precompute_session and min_pending_index < self.precompute_session.next_cell_index:
+                self.logger.info(
+                    f"Resetting next_cell_index from {self.precompute_session.next_cell_index} to "
+                    f"{min_pending_index} to reprocess {len(pending_cell_indices)} cancelled cells"
+                )
+                self.precompute_session.next_cell_index = min_pending_index
+        
         self.precompute_futures.clear()
 
     def _tick_precompute(self) -> None:

@@ -805,10 +805,8 @@ class TestAoFBrowserIntegration:
         stop_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_buttons["stop"].center)
         assert aof_app.panel.handle_event(stop_event)
         
-        # The session should be stopped or completed (stopping a running session)
-        # If it was paused, it might stay paused, but the important thing is that
-        # the stop operation was accepted and the session exists
-        assert aof_app.panel.precompute_session is not None
+        # Stop should reset session state for a clean next run.
+        assert aof_app.panel.precompute_session is None
         # This tests that aggregation storage integration doesn't break precompute functionality
 
     def test_p95_latency_under_1s_for_200_switches(self):
