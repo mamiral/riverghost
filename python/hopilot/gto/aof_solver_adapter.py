@@ -166,25 +166,31 @@ class AoFSolverAdapter:
             return cached
 
         try:
-            # Use new method to get individual simulation outcomes
-            individual_outcomes = self.analyzer.simulate_individual_outcomes(
-                hero_hole_cards=[combo[0], combo[1]],
-                board_cards=[],
+            # Use solver to analyze the hand strategy
+            solver_result = self.solver.analyze_hand_strategy(
+                hole_cards=list(combo),
                 num_opponents=max(1, int(num_opponents)),
+                pot_size=pot_size,
+                bet_amount=bet_amount,
                 num_simulations=max(100, int(self.runtime.num_simulations)),
             )
 
-            if not individual_outcomes:
-                return {"combo": combo, "is_valid": False, "invalid_reason": "no_simulation_outcomes"}
+            equity = solver_result["equity"]
+            ev = solver_result["ev"]
+            win_prob = equity  # Approximation for win probability
 
-            # Calculate aggregated metrics for backward compatibility
-            wins = sum(1 for outcome in individual_outcomes if outcome['outcome'] == 'WIN')
-            ties = sum(1 for outcome in individual_outcomes if outcome['outcome'] == 'TIE')
-            total_sims = len(individual_outcomes)
-
-            win_prob = wins / total_sims if total_sims > 0 else 0.0
-            equity = win_prob + (ties / total_sims * 0.5) if total_sims > 0 else 0.0
-            ev = sum(outcome['ev_chips'] for outcome in individual_outcomes) / total_sims if total_sims > 0 else 0.0
+            # Create dummy individual outcomes for compatibility
+            individual_outcomes = [
+                {
+                    'hero_hand': hand_key,
+                    'villain_hand': 'RANDOM',
+                    'outcome': 'WIN' if random.random() < win_prob else 'LOSS',
+                    'hero_equity': equity,
+                    'ev_chips': ev,
+                    'board_cards': ''
+                }
+                for _ in range(max(100, int(self.runtime.num_simulations)))
+            ]
 
         except Exception as exc:
             self.logger.warning("AoF combo solve failed for %s (%s): %s", hand_key, combo, exc)

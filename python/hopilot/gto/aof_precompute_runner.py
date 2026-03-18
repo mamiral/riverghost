@@ -256,7 +256,7 @@ class AoFPrecomputeRunner:
         metric = str(context["metric"])
         try:
             # Get individual simulation outcomes instead of aggregated metrics
-            individual_outcomes = self._get_individual_outcomes_for_hand(
+            individual_outcomes, solved_status = self._get_individual_outcomes_for_hand(
                 context,
                 hand_key,
                 int(context["timeout_ms"]),
@@ -276,11 +276,22 @@ class AoFPrecomputeRunner:
                     "WIN_LOSE_PROBABILITY": round(win_prob, 4),
                     "EQUITY": round(equity, 4),
                     "EV": round(ev, 4),
-                    "EQR": round(max(0.0, min(1.0, equity / max(1e-6, self._baseline_equity(hand_key)))), 4),
+                    "EQR": round(max(0.0, min(1.0, equity / max(1e-6, self.provider._baseline_equity(hand_key)))), 4),
                 }
                 value = metrics.get(metric)
                 status = "AVAILABLE"
                 status_message = None
+            elif solved_status == "TIMEOUT":
+                metrics = {
+                    "WIN_LOSE_PROBABILITY": None,
+                    "EQUITY": None,
+                    "EV": None,
+                    "EQR": None,
+                }
+                value = None
+                status = "TIMEOUT"
+                status_message = "Solver timeout"
+                individual_outcomes = []
             else:
                 metrics = {
                     "WIN_LOSE_PROBABILITY": None,
@@ -291,6 +302,7 @@ class AoFPrecomputeRunner:
                 value = None
                 status = "MISSING"
                 status_message = "No simulation outcomes generated"
+                individual_outcomes = []
 
         except Exception as exc:  # pragma: no cover - defensive execution path
             metrics = {
@@ -318,7 +330,7 @@ class AoFPrecomputeRunner:
         context: dict[str, Any],
         hand_key: str,
         remaining_timeout_ms: int,
-    ) -> list[dict[str, Any]] | None:
+    ) -> tuple[list[dict[str, Any]] | None, str]:
         """Get individual simulation outcomes for a hand key."""
         action = context["action"]
         active_players = int(context["active_players"])
@@ -335,7 +347,7 @@ class AoFPrecomputeRunner:
                 'hero_equity': 1.0,
                 'ev_chips': pot_size,
                 'board_cards': ''
-            }]
+            }], "AVAILABLE"
 
         num_opponents = self.provider._resolve_num_opponents(action, context["position_actions"])  # pylint: disable=protected-access
 
@@ -350,14 +362,14 @@ class AoFPrecomputeRunner:
 
         solved_status = solved.get("status")
         if solved_status != "AVAILABLE":
-            return None
+            return None, solved_status
 
         # Extract individual outcomes from solver result
         individual_outcomes = solved.get("individual_outcomes", [])
         if not individual_outcomes:
-            return None
+            return None, solved_status
 
-        return individual_outcomes
+        return individual_outcomes, solved_status
 
     def apply_gui_cell_result(
         self,

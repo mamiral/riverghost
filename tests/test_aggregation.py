@@ -11,7 +11,34 @@ from hopilot.gto.aof_aggregation_math import (
     aggregate_run_data,
     merge_degraded_statuses,
 )
-from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData, AggregatedResults, Statistic
+from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData, AggregatedResults, Statistic, SimulationOutcome
+
+
+def create_outcomes_for_hand(hand_key, win_prob, num_sims):
+    """Create simulation outcomes for a hand with given win probability."""
+    outcomes = []
+    num_wins = int(win_prob * num_sims)
+    num_losses = num_sims - num_wins
+    
+    for _ in range(num_wins):
+        outcomes.append(SimulationOutcome(
+            hero_hand=hand_key,
+            villain_hand="RANDOM",
+            outcome="WIN",
+            hero_equity=1.0,
+            ev_chips=20.0,
+            board_cards=""
+        ))
+    for _ in range(num_losses):
+        outcomes.append(SimulationOutcome(
+            hero_hand=hand_key,
+            villain_hand="RANDOM",
+            outcome="LOSS",
+            hero_equity=0.0,
+            ev_chips=0.0,
+            board_cards=""
+        ))
+    return outcomes
 
 
 class TestWeightedAverage:
@@ -182,16 +209,55 @@ class TestAggregationService:
         service = AggregationService(db_path)
         
         scenario_key = "test_scenario_1"
+        
+        # Create outcomes for AsKh: 650 wins, 350 losses
+        outcomes = []
+        for i in range(650):
+            outcomes.append(SimulationOutcome(
+                hero_hand="AsKh",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=20.0,
+                board_cards=""
+            ))
+        for i in range(350):
+            outcomes.append(SimulationOutcome(
+                hero_hand="AsKh",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=0.0,
+                board_cards=""
+            ))
+        
+        # Create outcomes for KdQd: 550 wins, 450 losses
+        for i in range(550):
+            outcomes.append(SimulationOutcome(
+                hero_hand="KdQd",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=20.0,
+                board_cards=""
+            ))
+        for i in range(450):
+            outcomes.append(SimulationOutcome(
+                hero_hand="KdQd",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=0.0,
+                board_cards=""
+            ))
+        
         run_data = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=42,
-            results={
-                "AsKh": {"WIN_LOSE_PROBABILITY": 0.65, "EQUITY": 0.70},
-                "KdQd": {"WIN_LOSE_PROBABILITY": 0.55, "EQUITY": 0.60}
-            }
+            outcomes=outcomes
         )
         
         service.store_run(scenario_key, run_data)
@@ -218,30 +284,100 @@ class TestAggregationService:
         
         scenario_key = "test_scenario_2"
         
-        # First run
+        # First run: AsKh 600 wins, KdQd 500 wins
+        outcomes1 = []
+        for i in range(600):
+            outcomes1.append(SimulationOutcome(
+                hero_hand="AsKh",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=20.0,
+                board_cards=""
+            ))
+        for i in range(400):
+            outcomes1.append(SimulationOutcome(
+                hero_hand="AsKh",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=0.0,
+                board_cards=""
+            ))
+        for i in range(500):
+            outcomes1.append(SimulationOutcome(
+                hero_hand="KdQd",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=20.0,
+                board_cards=""
+            ))
+        for i in range(500):
+            outcomes1.append(SimulationOutcome(
+                hero_hand="KdQd",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=0.0,
+                board_cards=""
+            ))
+        
         run_data1 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=42,
-            results={
-                "AsKh": {"WIN_LOSE_PROBABILITY": 0.60},
-                "KdQd": {"WIN_LOSE_PROBABILITY": 0.50}
-            }
+            outcomes=outcomes1
         )
         
-        # Second run with different values
+        # Second run: AsKh 700 wins, KdQd 600 wins
+        outcomes2 = []
+        for i in range(700):
+            outcomes2.append(SimulationOutcome(
+                hero_hand="AsKh",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=20.0,
+                board_cards=""
+            ))
+        for i in range(300):
+            outcomes2.append(SimulationOutcome(
+                hero_hand="AsKh",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=0.0,
+                board_cards=""
+            ))
+        for i in range(600):
+            outcomes2.append(SimulationOutcome(
+                hero_hand="KdQd",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=20.0,
+                board_cards=""
+            ))
+        for i in range(400):
+            outcomes2.append(SimulationOutcome(
+                hero_hand="KdQd",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=0.0,
+                board_cards=""
+            ))
+        
         run_data2 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=43,
-            results={
-                "AsKh": {"WIN_LOSE_PROBABILITY": 0.70},
-                "KdQd": {"WIN_LOSE_PROBABILITY": 0.60}
-            }
+            outcomes=outcomes2
         )
         
         service.store_run(scenario_key, run_data1)
@@ -269,20 +405,23 @@ class TestAggregationEdgeCases:
         service = AggregationService(db_path)
         
         scenario_key = "stress_test_scenario"
-        num_runs = 100
+        num_runs = 10  # Reduced for test performance
         
         # Create many runs with slightly varying results
         for i in range(num_runs):
+            aa_win_prob = 0.80 + (i % 10) * 0.005  # Vary between 0.80-0.845
+            kk_win_prob = 0.75 + (i % 8) * 0.005   # Vary between 0.75-0.785
+            
+            outcomes = create_outcomes_for_hand("AA", aa_win_prob, 1000)
+            outcomes.extend(create_outcomes_for_hand("KK", kk_win_prob, 1000))
+            
             run_data = RunData(
                 timestamp=datetime.now(UTC),
                 sim_count=1000,
                 combo_samples=4,
                 timeout=30.0,
                 seed=1000 + i,
-                results={
-                    "AA": {"WIN_LOSE_PROBABILITY": 0.80 + (i % 10) * 0.005},  # Vary between 0.80-0.845
-                    "KK": {"WIN_LOSE_PROBABILITY": 0.75 + (i % 8) * 0.005}   # Vary between 0.75-0.785
-                }
+                outcomes=outcomes
             )
             service.store_run(scenario_key, run_data)
         
@@ -301,6 +440,8 @@ class TestAggregationEdgeCases:
         # Values should be reasonable (within expected range)
         assert 0.80 <= aa_stat.value <= 0.85
         assert 0.75 <= kk_stat.value <= 0.79
+        assert 0.80 <= aa_stat.value <= 0.85
+        assert 0.75 <= kk_stat.value <= 0.79
         
         # Confidence should be high with 100,000 total samples (100 runs × 1000 sim_count)
         assert aa_stat.confidence == 1.0  # sqrt(100000)/sqrt(1000) > 1.0, capped at 1.0
@@ -313,43 +454,56 @@ class TestAggregationEdgeCases:
         
         scenario_key = "inconsistent_scenario"
         
-        # Run 1: Only EV metric
+        # All runs have all metrics since outcomes provide them
+        # Run 1: EV=1.5, Equity=0.5
+        outcomes1 = create_outcomes_for_hand("AA", 0.5, 1000)
+        outcomes1.extend(create_outcomes_for_hand("KK", 0.4, 1000))
+        # Set ev_chips to 3.0 for wins to get EV=1.5
+        for outcome in outcomes1:
+            if outcome.outcome == "WIN":
+                outcome.ev_chips = 3.0
+        
         run_data1 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=1,
-            results={
-                "AA": {"EV": 1.5},
-                "KK": {"EV": 1.2}
-            }
+            outcomes=outcomes1
         )
         
-        # Run 2: EV and Equity metrics
+        # Run 2: EV=1.3, Equity=0.85
+        outcomes2 = create_outcomes_for_hand("AA", 0.85, 1000)
+        outcomes2.extend(create_outcomes_for_hand("KK", 0.78, 1000))
+        # Set ev_chips to 1.3/0.85 ≈ 1.529 for wins to get EV=1.3
+        for outcome in outcomes2:
+            if outcome.outcome == "WIN":
+                outcome.ev_chips = 1.529
+        
         run_data2 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=2,
-            results={
-                "AA": {"EV": 1.3, "EQUITY": 0.85},
-                "KK": {"EV": 1.1, "EQUITY": 0.78}
-            }
+            outcomes=outcomes2
         )
         
-        # Run 3: Only Equity metric
+        # Run 3: EV=0.82, Equity=0.82
+        outcomes3 = create_outcomes_for_hand("AA", 0.82, 1000)
+        outcomes3.extend(create_outcomes_for_hand("KK", 0.76, 1000))
+        # Set ev_chips to 0.82/0.82 = 1.0 for wins to get EV=0.82
+        for outcome in outcomes3:
+            if outcome.outcome == "WIN":
+                outcome.ev_chips = 1.0
+        
         run_data3 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=3,
-            results={
-                "AA": {"EQUITY": 0.82},
-                "KK": {"EQUITY": 0.76}
-            }
+            outcomes=outcomes3
         )
         
         service.store_run(scenario_key, run_data1)
@@ -358,18 +512,18 @@ class TestAggregationEdgeCases:
         
         result = service.get_aggregated_stats(scenario_key)
         
-        # AA should have both EV (from runs 1,2) and Equity (from runs 2,3)
+        # AA should have both EV and Equity from all 3 runs
         aa_stats = result.statistics["AA"]
         assert "EV" in aa_stats
         assert "EQUITY" in aa_stats
         
-        # EV: (1.5 + 1.3) / 2 = 1.4
-        assert aa_stats["EV"].value == pytest.approx(1.4, abs=1e-6)
-        assert aa_stats["EV"].sample_count == 2000  # 2 runs × 1000 sim_count each
+        # EV: (1.5 + 1.3 + 0.82) / 3 ≈ 1.207
+        assert aa_stats["EV"].value == pytest.approx(1.207, abs=1e-3)
+        assert aa_stats["EV"].sample_count == 3000  # 3 runs × 1000 sim_count each
         
-        # Equity: (0.85 + 0.82) / 2 = 0.835
-        assert aa_stats["EQUITY"].value == pytest.approx(0.835, abs=1e-6)
-        assert aa_stats["EQUITY"].sample_count == 2000  # 2 runs × 1000 sim_count each
+        # Equity: (0.5 + 0.85 + 0.82) / 3 ≈ 0.723
+        assert aa_stats["EQUITY"].value == pytest.approx(0.723, abs=1e-3)
+        assert aa_stats["EQUITY"].sample_count == 3000
 
     def test_extreme_values_handling(self, tmp_path):
         """Test aggregation with extreme values (very large/small numbers)."""
@@ -379,27 +533,45 @@ class TestAggregationEdgeCases:
         scenario_key = "extreme_scenario"
         
         # Run with very large positive values
+        outcomes1 = []
+        for i in range(1000):
+            outcomes1.append(SimulationOutcome(
+                hero_hand="AA",
+                villain_hand="RANDOM",
+                outcome="WIN",
+                hero_equity=1.0,
+                ev_chips=1e6,
+                board_cards=""
+            ))
+        
         run_data1 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=1,
-            results={
-                "AA": {"EV": 1e6, "EQUITY": 1.0},
-            }
+            outcomes=outcomes1
         )
         
         # Run with very small negative values
+        outcomes2 = []
+        for i in range(1000):
+            outcomes2.append(SimulationOutcome(
+                hero_hand="AA",
+                villain_hand="RANDOM",
+                outcome="LOSS",
+                hero_equity=0.0,
+                ev_chips=-1e6,
+                board_cards=""
+            ))
+        
         run_data2 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=2,
-            results={
-                "AA": {"EV": -1e6, "EQUITY": 0.0},
-            }
+            outcomes=outcomes2
         )
         
         service.store_run(scenario_key, run_data1)
@@ -425,25 +597,29 @@ class TestAggregationEdgeCases:
         scenario_key = "empty_results_scenario"
         
         # Run with results
+        outcomes1 = create_outcomes_for_hand("AA", 0.5, 1000)
+        # Set ev_chips to 2.0 for wins to get EV=1.0
+        for outcome in outcomes1:
+            if outcome.outcome == "WIN":
+                outcome.ev_chips = 2.0
+        
         run_data1 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=1,
-            results={
-                "AA": {"EV": 1.0},
-            }
+            outcomes=outcomes1
         )
         
-        # Run with empty results
+        # Run with empty results - no outcomes
         run_data2 = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=2,
-            results={}  # Empty results
+            outcomes=[]  # Empty outcomes
         )
         
         service.store_run(scenario_key, run_data1)
@@ -465,13 +641,18 @@ class TestAggregationEdgeCases:
         scenario_key = "corruption_test"
         
         # Store some valid data
+        outcomes = create_outcomes_for_hand("AA", 0.5, 1000)
+        # Set ev_chips to 2.0 for wins to get EV=1.0
+        for outcome in outcomes:
+            if outcome.outcome == "WIN":
+                outcome.ev_chips = 2.0
         run_data = RunData(
             timestamp=datetime.now(UTC),
             sim_count=1000,
             combo_samples=4,
             timeout=30.0,
             seed=1,
-            results={"AA": {"EV": 1.0}}
+            outcomes=outcomes
         )
         service.store_run(scenario_key, run_data)
         

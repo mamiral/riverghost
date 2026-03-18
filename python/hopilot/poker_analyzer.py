@@ -794,3 +794,19 @@ class PokerAnalyzer:
             return PokerkitCard(rank, suit)
         except:
             return None
+
+    def pokerkit_to_card_name(self, card: PokerkitCard) -> str:
+        """
+        Convert pokerkit Card object to card name string.
+        Returns format like 'AS', 'KH', etc.
+        """
+        if card is None:
+            return ""
+        
+        # Extract rank and suit from the card
+        # PokerkitCard has rank and suit attributes
+        rank = card.rank
+        suit = card.suit
+        
+        # Convert back to short format
+        return f"{rank}{suit}"

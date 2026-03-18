@@ -9,7 +9,7 @@ from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
 
 class _FastSolver:
     def evaluate_hand_key(self, *args, **kwargs):
-        return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91}
+        return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91, "individual_outcomes": [{"hero_hand": kwargs.get("hand_key", "AA"), "villain_hand": "RANDOM", "outcome": "WIN", "hero_equity": 0.62, "ev_chips": 0.91, "board_cards": ""}]}
 
 
 class _TimeoutOnFirstSolver:
@@ -21,7 +21,7 @@ class _TimeoutOnFirstSolver:
         hand_key = kwargs.get("hand_key")
         if hand_key == "AA":
             return {"status": "TIMEOUT"}
-        return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91}
+        return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91, "individual_outcomes": [{"hero_hand": hand_key, "villain_hand": "RANDOM", "outcome": "WIN", "hero_equity": 0.62, "ev_chips": 0.91, "board_cards": ""}]}
 
 
 def _build_context(provider: AoFBrowserDataProvider) -> dict:

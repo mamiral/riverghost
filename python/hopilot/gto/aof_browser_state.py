@@ -112,7 +112,7 @@ def build_browser_context(
     if timeout_ms <= 0:
         raise ValueError("timeout_ms must be positive")
 
-    actions = preset_position_actions(selected_position)
+    actions = position_actions if position_actions is not None else preset_position_actions(selected_position)
     active_players = sum(1 for action in actions.values() if action == "ALL_IN")
     selected_action = actions[selected_position]
     effective_mode = "strict-current-action" if strict_current_action else "analysis"

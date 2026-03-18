@@ -27,7 +27,7 @@ try:
         RunModel,
         SimulationOutcomeModel,
     )
-    from hopilot.gto.aof_aggregation_math import aggregate_run_data
+    from hopilot.gto.aof_aggregation_math import aggregate_run_data, calculate_confidence_score
 except Exception:  # pragma: no cover - optional dependency guard for environments not yet provisioned
     create_engine = None
     SQLAlchemyError = Exception
@@ -377,7 +377,7 @@ class AoFScenarioCacheStore:
                         
                         run_data = RunData(
                             timestamp=payload.created_at,
-                            sim_count=len(synthetic_outcomes),  # One "simulation" per hand
+                            sim_count=context.get("runtime", {}).get("num_simulations", len(synthetic_outcomes)),
                             combo_samples=context.get("runtime", {}).get("combo_samples", 4),
                             timeout=context.get("runtime", {}).get("timeout_ms", 900) / 1000.0,
                             seed=context.get("runtime", {}).get("seed", 42),
@@ -430,7 +430,8 @@ class RunData:
     combo_samples: int
     timeout: float
     seed: int
-    outcomes: list[SimulationOutcome]  # Individual simulation outcomes
+    outcomes: list[SimulationOutcome] | None = None
+    results: dict[str, dict[str, float]] | None = None  # For backward compatibility  # Individual simulation outcomes
 
 
 @dataclass
@@ -579,10 +580,17 @@ class AggregationService:
                     self._cache_result(scenario_key, result)
                     return result
 
+                # Get all runs for this scenario to get total sim_count
+                runs = session.query(RunModel).filter(RunModel.scenario_key == scenario_key).all()
+                
                 # Get all simulation outcomes for this scenario
                 outcomes = session.query(SimulationOutcomeModel).join(RunModel).filter(
                     RunModel.scenario_key == scenario_key
                 ).all()
+                
+                # Calculate total sim_count only from runs that have outcomes
+                run_ids_with_outcomes = {outcome.run_id for outcome in outcomes}
+                total_sim_count = sum(run.sim_count for run in runs if run.run_id in run_ids_with_outcomes)
                 
                 self.logger.debug("Found %d simulation outcomes for scenario %s", len(outcomes), scenario_key)
                 
@@ -620,13 +628,18 @@ class AggregationService:
                     statistics[hero_hand] = {
                         'EQUITY': Statistic(
                             value=avg_equity,
-                            sample_count=count,
-                            confidence=confidence
+                            sample_count=total_sim_count,
+                            confidence=calculate_confidence_score(total_sim_count)
+                        ),
+                        'WIN_LOSE_PROBABILITY': Statistic(
+                            value=avg_equity,
+                            sample_count=total_sim_count,
+                            confidence=calculate_confidence_score(total_sim_count)
                         ),
                         'EV': Statistic(
                             value=avg_ev,
-                            sample_count=count,
-                            confidence=confidence
+                            sample_count=total_sim_count,
+                            confidence=calculate_confidence_score(total_sim_count)
                         )
                     }
                 
