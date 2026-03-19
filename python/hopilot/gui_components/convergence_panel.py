@@ -51,8 +51,24 @@ class ConvergencePanel:
         self.convergence_data: List[Dict[str, Any]] = []
         self.position = ""
         self.action = ""
+        self.metric = ""
+        self.last_set_time = 0
+        self.set_call_count = 0
 
-    def set_convergence_data(self, data: List[Dict[str, Any]], position: str, action: str):
+    def set_bounds(self, x: int, y: int, width: int, height: int):
+        """Update panel position and size."""
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        
+        # Recalculate plot area
+        self.plot_x = x + 60
+        self.plot_y = y + 50
+        self.plot_width = width - 80
+        self.plot_height = height - 90
+
+    def set_convergence_data(self, data: List[Dict[str, Any]], position: str, action: str, metric: str = ""):
         """
         Set convergence data to display.
 
@@ -60,32 +76,57 @@ class ConvergencePanel:
             data: List of convergence points with num_simulations, average_equity, timestamp
             position: Player position (for display)
             action: Player action (for display)
+            metric: Metric being displayed (WIN_LOSE_PROBABILITY, EQUITY, EV, EQR)
         """
+        import time
+        self.set_call_count += 1
         self.convergence_data = data.copy()
         self.position = position
         self.action = action
+        self.metric = metric
+        self.last_set_time = time.time()
 
-        logger.debug(f"Set convergence data: {len(data)} points for {position}/{action}")
+        logger.debug(f"Set convergence data: {len(data)} points for {position}/{action} metric={metric}")
 
     def draw(self, screen: pygame.Surface):
         """Draw the convergence panel."""
+        # Render debug info showing panel state
+        if not self.convergence_data:
+            self.draw_no_data_state(screen)
+        else:
+            self.draw_with_data(screen)
+    
+    def draw_no_data_state(self, screen: pygame.Surface):
+        """Render the panel when no convergence data is available."""
         # Background
         pygame.draw.rect(screen, self.bg_color, (self.x, self.y, self.width, self.height), border_radius=6)
         pygame.draw.rect(screen, self.grid_color, (self.x, self.y, self.width, self.height), 1, border_radius=6)
 
         # Title
-        title_text = f"Convergence Analysis - {self.position} {self.action}"
+        metric_str = f" - {self.metric}" if self.metric else ""
+        title_text = f"Convergence Analysis{metric_str} - {self.position} {self.action}"
         title = self.title_font.render(title_text, True, self.title_color)
         title_x = self.x + (self.width - title.get_width()) // 2
         screen.blit(title, (title_x, self.y + 8))
 
-        # Check if we have data
-        if not self.convergence_data:
-            no_data_text = self.label_font.render("No convergence data available", True, self.text_color)
-            text_x = self.x + (self.width - no_data_text.get_width()) // 2
-            text_y = self.y + (self.height - no_data_text.get_height()) // 2
-            screen.blit(no_data_text, (text_x, text_y))
-            return
+        # No data message
+        no_data_text = self.label_font.render("No convergence data available", True, self.text_color)
+        text_x = self.x + (self.width - no_data_text.get_width()) // 2
+        text_y = self.y + (self.height - no_data_text.get_height()) // 2
+        screen.blit(no_data_text, (text_x, text_y))
+    
+    def draw_with_data(self, screen: pygame.Surface):
+        """Render the panel with convergence data."""
+        # Background
+        pygame.draw.rect(screen, self.bg_color, (self.x, self.y, self.width, self.height), border_radius=6)
+        pygame.draw.rect(screen, self.grid_color, (self.x, self.y, self.width, self.height), 1, border_radius=6)
+
+        # Title
+        metric_str = f" - {self.metric}" if self.metric else ""
+        title_text = f"Convergence Analysis{metric_str} - {self.position} {self.action}"
+        title = self.title_font.render(title_text, True, self.title_color)
+        title_x = self.x + (self.width - title.get_width()) // 2
+        screen.blit(title, (title_x, self.y + 8))
 
         # Extract data for plotting
         x_data = [point["num_simulations"] for point in self.convergence_data]
@@ -176,7 +217,9 @@ class ConvergencePanel:
         screen.blit(x_label, (x_label_x, x_label_y))
 
         # Y-axis label (rotated)
-        y_label = self.label_font.render("Average Equity", True, self.text_color)
+        # Y-axis label (rotated) - use metric name or default
+        metric_label = self.metric if self.metric else "Value"
+        y_label = self.label_font.render(metric_label, True, self.text_color)
         # For simplicity, we'll place it horizontally above the plot
         y_label_x = self.x + 10
         y_label_y = self.plot_y - 25

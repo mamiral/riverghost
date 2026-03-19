@@ -645,28 +645,29 @@ def test_precompute_flow_completes_and_resets_properly(app):
 
 
 def test_convergence_plot_shows_mock_data_with_precompute_results(app):
-    """Test that convergence plot displays mock data when precompute results are available."""
+    """Test that convergence plot displays cell-specific data when a cell is selected."""
     # Simulate having some computed results
     app.panel.payload = {
         "cells": [
-            {"status": "AVAILABLE", "value": 0.75},
-            {"status": "AVAILABLE", "value": 0.82},
-            {"status": "AVAILABLE", "value": 0.68},
+            {"row": 0, "col": 0, "hand_key": "AA", "status": "AVAILABLE", "value": 0.75, "metrics": {"EQUITY": 0.75}},
+            {"row": 0, "col": 1, "hand_key": "AKs", "status": "AVAILABLE", "value": 0.82, "metrics": {"EQUITY": 0.82}},
+            {"row": 0, "col": 2, "hand_key": "AQs", "status": "AVAILABLE", "value": 0.68, "metrics": {"EQUITY": 0.68}},
             {"status": "MISSING", "value": None},
-        ] * 43,  # 169 cells total
+        ] * 43,  # 169 cells (approx)
         "context": {},
         "status_message": "Test results"
     }
     
-    # Ensure no cell is selected
-    app.panel.state.clear_selected_cell()
+    # Select a cell - convergence should only show when cell is selected
+    app.panel.state.set_selected_cell(0, 0, "AA")
+    app.panel.selected_cell_detail = app.panel._build_selected_cell_detail_model()
     
     # Load convergence data
     app.panel._load_convergence_data()
     
     # Should have convergence data
     assert len(app.panel.convergence_panel.convergence_data) > 0
-    assert app.panel.convergence_panel.position == app.panel.state.selected_position
+    assert "AA" in app.panel.convergence_panel.position
     
     # Check data structure
     for point in app.panel.convergence_panel.convergence_data:

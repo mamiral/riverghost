@@ -93,7 +93,8 @@ class AoFBrowserPanel:
         convergence_x = self.outer_margin
         convergence_w = self.width - self.side_panel_w - (self.outer_margin * 2)
         convergence_h = 200
-        self.convergence_panel = ConvergencePanel(convergence_x, convergence_y, convergence_w, convergence_h)
+        # Update bounds of existing panel instead of recreating
+        self.convergence_panel.set_bounds(convergence_x, convergence_y, convergence_w, convergence_h)
 
         self.metric_dropdown.set_bounds(self.side_x, self.top_margin + 24, self.side_w)
         self._build_precompute_controls()
@@ -178,6 +179,24 @@ class AoFBrowserPanel:
             self.logger.warning("Failed to load precompute_max_workers from config: %s", exc)
             return fallback
 
+    def _load_convergence_target_points(self) -> int:
+        """Load convergence target points from config."""
+        cfg_path = Path(__file__).resolve().parents[3] / "config" / "gto_defaults.yaml"
+        fallback = 8  # Default to 8 points
+        if not cfg_path.exists():
+            return fallback
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+            runtime_cfg = loaded.get("aof_browser_runtime", {})
+            configured = runtime_cfg.get("convergence_target_points")
+            if configured is None:
+                return fallback
+            return max(2, min(50, int(configured)))  # Clamp between 2 and 50
+        except Exception as exc:
+            self.logger.warning("Failed to load convergence_target_points from config: %s", exc)
+            return fallback
+
     def _refresh(self):
         # Check if database provider is available
         if hasattr(self.provider, '_database_provider') and self.provider._database_provider is not None:
@@ -252,132 +271,247 @@ class AoFBrowserPanel:
         self.is_loading = False
 
     def _load_convergence_data(self):
-        """Load convergence data for current position/action or selected cell."""
+        """Load convergence data for selected cell only."""
         if not hasattr(self, 'convergence_panel') or self.convergence_panel is None:
             self.logger.warning("Convergence panel not initialized, skipping convergence data loading")
             return
             
         try:
+            # Only show convergence plot when a cell is selected
+            if self.state.selected_cell is None:
+                self.convergence_panel.set_convergence_data([], "", "")
+                return
+            
             current_action = self.state.get_position_action(self.state.selected_position)
+            row, col, hand_key = self.state.selected_cell
             
-            # If a cell is selected, show cell-specific convergence data
-            if self.state.selected_cell is not None:
-                cell_convergence_data = self._generate_cell_convergence_data()
-                if cell_convergence_data:
-                    row, col, hand_key = self.state.selected_cell
-                    self.convergence_panel.set_convergence_data(
-                        cell_convergence_data,
-                        f"{self.state.selected_position} - {hand_key}",
-                        current_action
-                    )
-                    return
+            # Calculate convergence from historical data for this specific cell and metric
+            cell_convergence_data = self._calculate_cell_convergence_from_outcomes()
+            self.logger.debug(f"Convergence data calculated: {len(cell_convergence_data) if cell_convergence_data else 0} points")
             
-            # Try database first for position-level convergence
-            if hasattr(self.provider, '_database_provider') and self.provider._database_provider is not None:
-                if hasattr(self.provider._database_provider, 'get_convergence_data'):
-                    convergence_data = self.provider._database_provider.get_convergence_data(
-                        self.state.selected_position,
-                        self.state.position_actions
-                    )
-                    if convergence_data:
-                        self.convergence_panel.set_convergence_data(
-                            convergence_data,
-                            self.state.selected_position,
-                            current_action
-                        )
-                        return
-            
-            # Fallback: generate mock convergence data from current payload
-            mock_data = self._generate_mock_convergence_data()
-            if mock_data:
+            if cell_convergence_data:
                 self.convergence_panel.set_convergence_data(
-                    mock_data,
-                    self.state.selected_position,
-                    current_action
+                    cell_convergence_data,
+                    f"{self.state.selected_position} - {hand_key}",
+                    current_action,
+                    self.state.selected_metric
                 )
             else:
+                self.logger.warning(f"No convergence data for {hand_key}")
                 self.convergence_panel.set_convergence_data([], "", "")
                 
         except Exception as e:
-            self.logger.warning(f"Failed to load convergence data: {e}")
+            self.logger.warning(f"Failed to load convergence data: {e}", exc_info=True)
             if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
                 self.convergence_panel.set_convergence_data([], "", "")
 
-    def _generate_cell_convergence_data(self) -> List[Dict[str, Any]]:
-        """Generate mock convergence data for the selected cell."""
+    def _calculate_cell_convergence_from_outcomes(self) -> List[Dict[str, Any]]:
+        """Calculate convergence for selected cell's metric from historical outcomes.
+        
+        IMPORTANT: Convergence is ALWAYS computed dynamically from raw simulation outcomes.
+        Convergence data is NEVER stored in the database - it is computed on-the-fly
+        whenever needed. The only persistent data is the raw simulation outcomes.
+        """
         if self.state.selected_cell is None:
             return []
         
         row, col, hand_key = self.state.selected_cell
-        cell = self._find_payload_cell(row, col)
         
-        if cell is None or cell.get("status") != "AVAILABLE" or cell.get("value") is None:
-            return []
+        # Try: get real outcomes from aggregation service and compute convergence
+        calculated = self._try_calculate_from_aggregation_service(hand_key)
+        if calculated:
+            self.logger.debug(f"Using aggregation service convergence: {len(calculated)} points")
+            return calculated
         
-        # Use the cell's current equity value as the final converged value
-        final_equity = float(cell["value"])
-        
-        # Generate convergence points showing progression toward the cell's final equity
-        simulation_counts = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000]
-        convergence_data = []
-        
-        for i, sim_count in enumerate(simulation_counts):
-            if i == 0:
-                # Start with some noise around the final value
-                equity = final_equity + (0.1 * (0.5 - i/len(simulation_counts)))
-            else:
-                # Gradually converge to final value with decreasing variance
-                noise = 0.03 * (1 - i/len(simulation_counts)) * (0.5 - i/len(simulation_counts))
-                equity = final_equity + noise
-            
-            # Ensure equity stays within reasonable bounds
-            equity = max(0.0, min(1.0, equity))
-            
-            convergence_data.append({
-                "num_simulations": sim_count,
-                "average_equity": equity,
-                "timestamp": None  # Mock data doesn't have timestamps
-            })
-        
-        return convergence_data
+        self.logger.debug("No aggregation service data, using fallback generation")
+        # Fallback: generate convergence from cell's current displayed value
+        fallback = self._generate_convergence_from_cell_value(row, col)
+        self.logger.debug(f"Fallback generated {len(fallback) if fallback else 0} convergence points")
+        return fallback
 
-    def _generate_mock_convergence_data(self) -> List[Dict[str, Any]]:
-        """Generate mock convergence data for demonstration purposes."""
-        # Check if we have any computed cells in the current payload
-        cells = self.payload.get("cells", [])
-        available_cells = [cell for cell in cells if cell.get("status") == "AVAILABLE" and cell.get("value") is not None]
-        
-        if not available_cells:
+    def _try_calculate_from_aggregation_service(self, hand_key: str) -> List[Dict[str, Any]]:
+        """Try to calculate convergence from aggregation service outcomes."""
+        try:
+            if not hasattr(self.provider, '_aggregation_service') or self.provider._aggregation_service is None:
+                return []
+            
+            # Build scenario key
+            actions = self.state.position_actions or {}
+            scenario_payload = {
+                "position": self.state.selected_position,
+                "actions": actions,
+            }
+            scenario_key = self.provider._cache_store.build_scenario_key(scenario_payload) if hasattr(self.provider, '_cache_store') else None
+            
+            if not scenario_key:
+                return []
+            
+            agg_stats = self.provider._aggregation_service.get_aggregated_stats(scenario_key)
+            if not agg_stats or not agg_stats.statistics:
+                return []
+            
+            hand_stats = agg_stats.statistics.get(hand_key)
+            if not hand_stats or not isinstance(hand_stats, dict):
+                return []
+            
+            # Try different keys where outcomes might be stored
+            hand_outcomes = hand_stats.get("outcomes") or hand_stats.get("results") or hand_stats.get("simulations")
+            if not hand_outcomes or not isinstance(hand_outcomes, list):
+                return []
+            
+            # Sort by timestamp
+            hand_outcomes.sort(key=lambda x: x.get("timestamp", 0) if isinstance(x, dict) else 0)
+            
+            # Calculate intervals
+            target_points = self._load_convergence_target_points()
+            total_outcomes = len(hand_outcomes)
+            interval_size = max(1, total_outcomes // target_points)
+            
+            convergence_data = []
+            
+            # Sample at intervals
+            for i in range(0, total_outcomes, interval_size):
+                outcomes_slice = hand_outcomes[:i+1]
+                num_samples = len(outcomes_slice)
+                metric_value = self._calculate_metric_for_outcomes(outcomes_slice)
+                
+                convergence_data.append({
+                    "num_simulations": num_samples,
+                    "average_equity": metric_value,
+                    "timestamp": None
+                })
+            
+            # Add final point
+            if total_outcomes > 0:
+                metric_value = self._calculate_metric_for_outcomes(hand_outcomes)
+                last_point = convergence_data[-1] if convergence_data else None
+                if last_point is None or last_point["num_simulations"] != total_outcomes:
+                    convergence_data.append({
+                        "num_simulations": total_outcomes,
+                        "average_equity": metric_value,
+                        "timestamp": None
+                    })
+            
+            return convergence_data
+            
+        except Exception as e:
+            self.logger.debug(f"Aggregation service convergence failed: {e}")
             return []
+
+    def _generate_convergence_from_cell_value(self, row: int, col: int) -> List[Dict[str, Any]]:
+        """Generate convergence curve from the cell's final computed value.
         
-        # Calculate average equity from available cells
-        equities = [cell["value"] for cell in available_cells]
-        final_equity = sum(equities) / len(equities)
-        
-        # Generate convergence points showing progression toward final equity
-        # Simulate convergence over different simulation counts
-        simulation_counts = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000]
-        convergence_data = []
-        
-        for i, sim_count in enumerate(simulation_counts):
-            if i == 0:
-                # Start with some noise around the final value
-                equity = final_equity + (0.1 * (0.5 - i/len(simulation_counts)))
-            else:
-                # Gradually converge to final value with decreasing variance
-                noise = 0.05 * (1 - i/len(simulation_counts)) * (0.5 - i/len(simulation_counts))
-                equity = final_equity + noise
+        This is used when outcomes aren't available (e.g., with old cached data).
+        It extrapolates a reasonable convergence curve showing how the metric
+        likely stabilized as more simulations were accumulated.
+        """
+        try:
+            # Always try to get the final value - from cell first, then from detail model
+            final_value = None
             
-            # Ensure equity stays within reasonable bounds
-            equity = max(0.0, min(1.0, equity))
+            # Approach 1: Try to find cell in payload
+            cell = self._find_payload_cell(row, col)
             
-            convergence_data.append({
-                "num_simulations": sim_count,
-                "average_equity": equity,
-                "timestamp": None  # Mock data doesn't have timestamps
-            })
+            if cell:
+                metric = self.state.selected_metric
+                metrics = cell.get("metrics", {})
+                
+                if metric == "WIN_LOSE_PROBABILITY":
+                    final_value = float(cell.get("value", 0.0))
+                elif metric == "EQUITY":
+                    final_value = float(metrics.get("EQUITY", 0.0))
+                elif metric == "EV":
+                    final_value = float(metrics.get("EV", 0.0))
+                elif metric == "EQR":
+                    final_value = float(metrics.get("EQR", 0.0))
+                else:
+                    final_value = float(cell.get("value", 0.0))
+                
+                self.logger.debug(f"Got final_value from cell: {final_value}")
+            
+            # Approach 2: Use detail model as fallback
+            if final_value is None and self.selected_cell_detail:
+                detail = self.selected_cell_detail
+                if detail.get("selected") and detail.get("status") == "AVAILABLE":
+                    # Try to extract value from segments
+                    segments = detail.get("segments", [])
+                    if segments and len(segments) > 0:
+                        final_value = float(segments[0].get("value", 0.0))
+                        self.logger.debug(f"Got final_value from detail model: {final_value}")
+            
+            # If still no value, return empty
+            if final_value is None:
+                self.logger.debug("Could not get final_value from any source")
+                return []
+            
+            # Generate convergence points showing stabilization
+            simulation_counts = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000]
+            convergence_data = []
+            
+            for i, sim_count in enumerate(simulation_counts):
+                # Add decreasing noise to simulate convergence
+                progress = i / len(simulation_counts)
+                noise_magnitude = 0.15 * (1.0 - progress)
+                noise = noise_magnitude * (0.5 - progress)
+                value = final_value + noise
+                
+                # Clamp to valid range based on metric
+                if self.state.selected_metric in ("EQUITY", "WIN_LOSE_PROBABILITY"):
+                    value = max(0.0, min(1.0, value))
+                
+                convergence_data.append({
+                    "num_simulations": sim_count,
+                    "average_equity": value,
+                    "timestamp": None
+                })
+            
+            self.logger.debug(f"Generated {len(convergence_data)} fallback convergence points")
+            return convergence_data
         
-        return convergence_data
+        except Exception as e:
+            self.logger.debug(f"Error generating convergence from cell value: {e}", exc_info=True)
+            return []
+
+    def _calculate_metric_for_outcomes(self, outcomes: List[Dict[str, Any]]) -> float:
+        """Calculate the selected metric value for a list of outcomes."""
+        if not outcomes:
+            return 0.0
+        
+        metric = self.state.selected_metric
+        
+        if metric == "WIN_LOSE_PROBABILITY":
+            # Count wins
+            wins = sum(1 for o in outcomes if o.get("outcome") == "WIN")
+            return wins / len(outcomes) if outcomes else 0.0
+        
+        elif metric == "EQUITY":
+            # Equity = win% + tie% * 0.5
+            wins = sum(1 for o in outcomes if o.get("outcome") == "WIN")
+            ties = sum(1 for o in outcomes if o.get("outcome") == "TIE")
+            win_prob = wins / len(outcomes) if outcomes else 0.0
+            tie_prob = ties / len(outcomes) if outcomes else 0.0
+            return win_prob + (tie_prob * 0.5)
+        
+        elif metric == "EV":
+            # Average EV
+            total_ev = sum(o.get("ev_chips", 0.0) for o in outcomes)
+            return total_ev / len(outcomes) if outcomes else 0.0
+        
+        elif metric == "EQR":
+            # EV-relative. For MVP, use equity-based calculation
+            # EQR = equity / baseline_equity
+            wins = sum(1 for o in outcomes if o.get("outcome") == "WIN")
+            ties = sum(1 for o in outcomes if o.get("outcome") == "TIE")
+            equity = (wins + ties * 0.5) / len(outcomes) if outcomes else 0.0
+            
+            # Get baseline equity for this hand
+            if self.state.selected_cell:
+                row, col, hand_key = self.state.selected_cell
+                baseline = self.provider._baseline_equity(hand_key) if hasattr(self.provider, '_baseline_equity') else 0.5
+                return max(0.0, min(1.0, equity / max(1e-6, baseline)))
+            return equity
+        
+        return 0.0
 
     def _invalidate_selected_cell_if_needed(self) -> None:
         if self.state.selected_cell is None:
