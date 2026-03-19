@@ -37,12 +37,12 @@ class AoFSolverAdapter:
         timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         """Evaluate a shorthand hand by simulating sampled concrete combos."""
-        timeout_limit = (timeout_ms or self.runtime.timeout_ms) / 1000.0
+        # DISABLED: Timeout enforcement is disabled. Monte Carlo simulations need to run to completion.
+        # Setting timeout_limit to infinity allows all evaluations to complete without interruption.
+        timeout_limit = float('inf')
         start = time.perf_counter()
         if not hand_key:
             return {"status": "MISSING", "reason": "NO_HAND_KEY", "value": None}
-        if timeout_limit <= 0:
-            return {"status": "TIMEOUT", "reason": "INVALID_TIMEOUT", "value": None}
 
         combos = self._expand_hand_key_to_combos(hand_key)
         if not combos:
@@ -56,14 +56,7 @@ class AoFSolverAdapter:
         combo_results: list[dict[str, Any]] = []
         all_individual_outcomes: list[dict[str, Any]] = []
         for idx, combo in enumerate(combos):
-            if time.perf_counter() - start > timeout_limit:
-                return {
-                    "status": "TIMEOUT",
-                    "reason": "TIME_BUDGET_EXCEEDED",
-                    "value": None,
-                    "combo_results": combo_results,
-                    "individual_outcomes": all_individual_outcomes,
-                }
+            # DISABLED: Timeout check removed - simulations run to completion
             score = self._evaluate_combo(
                 hand_key=hand_key,
                 combo=combo,

@@ -54,9 +54,9 @@ class AoFBrowserPanel:
         self.middle_panel_w = detail_width
         self.action_selector = AoFActionSelector(self.outer_margin, self.top_margin + 28, width=matrix_region_width)
         self.metric_dropdown = AoFMetricDropdown(self.side_x, self.top_margin + 24, width=self.side_w)
-        self.matrix = AoFHandMatrixPanel(self.outer_margin, self.top_margin + self.control_h + 10)
-        self.cell_detail_panel = AoFCellDetailPanel(self.outer_margin, self.top_margin + self.control_h + 10, self.middle_panel_w, 220)
-        self.convergence_panel = ConvergencePanel(self.outer_margin, self.top_margin + self.control_h + 10, 400, 200)
+        self.matrix = AoFHandMatrixPanel(self.outer_margin, self.top_margin + 80)
+        self.cell_detail_panel = AoFCellDetailPanel(self.outer_margin, self.top_margin + 80, self.middle_panel_w, 220)
+        self.convergence_panel = ConvergencePanel(self.outer_margin, self.top_margin + 80, 400, 200)
         self._reflow_layout()
         self._build_precompute_controls()
 
@@ -80,7 +80,7 @@ class AoFBrowserPanel:
         self.side_x = self.width - self.side_panel_w + self.outer_margin
         self.side_w = self.side_panel_w - (self.outer_margin * 2)
         matrix_x = self.outer_margin
-        matrix_y = self.top_margin + self.control_h + 10
+        matrix_y = self.top_margin + 150  # Reduced spacing for action selector + controls
         matrix_w, detail_w = self._compute_column_widths(self.width)
         self.middle_panel_w = detail_w
         matrix_h = self.height - matrix_y - self.outer_margin - 220  # Leave space for convergence panel
@@ -1081,8 +1081,8 @@ class AoFBrowserPanel:
 
         if self.state.status_message:
             msg = self.font.render(self.state.status_message, True, (255, 205, 100))
-            status_y = self.top_margin + self.control_h - 8
-            screen.blit(msg, msg.get_rect(center=(self.width // 2, status_y)))
+            status_y = self.matrix.y - 25
+            screen.blit(msg, (self.matrix.x, status_y))
 
         # Show loading indicator when database is loading
         if self.is_loading:

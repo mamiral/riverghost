@@ -281,11 +281,15 @@ class AoFPrecomputeRunner:
                 total_sims = len(individual_outcomes)
 
                 win_prob = wins / total_sims if total_sims > 0 else 0.0
+                tie_prob = ties / total_sims if total_sims > 0 else 0.0
+                loss_prob = 1.0 - win_prob - tie_prob
                 equity = win_prob + (ties / total_sims * 0.5) if total_sims > 0 else 0.0
                 ev = sum(outcome['ev_chips'] for outcome in individual_outcomes) / total_sims if total_sims > 0 else 0.0
 
                 metrics = {
                     "WIN_LOSE_PROBABILITY": round(win_prob, 4),
+                    "TIE_PROBABILITY": round(tie_prob, 4),
+                    "LOSS_PROBABILITY": round(loss_prob, 4),
                     "EQUITY": round(equity, 4),
                     "EV": round(ev, 4),
                     "EQR": round(max(0.0, min(1.0, equity / max(1e-6, self.provider._baseline_equity(hand_key)))), 4),
@@ -296,6 +300,8 @@ class AoFPrecomputeRunner:
             elif solved_status == "TIMEOUT":
                 metrics = {
                     "WIN_LOSE_PROBABILITY": None,
+                    "TIE_PROBABILITY": None,
+                    "LOSS_PROBABILITY": None,
                     "EQUITY": None,
                     "EV": None,
                     "EQR": None,
@@ -307,6 +313,8 @@ class AoFPrecomputeRunner:
             else:
                 metrics = {
                     "WIN_LOSE_PROBABILITY": None,
+                    "TIE_PROBABILITY": None,
+                    "LOSS_PROBABILITY": None,
                     "EQUITY": None,
                     "EV": None,
                     "EQR": None,
@@ -319,6 +327,8 @@ class AoFPrecomputeRunner:
         except Exception as exc:  # pragma: no cover - defensive execution path
             metrics = {
                 "WIN_LOSE_PROBABILITY": None,
+                "TIE_PROBABILITY": None,
+                "LOSS_PROBABILITY": None,
                 "EQUITY": None,
                 "EV": None,
                 "EQR": None,
