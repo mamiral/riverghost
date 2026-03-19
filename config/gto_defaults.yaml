@@ -18,6 +18,7 @@ aof_browser_runtime:
   timeout_ms: 900
   seed: 42
   precompute_max_workers: 3
+  convergence_target_points: 8
 
 aof_browser_cache:
   enabled: true
