@@ -137,12 +137,12 @@ class ConvergencePanel:
             x_min, x_max = min(x_data), max(x_data)
             y_min, y_max = min(y_data), max(y_data)
 
-            # Add some padding
-            x_padding = max(1, (x_max - x_min) * 0.05)
-            y_padding = max(0.001, (y_max - y_min) * 0.05)
+            # Add padding only on the left and bottom, not on the right/top
+            # This allows X-axis to clearly show the max sample count
+            x_padding = max(1, (x_max - x_min) * 0.05) if x_max > x_min else 1
+            y_padding = max(0.001, (y_max - y_min) * 0.05) if y_max > y_min else 0.001
 
             x_min = max(0, x_min - x_padding)
-            x_max += x_padding
             y_min = max(0, y_min - y_padding)
             y_max += y_padding
 

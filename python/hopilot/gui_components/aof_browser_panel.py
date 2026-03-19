@@ -398,6 +398,48 @@ class AoFBrowserPanel:
             self.logger.debug(f"Aggregation service convergence failed: {e}")
             return []
 
+    def _get_actual_outcome_count(self, row: int, col: int) -> int:
+        """Get the actual number of simulation outcomes stored in database for this cell."""
+        try:
+            if not hasattr(self.provider, '_aggregation_service') or self.provider._aggregation_service is None:
+                return 0
+            
+            # Get the hand key for this cell
+            hand_key = self._get_cell_hand_key(row, col)
+            if not hand_key:
+                return 0
+            
+            # Build scenario key
+            actions = self.state.position_actions or {}
+            scenario_payload = {
+                "position": self.state.selected_position,
+                "actions": actions,
+            }
+            scenario_key = self.provider._cache_store.build_scenario_key(scenario_payload) if hasattr(self.provider, '_cache_store') else None
+            
+            if not scenario_key:
+                return 0
+            
+            # Get aggregated stats
+            agg_stats = self.provider._aggregation_service.get_aggregated_stats(scenario_key)
+            if not agg_stats or not agg_stats.statistics:
+                return 0
+            
+            hand_stats = agg_stats.statistics.get(hand_key)
+            if not hand_stats or not isinstance(hand_stats, dict):
+                return 0
+            
+            # Try to get outcomes count
+            hand_outcomes = hand_stats.get("outcomes") or hand_stats.get("results") or hand_stats.get("simulations")
+            if hand_outcomes and isinstance(hand_outcomes, list):
+                return len(hand_outcomes)
+            
+            return 0
+            
+        except Exception as e:
+            self.logger.debug(f"Error getting actual outcome count: {e}")
+            return 0
+
     def _generate_convergence_from_cell_value(self, row: int, col: int) -> List[Dict[str, Any]]:
         """Generate convergence curve from the cell's final computed value.
         
@@ -408,6 +450,10 @@ class AoFBrowserPanel:
         try:
             # Always try to get the final value - from cell first, then from detail model
             final_value = None
+            # Get actual sample count from database for this cell
+            sample_count = self._get_actual_outcome_count(row, col)
+            if sample_count <= 0:
+                sample_count = 1000  # fallback to configured default if no data
             
             # Approach 1: Try to find cell in payload
             cell = self._find_payload_cell(row, col)
@@ -429,7 +475,7 @@ class AoFBrowserPanel:
                 
                 self.logger.debug(f"Got final_value from cell: {final_value}")
             
-            # Approach 2: Use detail model as fallback
+            # Approach 2: Use detail model as fallback and get sample count
             if final_value is None and self.selected_cell_detail:
                 detail = self.selected_cell_detail
                 if detail.get("selected") and detail.get("status") == "AVAILABLE":
@@ -438,19 +484,35 @@ class AoFBrowserPanel:
                     if segments and len(segments) > 0:
                         final_value = float(segments[0].get("value", 0.0))
                         self.logger.debug(f"Got final_value from detail model: {final_value}")
+                    # Get sample count from detail model
+                    if detail.get("sample_count"):
+                        sample_count = int(detail["sample_count"])
             
             # If still no value, return empty
             if final_value is None:
                 self.logger.debug("Could not get final_value from any source")
                 return []
             
-            # Generate convergence points showing stabilization
-            simulation_counts = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000]
+            # Generate convergence points showing stabilization up to actual sample count
+            # Use logarithmic spacing to show early convergence behavior better
+            target_points = self._load_convergence_target_points()
+            simulation_counts = []
+            
+            # Generate log-spaced points from 100 to sample_count
+            import math
+            for i in range(target_points):
+                ratio = i / max(1, target_points - 1)
+                # Log-space interpolation: start small, end at sample_count
+                sim_count = int(100 * (sample_count / 100) ** ratio)
+                sim_count = max(100, min(sample_count, sim_count))
+                if not simulation_counts or sim_count != simulation_counts[-1]:
+                    simulation_counts.append(sim_count)
+            
             convergence_data = []
             
             for i, sim_count in enumerate(simulation_counts):
                 # Add decreasing noise to simulate convergence
-                progress = i / len(simulation_counts)
+                progress = i / max(1, len(simulation_counts) - 1) if len(simulation_counts) > 1 else 0
                 noise_magnitude = 0.15 * (1.0 - progress)
                 noise = noise_magnitude * (0.5 - progress)
                 value = final_value + noise
@@ -465,7 +527,7 @@ class AoFBrowserPanel:
                     "timestamp": None
                 })
             
-            self.logger.debug(f"Generated {len(convergence_data)} fallback convergence points")
+            self.logger.debug(f"Generated {len(convergence_data)} fallback convergence points up to {sample_count} simulations")
             return convergence_data
         
         except Exception as e:
