@@ -13,7 +13,7 @@ bonus_payouts:
   one_pair: 1
 
 aof_browser_runtime:
-  num_simulations: 120
+  num_simulations: 1000
   combo_samples: 4
   timeout_ms: 900
   seed: 42

@@ -62,5 +62,5 @@ def test_stop_transition_acknowledged_within_one_second(tmp_path):
     runner.stop_gui_session(session)
     elapsed = time.perf_counter() - start
 
-    assert session.run_state == GuiRunState.PAUSED
+    assert session.run_state == GuiRunState.COMPLETED
     assert elapsed <= 1.0

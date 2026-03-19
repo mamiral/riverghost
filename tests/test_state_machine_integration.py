@@ -27,12 +27,12 @@ def test_panel_attachment_syncs_restored_session_state():
     panel.logger = Mock()
     panel.precompute_session = SimpleNamespace(run_state=GuiRunState.PAUSED)
     panel.precompute_max_workers = 3
-    panel.precompute_simulations_per_cell = 120
+    panel.precompute_simulations_per_cell = 1000
     panel.state_machine_controller = None
 
     controller = StateMachineController(
         panel=None,
-        config=PrecomputeConfig(max_workers=3, simulations_per_cell=120),
+        config=PrecomputeConfig(max_workers=3, simulations_per_cell=1000),
     )
 
     AoFBrowserPanel.set_state_machine_controller(panel, controller)
@@ -41,7 +41,7 @@ def test_panel_attachment_syncs_restored_session_state():
     assert controller.panel is panel
     assert controller.get_current_state() == SimulationState.PAUSED
     assert panel.precompute_max_workers == 3
-    assert panel.precompute_simulations_per_cell == 120
+    assert panel.precompute_simulations_per_cell == 1000
 
 
 @pytest.mark.parametrize(
@@ -73,7 +73,7 @@ def test_panel_routes_button_events_to_state_machine(button_name, expected_event
 
 
 def test_gui_application_initializes_controller_and_uses_60_fps_cap():
-    config = PrecomputeConfig(max_workers=3, simulations_per_cell=120)
+    config = PrecomputeConfig(max_workers=3, simulations_per_cell=1000)
 
     with patch("pygame.init"), \
          patch("pygame.display.set_mode"), \

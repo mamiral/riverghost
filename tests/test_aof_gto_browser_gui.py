@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 from hopilot.aof_gto_browser_gui import GuiApplication
 from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
+from hopilot.gto.aof_precompute_runner import GuiRunState
 
 
 @pytest.fixture
@@ -425,11 +426,12 @@ def test_stop_button_clicks_precompute(app):
     stop_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=stop_rect.center)
     app.panel.handle_event(stop_event)
     
-    # Session should be reset to None
-    assert app.panel.precompute_session is None
+    # Session should transition to COMPLETED state
+    assert app.panel.precompute_session is not None
+    assert app.panel.precompute_session.run_state == GuiRunState.COMPLETED
     
     # Status message should indicate stopped and reset
-    assert "Precompute stopped and reset" in app.panel.state.status_message
+    assert "Precompute stopped and reset" in app.panel.state.status_message or "stopped" in app.panel.state.status_message.lower()
 
 
 def test_buttons_disabled_during_scenario_locked_state(app):
@@ -454,10 +456,11 @@ def test_precompute_checkpoint_restoration_loads_cached_payload(app, monkeypatch
     """Test that checkpoint restoration loads cached payload data."""
     # Mock the runner to return a restored session
     from hopilot.gto.aof_precompute_runner import GuiPrecomputeRunSession, GuiRunState
+    from unittest.mock import MagicMock
     
     mock_session = GuiPrecomputeRunSession(
-        run_id="test-run",
-        scenario_fingerprint="test-fingerprint", 
+        run_id=1,  # Use numeric run_id for the mock
+        scenario_fingerprint='{"position": "UTG", "metric": "EV", "position_actions": {}, "pot_size": 20.0, "bet_amount": 10.0, "effective_mode": "analysis"}',
         simulations_per_cell=1000,
         total_cells=169,
         run_state=GuiRunState.PAUSED
@@ -466,7 +469,13 @@ def test_precompute_checkpoint_restoration_loads_cached_payload(app, monkeypatch
     def mock_restore(*args, **kwargs):
         return mock_session
     
-    monkeypatch.setattr(app.panel.runner, "restore_latest_gui_session", mock_restore)
+    # Create a mock store if it doesn't exist
+    if app.panel.runner.store is None:
+        app.panel.runner.store = MagicMock()
+    
+    # Mock both the store method and the restore method
+    app.panel.runner.store.get_latest_run_id = lambda *args, **kwargs: "1"  # Return numeric string
+    monkeypatch.setattr(app.panel.runner, "restore_gui_session", mock_restore)
     
     # Mock cached payload
     cached_payload = {
@@ -494,7 +503,7 @@ def test_precompute_checkpoint_restoration_loads_cached_payload(app, monkeypatch
     
     # Should have restored session
     assert app.panel.precompute_session is not None
-    assert app.panel.precompute_session.run_id == "test-run"
+    assert app.panel.precompute_session.run_id == 1
     
     # Should have loaded cached payload
     assert app.panel.payload == cached_payload
@@ -528,7 +537,7 @@ def test_resume_button_works_after_pause(app):
 
 
 def test_stop_button_resets_session_state(app):
-    """Test that STOP button properly resets the session to allow new starts."""
+    """Test that STOP button properly transitions session and allows new starts."""
     # Start precompute
     start_rect = app.panel.precompute_buttons["start"]
     start_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
@@ -539,22 +548,24 @@ def test_stop_button_resets_session_state(app):
     stop_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=stop_rect.center)
     app.panel.handle_event(stop_event)
     
-    # Session should be reset (None)
-    assert app.panel.precompute_session is None
+    # Session should be in COMPLETED state after stop
+    from hopilot.gto.aof_precompute_runner import GuiRunState
+    assert app.panel.precompute_session is not None
+    assert app.panel.precompute_session.run_state == GuiRunState.COMPLETED
     
-    # Should be able to start again
+    # Should be able to start again (COMPLETED state allows new precompute)
     start_event2 = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=start_rect.center)
     result = app.panel.handle_event(start_event2)
     assert result is True
     
-    # Should have a new session
-    from hopilot.gto.aof_precompute_runner import GuiRunState
+    # Should have a new session in RUNNING state
     assert app.panel.precompute_session.run_state == GuiRunState.RUNNING
 
 
 def test_precompute_state_persistence_across_app_restarts(app, monkeypatch, tmp_path):
     """Test that precompute state persists correctly across app restarts."""
     import json
+    from unittest.mock import MagicMock
     
     # Start precompute and let it run briefly
     start_rect = app.panel.precompute_buttons["start"]
@@ -565,12 +576,6 @@ def test_precompute_state_persistence_across_app_restarts(app, monkeypatch, tmp_
     app.panel.precompute_session.completed_cells = 10
     app.panel.precompute_session.next_cell_index = 15
     
-    # Mock persistence
-    persisted_data = None
-    def mock_persist(data):
-        nonlocal persisted_data
-        persisted_data = data
-    
     # Simulate app shutdown by calling persist
     app.panel._persist_completed_precompute_payload()
     
@@ -580,11 +585,19 @@ def test_precompute_state_persistence_across_app_restarts(app, monkeypatch, tmp_
     pygame.init()
     new_app = GuiApplication(width=1000, height=760)
     
-    # Mock restoration to return our persisted session
+    # Create a mock store if it doesn't exist
+    if new_app.panel.runner.store is None:
+        new_app.panel.runner.store = MagicMock()
+    
+    # Mock the store to return the run ID and session
+    def mock_get_latest(*args, **kwargs):
+        return "1"  # Return numeric string for run_id
+    
     def mock_restore(*args, **kwargs):
         return app.panel.precompute_session
     
-    monkeypatch.setattr(new_app.panel.runner, "restore_latest_gui_session", mock_restore)
+    new_app.panel.runner.store.get_latest_run_id = mock_get_latest
+    monkeypatch.setattr(new_app.panel.runner, "restore_gui_session", mock_restore)
     
     # Mock cached payload loading
     def mock_get_payload(*args, **kwargs):

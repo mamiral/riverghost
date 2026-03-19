@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.gto.gto_optimizer import GTOOptimizer
 from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
-from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner
+from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
 from hopilot.aof_gto_browser_gui import GuiApplication
 
 
@@ -805,8 +805,9 @@ class TestAoFBrowserIntegration:
         stop_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=aof_app.panel.precompute_buttons["stop"].center)
         assert aof_app.panel.handle_event(stop_event)
         
-        # Stop should reset session state for a clean next run.
-        assert aof_app.panel.precompute_session is None
+        # Stop should transition to COMPLETED state
+        assert aof_app.panel.precompute_session is not None
+        assert aof_app.panel.precompute_session.run_state.value == "COMPLETED"
         # This tests that aggregation storage integration doesn't break precompute functionality
 
     def test_p95_latency_under_1s_for_200_switches(self):

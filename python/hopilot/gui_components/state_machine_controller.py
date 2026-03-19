@@ -610,6 +610,16 @@ class StateMachineController:
             
             self.logger.info("Shutdown initiated successfully")
             
+            # Transition to COMPLETED state now that shutdown is done
+            # This allows the next START to work properly (START requires not in STOPPING)
+            try:
+                self.complete_simulation(event)
+            except Exception as complete_error:
+                self.logger.warning(
+                    f"Could not complete simulation transition: {complete_error}. "
+                    "State may remain in STOPPING; user may need to reset."
+                )
+            
         except Exception as e:
             self.logger.error(
                 f"Error during shutdown (transition already in STOPPING)",
@@ -645,6 +655,12 @@ class StateMachineController:
             if self.panel and hasattr(self.panel, 'precompute_session'):
                 session = self.panel.precompute_session
                 if session:
+                    # If session is already in COMPLETED state, allow transition
+                    # (this happens when stop_precompute() directly transitions the session)
+                    from hopilot.gto.aof_precompute_runner import GuiRunState
+                    if session.run_state == GuiRunState.COMPLETED:
+                        return True
+                    
                     # Check if all cells are completed or failed
                     total_cells = getattr(session, 'total_cells', 0)
                     completed_cells = getattr(session, 'completed_cells', 0)
