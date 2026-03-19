@@ -67,6 +67,7 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m hopilot.aof_gto_
 - SQLite database with normalized relational schema (9 tables: Simulations, HandMatrices, MatrixCells, GameStates, Players, Bets, BoardCards, Jackpots, AggregatedMetrics) (001-db-schema-browser-integration)
 - [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION] + [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION] (001-gui-state-refactor)
 - [if applicable, e.g., PostgreSQL, CoreData, files or N/A] (001-gui-state-refactor)
+- Python 3.x (confirmed: virtual environment with .venv, requirements.txt dependencies) (003-state-machine-completion)
 
 ## Operational Notes
 - Keep standalone AoF browser decoupled from simulator flow.

@@ -52,7 +52,7 @@ def test_stop_persists_checkpoint_and_restart_restores_session(tmp_path):
     restored = runner.restore_gui_session(run_id=int(session.run_id or 0), scenario_fingerprint=fingerprint)
     assert restored is not None
     assert restored.next_cell_index >= 7
-    assert restored.run_state == GuiRunState.PAUSED
+    assert restored.run_state == GuiRunState.COMPLETED
 
 
 def test_resume_blocked_on_scenario_fingerprint_mismatch(tmp_path):

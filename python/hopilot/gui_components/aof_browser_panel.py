@@ -511,12 +511,35 @@ class AoFBrowserPanel:
         return model
 
     def _restore_precompute_checkpoint_if_available(self) -> None:
-        context = self._build_current_context()
-        fingerprint = self.runner.build_scenario_fingerprint(context)
-        restored = self.runner.restore_latest_gui_session(scenario_fingerprint=fingerprint)
+        # Try to restore without requiring current scenario to match
+        if self.runner.store is None:
+            return
+        latest_run_id = self.runner.store.get_latest_run_id(statuses=(GuiRunState.RUNNING.value, GuiRunState.PAUSED.value))
+        if latest_run_id is None:
+            return
+        
+        restored = self.runner.restore_gui_session(run_id=int(latest_run_id), scenario_fingerprint="")
         if restored is None:
             return
-        self.precompute_context = context
+        
+        # Parse the stored fingerprint to restore scenario context
+        import json
+        try:
+            context_data = json.loads(restored.scenario_fingerprint)
+            if context_data and context_data.get("position"):
+                # Apply the saved scenario to the UI
+                self.state.set_position(context_data["position"])
+                if context_data.get("metric"):
+                    self.state.set_metric(context_data["metric"])
+                if context_data.get("position_actions"):
+                    for pos, action in context_data["position_actions"].items():
+                        self.state.set_position_action(pos, action)
+        except (json.JSONDecodeError, KeyError):
+            self.logger.warning("Failed to parse scenario fingerprint during restoration")
+        
+        # Now set the precompute session with the restored scenario
+        precompute_context = self._build_current_context()
+        self.precompute_context = precompute_context
         self.precompute_session = restored
         
         # Try to load cached payload for the restored session
@@ -767,9 +790,7 @@ class AoFBrowserPanel:
                     return True
             if self.precompute_buttons.get("pause") and self.precompute_buttons["pause"].collidepoint(event.pos):
                 if self.precompute_session and self.precompute_session.run_state == GuiRunState.RUNNING:
-                    self.runner.pause_gui_session(self.precompute_session)
-                    self._cancel_pending_precompute_futures()
-                    self.state.status_message = "Precompute paused"
+                    self.pause_precompute()
                     return True
             if self.precompute_buttons.get("resume") and self.precompute_buttons["resume"].collidepoint(event.pos):
                 if self.precompute_session and self.precompute_session.run_state == GuiRunState.PAUSED:
@@ -781,19 +802,17 @@ class AoFBrowserPanel:
                     return True
             if self.precompute_buttons.get("stop") and self.precompute_buttons["stop"].collidepoint(event.pos):
                 if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
-                    if self.precompute_session.run_state == GuiRunState.RUNNING:
-                        self.runner.stop_gui_session(self.precompute_session)
-                    self._cancel_pending_precompute_futures()
-                    # Reset session to allow fresh start
+                    self.stop_precompute()
+                    # For direct button clicks (not via state machine), clear session to allow fresh start
                     self.precompute_session = None
                     self.precompute_context = None
                     self.state.status_message = "Precompute stopped and reset"
                     return True
 
-        if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.STOPPING):
-            # Guard scenario-defining controls while precompute is active.
+        if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.STOPPING, GuiRunState.PAUSED):
+            # Guard scenario-defining controls while precompute is active or paused.
             if event.type == pygame.MOUSEBUTTONDOWN:
-                self.state.status_message = "Scenario controls are locked while precompute is running"
+                self.state.status_message = "Scenario locked: pending precompute. Resume, stop, or wait for completion."
                 return False
 
         position_action = self.action_selector.handle_event(event)
@@ -877,6 +896,8 @@ class AoFBrowserPanel:
             if self.precompute_session and self.precompute_session.run_state == GuiRunState.RUNNING:
                 self.runner.pause_gui_session(self.precompute_session)
                 self._cancel_pending_precompute_futures()
+                # Persist results computed so far when pausing (prevent data loss on exit)
+                self._persist_completed_precompute_payload()
                 self.state.status_message = "Precompute paused"
                 return True
             return False
@@ -905,7 +926,11 @@ class AoFBrowserPanel:
             return False
 
     def stop_precompute(self) -> bool:
-        """Stop precompute operation and reset session.
+        """Stop precompute operation and transition to stopped state.
+
+        Does NOT immediately clear the session - that's handled by the state 
+        machine's clear_session_data() callback on reset. This allows the state
+        machine to check all_work_done() before clearing the session.
 
         Returns:
             True if stopped successfully
@@ -915,10 +940,14 @@ class AoFBrowserPanel:
                 if self.precompute_session.run_state == GuiRunState.RUNNING:
                     self.runner.stop_gui_session(self.precompute_session)
                 self._cancel_pending_precompute_futures()
-                # Reset session to allow fresh start
-                self.precompute_session = None
-                self.precompute_context = None
-                self.state.status_message = "Precompute stopped and reset"
+                # Mark as COMPLETED so all_work_done() returns True for state machine transition
+                if self.precompute_session.run_state != GuiRunState.COMPLETED:
+                    self.runner.transition_session_state(self.precompute_session, GuiRunState.COMPLETED)
+                # Persist results computed so far when stopping (prevent data loss on exit)
+                self._persist_completed_precompute_payload()
+                # DO NOT clear session here - state machine's all_work_done() checks session state
+                # Session will be cleared by clear_session_data() callback on COMPLETED->IDLE transition
+                self.state.status_message = "Precompute stopped"
                 return True
             return False
         except Exception as e:

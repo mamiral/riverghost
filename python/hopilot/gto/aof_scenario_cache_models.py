@@ -80,6 +80,7 @@ class OfflinePrecomputeRunModel(Base):
 
     run_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+    scenario_fingerprint: Mapped[str | None] = mapped_column(String(256), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     total_scenarios: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

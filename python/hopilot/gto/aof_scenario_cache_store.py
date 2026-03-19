@@ -196,10 +196,11 @@ class AoFScenarioCacheStore:
 
         return self._with_lock_retry(_op, operation="upsert_payload")
 
-    def begin_run(self, total_scenarios: int) -> int:
+    def begin_run(self, total_scenarios: int, scenario_fingerprint: str | None = None) -> int:
         with self._session_factory() as session:
             run = OfflinePrecomputeRunModel(
                 status="RUNNING",
+                scenario_fingerprint=scenario_fingerprint,
                 total_scenarios=int(total_scenarios),
                 completed_scenarios=0,
                 failed_scenarios=0,
@@ -263,6 +264,7 @@ class AoFScenarioCacheStore:
                 "completed_cells": int(run.completed_scenarios or 0),
                 "failed_cells": int(run.failed_scenarios or 0),
                 "status": str(run.status),
+                "scenario_fingerprint": str(run.scenario_fingerprint or ""),
             }
 
     def finalize_run(self, run_id: int, status: str) -> None:

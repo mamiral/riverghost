@@ -37,8 +37,8 @@ class GuiRunState(str, Enum):
 _GUI_TRANSITIONS: dict[GuiRunState, set[GuiRunState]] = {
     GuiRunState.IDLE: {GuiRunState.RUNNING},
     GuiRunState.RUNNING: {GuiRunState.PAUSED, GuiRunState.STOPPING, GuiRunState.COMPLETED, GuiRunState.FAILED},
-    GuiRunState.PAUSED: {GuiRunState.RUNNING, GuiRunState.IDLE, GuiRunState.COMPLETED, GuiRunState.FAILED},
-    GuiRunState.STOPPING: {GuiRunState.PAUSED, GuiRunState.COMPLETED, GuiRunState.FAILED},
+    GuiRunState.PAUSED: {GuiRunState.RUNNING, GuiRunState.IDLE, GuiRunState.STOPPING, GuiRunState.COMPLETED, GuiRunState.FAILED},
+    GuiRunState.STOPPING: {GuiRunState.COMPLETED, GuiRunState.FAILED},
     GuiRunState.COMPLETED: {GuiRunState.IDLE, GuiRunState.RUNNING},
     GuiRunState.FAILED: {GuiRunState.IDLE, GuiRunState.RUNNING},
 }
@@ -122,7 +122,7 @@ class AoFPrecomputeRunner:
         if self.store is None:
             return session
         if session.run_id is None:
-            session.run_id = int(self.store.begin_run(total_scenarios=session.total_cells))
+            session.run_id = int(self.store.begin_run(total_scenarios=session.total_cells, scenario_fingerprint=session.scenario_fingerprint))
         self.store.persist_gui_checkpoint(
             session.run_id,
             resume_cursor=session.next_cell_index,
@@ -141,9 +141,11 @@ class AoFPrecomputeRunner:
     def stop_gui_session(self, session: GuiPrecomputeRunSession) -> GuiPrecomputeRunSession:
         if session.run_state == GuiRunState.RUNNING:
             self.transition_session_state(session, GuiRunState.STOPPING)
-            self.transition_session_state(session, GuiRunState.PAUSED)
+            self.transition_session_state(session, GuiRunState.COMPLETED)
             self._persist_gui_session_checkpoint(session)
         elif session.run_state == GuiRunState.PAUSED:
+            self.transition_session_state(session, GuiRunState.STOPPING)
+            self.transition_session_state(session, GuiRunState.COMPLETED)
             self._persist_gui_session_checkpoint(session)
         return session
 
@@ -171,9 +173,11 @@ class AoFPrecomputeRunner:
         run = self.store.get_run(run_id)
         if run is None:
             return None
+        # Use the stored fingerprint if available, otherwise use the provided one
+        stored_fingerprint = checkpoint.get("scenario_fingerprint") or scenario_fingerprint
         session = GuiPrecomputeRunSession(
             run_id=int(run_id),
-            scenario_fingerprint=scenario_fingerprint,
+            scenario_fingerprint=stored_fingerprint,
             run_state=GuiRunState(str(checkpoint["status"])),
             simulations_per_cell=1000,
             total_cells=169,
@@ -182,6 +186,14 @@ class AoFPrecomputeRunner:
             next_cell_index=int(checkpoint["resume_cursor"]),
         )
         session.validate()
+        
+        # CRITICAL FIX: On restore from PAUSED state, reset next_cell_index to actual completed work
+        # This prevents skipping cells that were dispatched but didn't complete before app exit
+        # next_cell_index is the dispatch cursor, but incomplete futures are lost on app exit
+        # So we resume from completed_cells + failed_cells (the actual checkpoint)
+        if session.run_state == GuiRunState.PAUSED:
+            session.next_cell_index = session.completed_cells + session.failed_cells
+        
         self._log_gui_lifecycle_event(
             event="gui_precompute_checkpoint_restored",
             run_id=session.run_id,
