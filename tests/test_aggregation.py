@@ -3,15 +3,19 @@ import sys
 import pytest
 from datetime import datetime, UTC
 
+# Phase 4: Aggregation math modules removed as part of cache infrastructure cleanup
+# These tests are preserved for reference but cannot run without the deleted modules
+pytest.skip("Aggregation math removed in Phase 4", allow_module_level=True)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.aof_aggregation_math import (
-    weighted_average,
-    calculate_confidence_score,
-    aggregate_run_data,
-    merge_degraded_statuses,
-)
-from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData, AggregatedResults, Statistic, SimulationOutcome
+# from hopilot.gto.aof_aggregation_math import (
+#     weighted_average,
+#     calculate_confidence_score,
+#     aggregate_run_data,
+#     merge_degraded_statuses,
+# )
+# from hopilot.gto.aof_scenario_cache_store import AggregationService, RunData, AggregatedResults, Statistic, SimulationOutcome
 
 
 def create_outcomes_for_hand(hand_key, win_prob, num_sims):

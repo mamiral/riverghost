@@ -20,21 +20,11 @@ aof_browser_runtime:
   precompute_max_workers: 3
   convergence_target_points: 8
 
-aof_browser_cache:
-  enabled: true
-  db_path: "python/hopilot/cache/aof_scenario_cache.sqlite3"
-  schema_version: "1"
-  policy_signature: "aof-cache-policy-v1"
-  persist_degraded_payloads: true
-
-aggregation:
-  enabled: false  # Feature flag for backward-safe rollout
-  migration_mode: "coexistence"  # coexistence or migration
-  db_path: "python/hopilot/cache/aof_aggregation_cache.sqlite3"
-
 database:
+  url: "sqlite:///python/hopilot/data/normalized_poker.db"
   path: "python/hopilot/data/normalized_poker.db"
   connection_pool_size: 5
+  pool_timeout: 30.0
   timeout_ms: 500
   enable_migration: true
   schema_version: "1.0"

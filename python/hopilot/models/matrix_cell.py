@@ -29,9 +29,9 @@ class MatrixCell(BaseModel):
     hand_combination = Column(String(50), nullable=False)
 
     # Relationships
-    hand_matrix = relationship("HandMatrix", backref="matrix_cells")
-    game_states = relationship("GameState", backref="matrix_cell", cascade="all, delete-orphan")
-    aggregated_metric = relationship("AggregatedMetric", backref="matrix_cell", uselist=False, cascade="all, delete-orphan")
+    # Note: hand_matrix relationship removed - defined on HandMatrix side to avoid conflicts
+    game_states = relationship("GameState", cascade="all, delete-orphan", overlaps="matrix_cell")
+    aggregated_metric = relationship("AggregatedMetric", uselist=False, cascade="all, delete-orphan")
 
     # Constraints
     __table_args__ = (

@@ -5,9 +5,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
+from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
-from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures
 
 
 class _FastSolver:
@@ -16,18 +15,11 @@ class _FastSolver:
 
 
 def _make_store(tmp_path):
-    return AoFScenarioCacheStore(
-        db_path=str(tmp_path / "aof_gui_resume.sqlite3"),
-        signatures=CacheSignatures(
-            schema_version="1",
-            solver_signature="aof-solver-v1",
-            policy_signature="aof-cache-policy-v1",
-            runtime_signature="runtime-v1",
-        ),
-    )
+    # Phase 4: Scenario store removed, return None for in-memory testing
+    return None
 
 
-def _context(provider: AoFBrowserDataProvider, *, position: str = "UTG") -> dict:
+def _context(provider: BrowserDatabaseProvider, *, position: str = "UTG") -> dict:
     return provider._build_context(  # pylint: disable=protected-access
         position=position,
         metric="EV",
@@ -36,10 +28,12 @@ def _context(provider: AoFBrowserDataProvider, *, position: str = "UTG") -> dict
 
 
 def test_stop_persists_checkpoint_and_restart_restores_session(tmp_path):
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    store = _make_store(tmp_path)
-    runner = AoFPrecomputeRunner(provider, store)
+    # Phase 4: Provider now requires database_url, old cache_enabled parameter removed
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    # provider._solver = _FastSolver()  # Phase 4: Solver mocking removed
+    store = _make_store(tmp_path)  # Kept for compatibility but not used
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
     context = _context(provider)
     fingerprint = runner.build_scenario_fingerprint(context)
     session = runner.create_gui_session(simulations_per_cell=1000, scenario_fingerprint=fingerprint)
@@ -56,9 +50,11 @@ def test_stop_persists_checkpoint_and_restart_restores_session(tmp_path):
 
 
 def test_resume_blocked_on_scenario_fingerprint_mismatch(tmp_path):
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    runner = AoFPrecomputeRunner(provider, _make_store(tmp_path))
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    # provider._solver = _FastSolver()  # Phase 4: Solver mocking removed
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
 
     context = _context(provider, position="UTG")
     session = runner.create_gui_session(
@@ -74,10 +70,12 @@ def test_resume_blocked_on_scenario_fingerprint_mismatch(tmp_path):
 
 
 def test_restore_latest_checkpoint_returns_most_recent_paused_run(tmp_path):
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    store = _make_store(tmp_path)
-    runner = AoFPrecomputeRunner(provider, store)
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    # provider._solver = _FastSolver()  # Phase 4: Solver mocking removed
+    store = _make_store(tmp_path)  # Kept for compatibility but not used
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
 
     context = _context(provider)
     fingerprint = runner.build_scenario_fingerprint(context)

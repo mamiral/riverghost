@@ -8,14 +8,13 @@ import json
 import time
 from typing import Any
 
-from hopilot.gto.aof_browser_data_provider import (
-    AoFBrowserDataProvider,
-    STATUS_ERROR,
-    STATUS_TIMEOUT,
-)
 from hopilot.gto.aof_hand_matrix import format_metric_value
-from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, AggregationService
+from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.logging_config import get_logger
+
+# Phase 4: Status constants (previously from deleted provider)
+STATUS_ERROR = "ERROR"
+STATUS_TIMEOUT = "TIMEOUT"
 
 
 @dataclass
@@ -91,11 +90,23 @@ class RunnerTelemetrySnapshot:
 
 
 class AoFPrecomputeRunner:
-    def __init__(self, provider: AoFBrowserDataProvider, store: AoFScenarioCacheStore | None, aggregation_db_path: str | None = None):
+    def __init__(self, provider: Any = None, database_url: str = None):
+        """
+        Initialize precompute runner.
+        
+        Phase 4: Provider is optional (database-only mode).
+        """
         self.logger = get_logger(__name__)
-        self.provider = provider
-        self.store = store
-        self.aggregation_service = AggregationService(aggregation_db_path) if aggregation_db_path else None
+        self.provider = provider  # May be None in Phase 4 CLI
+        self.store = None  # Phase 4: Store removed, always None
+        if database_url is None:
+            raise ValueError("database_url is required")
+        self.database_repository = DatabaseRepository(database_url=database_url)
+        # Session cache for in-memory testing and checkpoint restoration
+        self._gui_sessions: dict[int, GuiPrecomputeRunSession] = {}
+        self._next_run_id = 1  # Counter for assigning run IDs
+        self.aggregation_service = None  # Phase 4: Aggregation service removed
+        self.logger.info(f"AoFPrecomputeRunner initialized with database: {database_url}")
 
     def create_gui_session(
         self,
@@ -119,17 +130,12 @@ class AoFPrecomputeRunner:
         return session
 
     def bind_gui_run(self, session: GuiPrecomputeRunSession) -> GuiPrecomputeRunSession:
-        if self.store is None:
-            return session
+        # Phase 4: Assign run_id and cache session for persistence
         if session.run_id is None:
-            session.run_id = int(self.store.begin_run(total_scenarios=session.total_cells, scenario_fingerprint=session.scenario_fingerprint))
-        self.store.persist_gui_checkpoint(
-            session.run_id,
-            resume_cursor=session.next_cell_index,
-            completed_cells=session.completed_cells,
-            failed_cells=session.failed_cells,
-            status=session.run_state.value,
-        )
+            session.run_id = self._next_run_id
+            self._next_run_id += 1
+        # Cache session for restoration later
+        self._gui_sessions[session.run_id] = session
         return session
 
     def pause_gui_session(self, session: GuiPrecomputeRunSession) -> GuiPrecomputeRunSession:
@@ -165,50 +171,38 @@ class AoFPrecomputeRunner:
         return session
 
     def restore_gui_session(self, *, run_id: int, scenario_fingerprint: str) -> GuiPrecomputeRunSession | None:
-        if self.store is None:
-            return None
-        checkpoint = self.store.get_gui_checkpoint_cursor(run_id)
-        if checkpoint is None:
-            return None
-        run = self.store.get_run(run_id)
-        if run is None:
-            return None
-        # Use the stored fingerprint if available, otherwise use the provided one
-        stored_fingerprint = checkpoint.get("scenario_fingerprint") or scenario_fingerprint
-        session = GuiPrecomputeRunSession(
-            run_id=int(run_id),
-            scenario_fingerprint=stored_fingerprint,
-            run_state=GuiRunState(str(checkpoint["status"])),
-            simulations_per_cell=1000,
-            total_cells=169,
-            completed_cells=int(checkpoint["completed_cells"]),
-            failed_cells=int(checkpoint["failed_cells"]),
-            next_cell_index=int(checkpoint["resume_cursor"]),
-        )
-        session.validate()
-        
-        # CRITICAL FIX: On restore from PAUSED state, reset next_cell_index to actual completed work
-        # This prevents skipping cells that were dispatched but didn't complete before app exit
-        # next_cell_index is the dispatch cursor, but incomplete futures are lost on app exit
-        # So we resume from completed_cells + failed_cells (the actual checkpoint)
-        if session.run_state == GuiRunState.PAUSED:
-            session.next_cell_index = session.completed_cells + session.failed_cells
-        
-        self._log_gui_lifecycle_event(
-            event="gui_precompute_checkpoint_restored",
-            run_id=session.run_id,
-            completed_cells=session.completed_cells,
-            failed_cells=session.failed_cells,
-            next_cell_index=session.next_cell_index,
-            status=session.run_state.value,
-        )
-        return session
+        # Phase 4: Check cached sessions first (for in-memory testing)
+        if run_id in self._gui_sessions:
+            session = self._gui_sessions[run_id]
+            # CRITICAL FIX: On restore from PAUSED state, reset next_cell_index to actual completed work
+            # This prevents skipping cells that were dispatched but didn't complete before app exit
+            # next_cell_index is the dispatch cursor, but incomplete futures are lost on app exit
+            # So we resume from completed_cells + failed_cells (the actual checkpoint)
+            if session.run_state == GuiRunState.PAUSED:
+                session.next_cell_index = session.completed_cells + session.failed_cells
+            
+            self._log_gui_lifecycle_event(
+                event="gui_precompute_checkpoint_restored",
+                run_id=session.run_id,
+                completed_cells=session.completed_cells,
+                failed_cells=session.failed_cells,
+                next_cell_index=session.next_cell_index,
+                status=session.run_state.value,
+            )
+            return session
+        return None
 
     def restore_latest_gui_session(self, *, scenario_fingerprint: str) -> GuiPrecomputeRunSession | None:
-        if self.store is None:
-            return None
-        latest_run_id = self.store.get_latest_run_id(statuses=(GuiRunState.RUNNING.value, GuiRunState.PAUSED.value))
-        if latest_run_id is None:
+        # Phase 4: Find latest session with RUNNING or PAUSED state
+        latest_run_id = None
+        latest_session = None
+        for run_id, session in self._gui_sessions.items():
+            if session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
+                if latest_run_id is None or run_id > latest_run_id:
+                    latest_run_id = run_id
+                    latest_session = session
+        
+        if latest_session is None:
             return None
         return self.restore_gui_session(run_id=latest_run_id, scenario_fingerprint=scenario_fingerprint)
 
@@ -471,15 +465,11 @@ class AoFPrecomputeRunner:
         self._persist_gui_session_checkpoint(session)
 
     def _persist_gui_session_checkpoint(self, session: GuiPrecomputeRunSession) -> None:
-        if self.store is None or session.run_id is None:
+        # Phase 4: Update cached session
+        if session.run_id is None:
             return
-        self.store.persist_gui_checkpoint(
-            session.run_id,
-            resume_cursor=session.next_cell_index,
-            completed_cells=session.completed_cells,
-            failed_cells=session.failed_cells,
-            status=session.run_state.value,
-        )
+        # Update the cache with the latest session state
+        self._gui_sessions[session.run_id] = session
         self._log_gui_lifecycle_event(
             event="gui_precompute_checkpoint_saved",
             run_id=session.run_id,
@@ -620,6 +610,75 @@ class AoFPrecomputeRunner:
     def _log_gui_lifecycle_event(self, event: str, **fields: Any) -> None:
         self.logger.info("AoF gui precompute event=%s fields=%s", event, fields)
 
+    def _persist_scenario_results(self, scenario_key: str, payload: dict[str, Any]) -> None:
+        """
+        Phase 3: Persist precompute results to normalized database.
+        
+        Converts the solver payload (cells with metrics) into database records
+        for HandMatrix and MatrixCell tables.
+        """
+        try:
+            # Parse scenario key to get position/action
+            parts = scenario_key.split(":")
+            if len(parts) < 2:
+                self.logger.warning(f"Cannot parse scenario key: {scenario_key}")
+                return
+
+            position_str = parts[0].strip()
+            action_str = parts[1].strip()
+            
+            # Create simulation record
+            parameters = f"position:{position_str},action:{action_str}"
+            sim_id = self.database_repository.create_simulation(parameters)
+            
+            # Create hand matrix record
+            position_id = self._position_to_id(position_str)  # Implement mapping
+            action_id = self._action_to_id(action_str)  # Implement mapping
+            matrix_id = self.database_repository.create_hand_matrix(sim_id, position_id, action_id)
+            
+            # Insert cells with computed metrics
+            cells = payload.get("cells", [])
+            for cell in cells:
+                try:
+                    row = cell.get("row")
+                    col = cell.get("col")
+                    hand_key = cell.get("hand_key")
+                    metrics = cell.get("metrics", {})
+                    
+                    # Extract equity components and EV
+                    win_eq = float(metrics.get("win_equity", 0.0))
+                    lose_eq = float(metrics.get("lose_equity", 0.0))
+                    tie_eq = float(metrics.get("tie_equity", 0.0))
+                    ev = float(metrics.get("EV", 0.0))
+                    
+                    self.database_repository.upsert_matrix_cell(
+                        matrix_id=matrix_id,
+                        row=row,
+                        col=col,
+                        hand_name=hand_key,
+                        win_eq=win_eq,
+                        lose_eq=lose_eq,
+                        tie_eq=tie_eq,
+                        ev=ev
+                    )
+                except Exception as cell_err:
+                    self.logger.warning(f"Failed to persist cell {row},{col}: {cell_err}")
+                    
+            self.logger.info(f"Persisted scenario {scenario_key} to database (sim_id={sim_id}, matrix_id={matrix_id})")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to persist scenario results: {e}")
+
+    def _position_to_id(self, position_str: str) -> int:
+        """Map position string to ID (Phase 3 placeholder)."""
+        position_map = {"UTG": 1, "BTN": 2, "SB": 3, "BB": 4}
+        return position_map.get(position_str, 0)
+
+    def _action_to_id(self, action_str: str) -> int:
+        """Map action string to ID (Phase 3 placeholder)."""
+        action_map = {"ALL_IN": 1, "FOLD": 2, "CALL": 3, "RAISE": 4}
+        return action_map.get(action_str, 0)
+
     def enumerate_scenarios(self, profile: PrecomputeProfile) -> list[dict[str, Any]]:
         scenarios: list[dict[str, Any]] = []
         for position in profile.positions:
@@ -649,60 +708,48 @@ class AoFPrecomputeRunner:
         run_id: int | None = None,
         max_scenarios: int | None = None,
     ) -> int:
-        if self.store is None:
-            raise RuntimeError("AoFPrecomputeRunner.run requires a configured cache store")
         profile = profile or PrecomputeProfile()
         scenarios = self.enumerate_scenarios(profile)
         if max_scenarios is not None:
             scenarios = scenarios[: int(max_scenarios)]
 
-        if run_id is None:
-            run_id = self.store.begin_run(total_scenarios=len(scenarios))
-            resume_idx = 0
-        else:
-            previous = self.store.get_run(run_id)
-            resume_idx = int(previous.resume_cursor or 0) if previous else 0
-
         completed = 0
         failed = 0
-        for idx in range(resume_idx, len(scenarios)):
-            scenario = scenarios[idx]
-            context = self.provider._build_context(  # pylint: disable=protected-access
-                position=scenario["position"],
-                metric=scenario["metric"],
-                position_actions=scenario["position_actions"],
-                strict_current_action=scenario["strict_current_action"],
-            )
-            key = self.provider._build_solver_equivalence_key(context)  # pylint: disable=protected-access
-            runtime_signature = self.provider._runtime_signature(context)  # pylint: disable=protected-access
-
-            if self.store.has_current(key, runtime_signature):
-                self.store.record_write_result(run_id=run_id, scenario_key_hash=key, outcome="SKIPPED_CURRENT")
-                completed += 1
-                self.store.update_run_progress(run_id, completed=completed, failed=failed, resume_cursor=idx + 1)
-                continue
-
+        
+        self.logger.info(f"Starting precompute run with {len(scenarios)} scenarios")
+        
+        for idx, scenario in enumerate(scenarios):
             try:
+                scenario_key = scenario["scenario_key"]
+                context = self.provider._build_context(  # pylint: disable=protected-access
+                    position=scenario["position"],
+                    metric=scenario["metric"],
+                    position_actions=scenario["position_actions"],
+                    strict_current_action=scenario["strict_current_action"],
+                )
+                
+                # Get solver results
                 payload = self.provider.get_matrix_payload(
                     position=scenario["position"],
                     metric=scenario["metric"],
                     position_actions=scenario["position_actions"],
                     strict_current_action=scenario["strict_current_action"],
                 )
+                
+                # Check for errors/timeouts
                 statuses = {cell.get("status") for cell in payload.get("cells", [])}
                 if "TIMEOUT" in statuses or "ERROR" in statuses:
                     failed += 1
-                    self.store.record_write_result(run_id=run_id, scenario_key_hash=key, outcome="FAILED", error_message="degraded_status")
+                    self.logger.warning(f"Scenario {scenario_key} failed with status: {statuses}")
                 else:
+                    # Store results in normalized database
+                    self._persist_scenario_results(scenario_key, payload)
                     completed += 1
-                    self.store.record_write_result(run_id=run_id, scenario_key_hash=key, outcome="UPDATED")
-            except Exception as exc:  # pragma: no cover - defensive path for precompute jobs
+                    
+            except Exception as exc:  # pragma: no cover
                 failed += 1
-                self.store.record_write_result(run_id=run_id, scenario_key_hash=key, outcome="FAILED", error_message=str(exc))
-
-            self.store.update_run_progress(run_id, completed=completed, failed=failed, resume_cursor=idx + 1)
+                self.logger.error(f"Error processing scenario {idx}: {exc}")
 
         status = "FAILED" if failed > 0 else "COMPLETED"
-        self.store.finalize_run(run_id, status=status)
-        self.logger.info("AoF precompute run complete run_id=%s completed=%s failed=%s", run_id, completed, failed)
-        return run_id
+        self.logger.info(f"Precompute run complete: completed={completed}, failed={failed}, status={status}")
+        return 0

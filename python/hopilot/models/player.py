@@ -30,7 +30,8 @@ class Player(BaseModel):
     is_hero = Column(Boolean, default=False, nullable=False)
 
     # Relationships
-    game_state = relationship("GameState", backref="players")
+    # Note: backref removed to avoid conflict with GameState.players
+    game_state = relationship("GameState", overlaps="players")
     bets = relationship("Bet", backref="player", cascade="all, delete-orphan")
     jackpots = relationship("Jackpot", backref="player", cascade="all, delete-orphan")
 

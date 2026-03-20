@@ -5,7 +5,7 @@ import pygame
 import yaml
 from typing import List, Dict, Any, Optional
 
-from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
+from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.gto.aof_browser_state import AoFBrowserViewState
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiPrecomputeRunSession, GuiRunState
 from hopilot.gui_components.aof_action_selector import AoFActionSelector
@@ -22,8 +22,12 @@ class AoFBrowserPanel:
         self.width = width
         self.height = height
         self.state = AoFBrowserViewState()
-        self.provider = AoFBrowserDataProvider(fixture_path=fixture_path, database_url=database_url)
-        self.runner = AoFPrecomputeRunner(self.provider, getattr(self.provider, "_cache_store", None))
+        
+        # Phase 4: Use minimal database provider (cache removed)
+        if database_url is None:
+            raise ValueError("database_url is required for Phase 4 (cache removed)")
+        self.provider = BrowserDatabaseProvider(database_url=database_url)
+        self.runner = AoFPrecomputeRunner(self.provider, database_url)
         self.state_machine_controller = None
         self.precompute_session: GuiPrecomputeRunSession | None = None
         self.precompute_context: dict | None = None
@@ -62,7 +66,8 @@ class AoFBrowserPanel:
 
         self.font = pygame.font.SysFont("arial", 18)
         self.small_font = pygame.font.SysFont("arial", 12)
-        self.payload = self.provider.get_matrix_payload(
+        # Phase 3: Use database provider for data (forces database; no cache fallback)
+        self.payload = self.provider.get_matrix_from_database(
             self.state.selected_position,
             self.state.selected_metric,
             self.state.position_actions,
@@ -198,20 +203,10 @@ class AoFBrowserPanel:
             return fallback
 
     def _refresh(self):
-        # Check if database provider is available
-        if hasattr(self.provider, '_database_provider') and self.provider._database_provider is not None:
-            # Database mode - handle async loading
-            if not self.is_loading:
-                self.is_loading = True
-                self._start_async_refresh()
-        else:
-            # Legacy cache/solver mode - synchronous
-            self.payload = self.provider.get_matrix_payload(
-                self.state.selected_position,
-                self.state.selected_metric,
-                self.state.position_actions,
-                allow_compute=False,
-            )
+        # Phase 3: Always use database provider (no cache fallback)
+        if not self.is_loading:
+            self.is_loading = True
+            self._start_async_refresh()
             self._invalidate_selected_cell_if_needed()
             self.state.status_message = self.payload.get("status_message")
             self.selected_cell_detail = self._build_selected_cell_detail_model()
@@ -228,8 +223,8 @@ class AoFBrowserPanel:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
-                # Get payload from database provider
-                payload = self.provider.get_matrix_payload(
+                # Phase 3: Use database provider directly (no cache fallback)
+                payload = self.provider.get_matrix_from_database(
                     self.state.selected_position,
                     self.state.selected_metric,
                     self.state.position_actions,
@@ -323,122 +318,20 @@ class AoFBrowserPanel:
             self.logger.debug(f"Using aggregation service convergence: {len(calculated)} points")
             return calculated
         
-        self.logger.debug("No aggregation service data, using fallback generation")
+        self.logger.debug("Phase 4: Aggregation service removed, using fallback")
         # Fallback: generate convergence from cell's current displayed value
         fallback = self._generate_convergence_from_cell_value(row, col)
         self.logger.debug(f"Fallback generated {len(fallback) if fallback else 0} convergence points")
         return fallback
 
     def _try_calculate_from_aggregation_service(self, hand_key: str) -> List[Dict[str, Any]]:
-        """Try to calculate convergence from aggregation service outcomes."""
-        try:
-            if not hasattr(self.provider, '_aggregation_service') or self.provider._aggregation_service is None:
-                return []
-            
-            # Build scenario key
-            actions = self.state.position_actions or {}
-            scenario_payload = {
-                "position": self.state.selected_position,
-                "actions": actions,
-            }
-            scenario_key = self.provider._cache_store.build_scenario_key(scenario_payload) if hasattr(self.provider, '_cache_store') else None
-            
-            if not scenario_key:
-                return []
-            
-            agg_stats = self.provider._aggregation_service.get_aggregated_stats(scenario_key)
-            if not agg_stats or not agg_stats.statistics:
-                return []
-            
-            hand_stats = agg_stats.statistics.get(hand_key)
-            if not hand_stats or not isinstance(hand_stats, dict):
-                return []
-            
-            # Try different keys where outcomes might be stored
-            hand_outcomes = hand_stats.get("outcomes") or hand_stats.get("results") or hand_stats.get("simulations")
-            if not hand_outcomes or not isinstance(hand_outcomes, list):
-                return []
-            
-            # Sort by timestamp
-            hand_outcomes.sort(key=lambda x: x.get("timestamp", 0) if isinstance(x, dict) else 0)
-            
-            # Calculate intervals
-            target_points = self._load_convergence_target_points()
-            total_outcomes = len(hand_outcomes)
-            interval_size = max(1, total_outcomes // target_points)
-            
-            convergence_data = []
-            
-            # Sample at intervals
-            for i in range(0, total_outcomes, interval_size):
-                outcomes_slice = hand_outcomes[:i+1]
-                num_samples = len(outcomes_slice)
-                metric_value = self._calculate_metric_for_outcomes(outcomes_slice)
-                
-                convergence_data.append({
-                    "num_simulations": num_samples,
-                    "average_equity": metric_value,
-                    "timestamp": None
-                })
-            
-            # Add final point
-            if total_outcomes > 0:
-                metric_value = self._calculate_metric_for_outcomes(hand_outcomes)
-                last_point = convergence_data[-1] if convergence_data else None
-                if last_point is None or last_point["num_simulations"] != total_outcomes:
-                    convergence_data.append({
-                        "num_simulations": total_outcomes,
-                        "average_equity": metric_value,
-                        "timestamp": None
-                    })
-            
-            return convergence_data
-            
-        except Exception as e:
-            self.logger.debug(f"Aggregation service convergence failed: {e}")
-            return []
+        """Phase 4: Aggregation service removed. Always returns empty."""
+        # Convergence data now retrieved from database directly
+        return []
 
     def _get_actual_outcome_count(self, row: int, col: int) -> int:
-        """Get the actual number of simulation outcomes stored in database for this cell."""
-        try:
-            if not hasattr(self.provider, '_aggregation_service') or self.provider._aggregation_service is None:
-                return 0
-            
-            # Get the hand key for this cell
-            hand_key = self._get_cell_hand_key(row, col)
-            if not hand_key:
-                return 0
-            
-            # Build scenario key
-            actions = self.state.position_actions or {}
-            scenario_payload = {
-                "position": self.state.selected_position,
-                "actions": actions,
-            }
-            scenario_key = self.provider._cache_store.build_scenario_key(scenario_payload) if hasattr(self.provider, '_cache_store') else None
-            
-            if not scenario_key:
-                return 0
-            
-            # Get aggregated stats
-            agg_stats = self.provider._aggregation_service.get_aggregated_stats(scenario_key)
-            if not agg_stats or not agg_stats.statistics:
-                return 0
-            
-            hand_stats = agg_stats.statistics.get(hand_key)
-            if not hand_stats or not isinstance(hand_stats, dict):
-                return 0
-            
-            # Try to get outcomes count
-            hand_outcomes = hand_stats.get("outcomes") or hand_stats.get("results") or hand_stats.get("simulations")
-            if hand_outcomes and isinstance(hand_outcomes, list):
-                return len(hand_outcomes)
-            
-            return 0
-            
-        except Exception as e:
-            self.logger.debug(f"Error getting actual outcome count: {e}")
-            return 0
+        """Phase 4: Aggregation service removed. Returns 0."""
+        return 0
 
     def _generate_convergence_from_cell_value(self, row: int, col: int) -> List[Dict[str, Any]]:
         """Generate convergence curve from the cell's final computed value.
@@ -566,12 +459,10 @@ class AoFBrowserPanel:
             ties = sum(1 for o in outcomes if o.get("outcome") == "TIE")
             equity = (wins + ties * 0.5) / len(outcomes) if outcomes else 0.0
             
-            # Get baseline equity for this hand
-            if self.state.selected_cell:
-                row, col, hand_key = self.state.selected_cell
-                baseline = self.provider._baseline_equity(hand_key) if hasattr(self.provider, '_baseline_equity') else 0.5
-                return max(0.0, min(1.0, equity / max(1e-6, baseline)))
-            return equity
+            # Phase 4: Baseline equity calculation removed (cache-only)
+            # Use fixed baseline of 0.5
+            baseline = 0.5
+            return max(0.0, min(1.0, equity / max(1e-6, baseline)))
         
         return 0.0
 
@@ -707,50 +598,9 @@ class AoFBrowserPanel:
         return model
 
     def _restore_precompute_checkpoint_if_available(self) -> None:
-        # Try to restore without requiring current scenario to match
-        if self.runner.store is None:
-            return
-        latest_run_id = self.runner.store.get_latest_run_id(statuses=(GuiRunState.RUNNING.value, GuiRunState.PAUSED.value))
-        if latest_run_id is None:
-            return
-        
-        restored = self.runner.restore_gui_session(run_id=int(latest_run_id), scenario_fingerprint="")
-        if restored is None:
-            return
-        
-        # Parse the stored fingerprint to restore scenario context
-        import json
-        try:
-            context_data = json.loads(restored.scenario_fingerprint)
-            if context_data and context_data.get("position"):
-                # Apply the saved scenario to the UI
-                self.state.set_position(context_data["position"])
-                if context_data.get("metric"):
-                    self.state.set_metric(context_data["metric"])
-                if context_data.get("position_actions"):
-                    for pos, action in context_data["position_actions"].items():
-                        self.state.set_position_action(pos, action)
-        except (json.JSONDecodeError, KeyError):
-            self.logger.warning("Failed to parse scenario fingerprint during restoration")
-        
-        # Now set the precompute session with the restored scenario
-        precompute_context = self._build_current_context()
-        self.precompute_context = precompute_context
-        self.precompute_session = restored
-        
-        # Try to load cached payload for the restored session
-        cached_payload = self.provider.get_matrix_payload(
-            self.state.selected_position,
-            self.state.selected_metric,
-            self.state.position_actions,
-            allow_compute=False,
-        )
-        if cached_payload and cached_payload.get("cells"):
-            self.payload = cached_payload
-            self.selected_cell_detail = self._build_selected_cell_detail_model()
-            self._load_convergence_data()  # Load convergence data for restored results
-        
-        self.state.status_message = "Precompute checkpoint restored"
+        """Phase 4: Cache store removed. No precompute checkpoint restoration."""
+        # In Phase 4, cache infrastructure is removed, so no checkpoint storage
+        return
 
     def _build_current_context(self) -> dict:
         return self.provider._build_context(  # pylint: disable=protected-access
@@ -793,40 +643,11 @@ class AoFBrowserPanel:
         self.state.status_message = "Precompute started"
 
     def _persist_completed_precompute_payload(self) -> None:
+        """Phase 4: Cache persistence removed. Precompute results are in database."""
         if self.precompute_payload_persisted:
             return
-        if self.precompute_context is None:
-            return
-        store = getattr(self.provider, "_cache_store", None)
-        if store is None:
-            self.precompute_payload_persisted = True
-            return
-
-        try:
-            runtime_signature = self.provider._runtime_signature(self.precompute_context)  # pylint: disable=protected-access
-            solver_key = self.provider._build_solver_equivalence_key(self.precompute_context)  # pylint: disable=protected-access
-            payload = {
-                "context": dict(self.precompute_context),
-                "cells": list(self.payload.get("cells", [])),
-                "status_message": self.payload.get("status_message"),
-            }
-            store.upsert_payload(solver_key, payload, runtime_signature)
-            # Drop stale in-memory misses so subsequent cache-only reads hit persisted rows.
-            self.provider.clear_cache()
-            request_key = self.provider._build_cache_key(self.precompute_context)  # pylint: disable=protected-access
-            self.provider._cache[request_key] = payload  # pylint: disable=protected-access
-            self.precompute_payload_persisted = True
-            self.state.status_message = "Precompute completed and cache saved"
-            self.logger.info(
-                "AoF gui precompute event=gui_precompute_payload_persisted fields=%s",
-                {
-                    "run_id": self.precompute_session.run_id if self.precompute_session else None,
-                    "scenario_key_hash": solver_key,
-                    "cells": len(payload.get("cells", [])),
-                },
-            )
-        except Exception as exc:  # pragma: no cover - defensive persistence guard
-            self.logger.warning("Failed to persist threaded precompute payload: %s", exc)
+        self.precompute_payload_persisted = True
+        self.state.status_message = "Precompute completed (database persisted)"
 
     def _cancel_pending_precompute_futures(self) -> None:
         """Cancel pending futures and reset cell index to reprocess them on resume.

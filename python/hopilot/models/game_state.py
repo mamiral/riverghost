@@ -32,8 +32,9 @@ class GameState(BaseModel):
     outcome = Column(String(20), nullable=True)
 
     # Relationships
-    matrix_cell = relationship("MatrixCell", backref="game_states")
-    players = relationship("Player", backref="game_state", cascade="all, delete-orphan")
+    # Note: Using relationship without backref since MatrixCell.game_states manages the relationship
+    matrix_cell = relationship("MatrixCell", overlaps="game_states")
+    players = relationship("Player", cascade="all, delete-orphan", overlaps="game_state")
     bets = relationship("Bet", backref="game_state", cascade="all, delete-orphan")
     board_cards = relationship("BoardCard", backref="game_states")
     jackpots = relationship("Jackpot", backref="game_state", cascade="all, delete-orphan")

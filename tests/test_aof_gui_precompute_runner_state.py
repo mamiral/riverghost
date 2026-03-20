@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
+from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
 
 
@@ -24,7 +24,7 @@ class _TimeoutOnFirstSolver:
         return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91, "individual_outcomes": [{"hero_hand": hand_key, "villain_hand": "RANDOM", "outcome": "WIN", "hero_equity": 0.62, "ev_chips": 0.91, "board_cards": ""}]}
 
 
-def _build_context(provider: AoFBrowserDataProvider) -> dict:
+def _build_context(provider: BrowserDatabaseProvider) -> dict:
     return provider._build_context(  # pylint: disable=protected-access
         position="UTG",
         metric="EV",
@@ -33,9 +33,11 @@ def _build_context(provider: AoFBrowserDataProvider) -> dict:
 
 
 def test_sequential_169_cell_progression_with_per_cell_callback_assertions():
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    runner = AoFPrecomputeRunner(provider, store=None)
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    provider._solver = _FastSolver()  # Mock solver for testing
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
 
     context = _build_context(provider)
     session = runner.create_gui_session(
@@ -59,9 +61,11 @@ def test_sequential_169_cell_progression_with_per_cell_callback_assertions():
 
 
 def test_matrix_immediate_update_for_completed_cells():
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    runner = AoFPrecomputeRunner(provider, store=None)
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    provider._solver = _FastSolver()  # Mock solver for testing
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
 
     context = _build_context(provider)
     session = runner.create_gui_session(
@@ -83,9 +87,11 @@ def test_matrix_immediate_update_for_completed_cells():
 
 
 def test_telemetry_accuracy_for_progress_elapsed_eta_and_failures():
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    runner = AoFPrecomputeRunner(provider, store=None)
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    provider._solver = _FastSolver()  # Mock solver for testing
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
 
     context = _build_context(provider)
     session = runner.create_gui_session(
@@ -105,9 +111,11 @@ def test_telemetry_accuracy_for_progress_elapsed_eta_and_failures():
 
 
 def test_timeout_and_error_paths_increment_failures_and_continue():
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _TimeoutOnFirstSolver()
-    runner = AoFPrecomputeRunner(provider, store=None)
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    provider._solver = _TimeoutOnFirstSolver()  # Mock solver for testing
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
 
     context = _build_context(provider)
     session = runner.create_gui_session(

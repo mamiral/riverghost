@@ -31,8 +31,8 @@ class AggregatedMetric(BaseModel):
     avg_jackpot_payout = Column(Numeric(10, 2), nullable=True)  # Average jackpot amount
     convergence_status = Column(String(20), nullable=True)  # Convergence assessment
 
-    # Relationships
-    matrix_cell = relationship("MatrixCell", backref="aggregated_metric")
+    # Note: Relationship defined on MatrixCell side to avoid backref conflicts
+    # matrix_cell = relationship("MatrixCell", backref="aggregated_metric")
 
     def __init__(self, **kwargs):
         """Initialize aggregated metric with validation."""

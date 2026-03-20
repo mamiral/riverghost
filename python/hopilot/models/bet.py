@@ -27,9 +27,9 @@ class Bet(BaseModel):
     amount = Column(Numeric(10, 2), nullable=False)
     action_type = Column(String(10), default="raise", nullable=False)
 
-    # Relationships
-    game_state = relationship("GameState", backref="bets")
-    player = relationship("Player", backref="bets")
+    # Note: Relationships defined on GameState/Player sides to avoid backref conflicts
+    # game_state = relationship("GameState", backref="bets")
+    # player = relationship("Player", backref="bets")
 
     def __init__(self, **kwargs):
         """Initialize bet with validation."""

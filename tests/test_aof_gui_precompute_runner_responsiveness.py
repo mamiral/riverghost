@@ -4,9 +4,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
+from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
-from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures
 
 
 class _FastSolver:
@@ -15,18 +14,11 @@ class _FastSolver:
 
 
 def _make_store(tmp_path):
-    return AoFScenarioCacheStore(
-        db_path=str(tmp_path / "aof_gui_precompute.sqlite3"),
-        signatures=CacheSignatures(
-            schema_version="1",
-            solver_signature="aof-solver-v1",
-            policy_signature="aof-cache-policy-v1",
-            runtime_signature="runtime-v1",
-        ),
-    )
+    # Phase 4: Scenario store removed, return None for in-memory testing
+    return None
 
 
-def _make_context(provider: AoFBrowserDataProvider) -> dict:
+def _make_context(provider: BrowserDatabaseProvider) -> dict:
     return provider._build_context(  # pylint: disable=protected-access
         position="UTG",
         metric="EV",
@@ -35,9 +27,11 @@ def _make_context(provider: AoFBrowserDataProvider) -> dict:
 
 
 def test_pause_transition_acknowledged_within_one_second(tmp_path):
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    runner = AoFPrecomputeRunner(provider, _make_store(tmp_path))
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    # provider._solver = _FastSolver()  # Phase 4: Solver mocking removed
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
     context = _make_context(provider)
     session = runner.create_gui_session(simulations_per_cell=1000, scenario_fingerprint=runner.build_scenario_fingerprint(context))
     runner.transition_session_state(session, GuiRunState.RUNNING)
@@ -51,9 +45,11 @@ def test_pause_transition_acknowledged_within_one_second(tmp_path):
 
 
 def test_stop_transition_acknowledged_within_one_second(tmp_path):
-    provider = AoFBrowserDataProvider(cache_enabled=False)
-    provider._solver = _FastSolver()
-    runner = AoFPrecomputeRunner(provider, _make_store(tmp_path))
+    # Phase 4: Provider now requires database_url
+    database_url = "sqlite:///:memory:"
+    provider = BrowserDatabaseProvider(database_url=database_url)
+    # provider._solver = _FastSolver()  # Phase 4: Solver mocking removed
+    runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
     context = _make_context(provider)
     session = runner.create_gui_session(simulations_per_cell=1000, scenario_fingerprint=runner.build_scenario_fingerprint(context))
     runner.transition_session_state(session, GuiRunState.RUNNING)

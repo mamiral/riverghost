@@ -33,8 +33,9 @@ class Jackpot(BaseModel):
     triggered_at = Column(String(27), nullable=False)  # ISO timestamp
 
     # Relationships
-    game_state = relationship("GameState", backref="jackpots")
-    player = relationship("Player", backref="jackpots")
+    # Note: Backrefs removed - relationships defined on GameState/Player sides
+    # game_state = relationship("GameState", backref="jackpots")
+    # player = relationship("Player", backref="jackpots")
 
     def __init__(self, **kwargs):
         """Initialize jackpot with validation."""

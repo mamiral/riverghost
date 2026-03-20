@@ -7,7 +7,7 @@ database schema, translating browser contexts to efficient database queries.
 
 import asyncio
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, select, func, text
 from sqlalchemy.orm import Session
@@ -647,3 +647,83 @@ class DatabaseRepository:
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _query_matrix_stats)
+
+    # ========================================================================
+    # PHASE 3: WRITE METHODS for Precompute System
+    # ========================================================================
+
+    def create_simulation(self, parameters: str) -> int:
+        """Create a new Simulation record and return its ID."""
+        def _create_sim():
+            with self.connection.session_scope() as session:
+                # Generate name from timestamp
+                sim_name = f"sim_{datetime.now(timezone.utc).isoformat()}"
+                sim = Simulation(
+                    name=sim_name,
+                    parameters=parameters,
+                    start_timestamp=datetime.now(timezone.utc)
+                )
+                session.add(sim)
+                session.commit()
+                return sim.id
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(self._async_write(_create_sim))
+
+    def create_hand_matrix(self, simulation_id: int, matrix_size: str = "13x13") -> int:
+        """Create HandMatrix record for storing strategy data."""
+        def _create_matrix():
+            with self.connection.session_scope() as session:
+                matrix = HandMatrix(
+                    simulation_id=simulation_id,
+                    matrix_size=matrix_size
+                )
+                session.add(matrix)
+                session.commit()
+                return matrix.id
+
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self._async_write(_create_matrix))
+
+    def upsert_matrix_cell(self, matrix_id: int, row: int, col: int, hand_name: str) -> None:
+        """Insert or update MatrixCell with hand combination."""
+        def _upsert_cell():
+            with self.connection.session_scope() as session:
+                from sqlalchemy import and_
+                # Check if cell exists
+                existing = session.query(MatrixCell).filter(
+                    and_(
+                        MatrixCell.matrix_id == matrix_id,
+                        MatrixCell.row_index == row,
+                        MatrixCell.col_index == col
+                    )
+                ).first()
+
+                if existing:
+                    # Update
+                    existing.hand_combination = hand_name
+                else:
+                    # Insert
+                    cell = MatrixCell(
+                        matrix_id=matrix_id,
+                        row_index=row,
+                        col_index=col,
+                        hand_combination=hand_name
+                    )
+                    session.add(cell)
+                session.commit()
+
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(self._async_write(_upsert_cell))
+
+    async def _async_write(self, write_func):
+        """Execute write operation asynchronously."""
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, write_func)
+        except Exception as e:
+            logger.error(f"Database write failed: {e}")
+            raise DatabaseConnectionError(f"Write operation failed: {e}") from e

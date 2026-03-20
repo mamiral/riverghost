@@ -20,6 +20,8 @@ import win32gui
 from hopilot.card_detector import CardDetector
 from hopilot.dashboard import Dashboard
 from hopilot.poker_analyzer import PokerAnalyzer
+from hopilot import db
+from hopilot.config import load_config
 
 
 # Logging is initialized automatically when logging_config is imported
@@ -340,6 +342,26 @@ if __name__ == "__main__":
     parser.add_argument("--window-title", help="Title of the window to capture")
     parser.add_argument("--replay-video", help="Path to video file to replay")
     args = parser.parse_args()
+
+    # Initialize database before any application logic
+    logger = get_logger(__name__)
+    try:
+        config = load_config()
+        if config and config.database and hasattr(config.database, 'url'):
+            db_url = config.database.url
+        else:
+            # Fallback to default
+            db_url = "sqlite:///python/hopilot/data/normalized_poker.db"
+        
+        db.initialize_database(
+            database_url=db_url,
+            pool_size=getattr(config.database, 'connection_pool_size', 5) if config and config.database else 5,
+        )
+        logger.info(f"Database initialized with URL: {db_url}")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        # Continue anyway - database is not critical for replay mode or demo
+        pass
 
     if args.replay_video:
         # Create detector for replay mode

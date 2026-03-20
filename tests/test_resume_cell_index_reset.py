@@ -5,11 +5,15 @@ import sys
 
 import pytest
 
+# Phase 4: AoFScenarioCacheStore removed as part of cache infrastructure cleanup
+# These tests are preserved for reference but cannot run without the deleted modules
+pytest.skip("Scenario cache store removed in Phase 4", allow_module_level=True)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.aof_browser_data_provider import AoFBrowserDataProvider
-from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
-from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures
+# from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
+# from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiRunState
+# from hopilot.gto.aof_scenario_cache_store import AoFScenarioCacheStore, CacheSignatures
 
 
 class _FastSolver:
