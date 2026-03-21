@@ -23,9 +23,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     
-    # Phase 4: Precompute now uses database directly (no provider)
-    # Create runner with database-only backend
-    runner = AoFPrecomputeRunner(provider=None, database_url=args.database_url)
+    # Create a precompute provider that generates matrices with synthetic data
+    from hopilot.gto.precompute_provider import PrecomputeProvider
+    
+    provider = PrecomputeProvider(database_url=args.database_url)
+    
+    runner = AoFPrecomputeRunner(provider=provider, database_url=args.database_url)
     
     # Run precompute with database persistence
     run_id = runner.run(

@@ -62,14 +62,41 @@ class GuiApplication:
 
 if __name__ == "__main__":
     import argparse
+    import yaml
 
     parser = argparse.ArgumentParser(description="HoPilot AoF GTO Browser")
     parser.add_argument("--fixture-path", help="Path to fixture data file")
     parser.add_argument("--database-url", help="Database URL for normalized schema (e.g., sqlite:///path/to/db)")
     args = parser.parse_args()
 
+    # Load default database URL from config if not provided
+    database_url = args.database_url
+    if database_url is None:
+        try:
+            config_path = Path(__file__).resolve().parents[2] / "config" / "gto_defaults.yaml"
+            with open(config_path, "r") as f:
+                config_data = yaml.safe_load(f)
+            if "database" in config_data and "url" in config_data["database"]:
+                database_url = config_data["database"]["url"]
+                
+                # Convert relative sqlite path to absolute
+                if database_url.startswith("sqlite:///"):
+                    rel_path = database_url.replace("sqlite:///", "")
+                    # Resolve relative to project root (parents[2] from the module location)
+                    abs_path = (Path(__file__).resolve().parents[2] / rel_path).resolve()
+                    database_url = f"sqlite:///{abs_path}"
+                    print(f"Using default database URL from config: {database_url}")
+                else:
+                    print(f"Using default database URL from config: {database_url}")
+            else:
+                database_url = "sqlite:///:memory:"
+                print("Database config not found, using in-memory database")
+        except Exception as e:
+            database_url = "sqlite:///:memory:"
+            print(f"Warning: Could not load config, using in-memory database: {e}")
+
     app = GuiApplication(
         fixture_path=args.fixture_path,
-        database_url=args.database_url
+        database_url=database_url
     )
     app.run()

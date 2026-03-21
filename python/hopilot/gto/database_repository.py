@@ -54,6 +54,8 @@ class DatabaseRepository:
         """
         self.database_url = database_url
         self.connection = DatabaseConnection(database_url)
+        # Initialize database schema on first connection
+        self.connection.create_tables()
         logger.info(f"DatabaseRepository initialized with: {database_url}")
 
     async def get_strategy_matrix(
@@ -80,34 +82,47 @@ class DatabaseRepository:
         def _query_matrix() -> Dict[str, Dict[str, float]]:
             try:
                 with self.connection.session_scope() as session:
-                    # Get the appropriate metric column
+                    # Find simulation matching position and action
+                    position_filter = self._build_position_filter(position)
+                    action_filter = self._build_action_filter(action)
+                    
+                    # Get the simulation
+                    simulation = session.query(Simulation).filter(
+                        and_(position_filter, action_filter)
+                    ).order_by(Simulation.created_at.desc()).first()
+                    
+                    if not simulation:
+                        return {}
+                    
+                    # Get the hand_matrix for this simulation
+                    hand_matrix = session.query(HandMatrix).filter(
+                        HandMatrix.simulation_id == simulation.id
+                    ).first()
+                    
+                    if not hand_matrix:
+                        return {}
+                    
+                    # Get metric column
                     metric_column = self._get_metric_column(metric)
-
-                    # Query using the optimized view
-                    stmt = select(
-                        text("row_index"),
-                        text("col_index"),
-                        metric_column.label('value'),
-                        text("hand_combination")
-                    ).select_from(text("matrix_data_with_context")).where(
-                        and_(
-                            text(f"position = '{position.id}'"),
-                            text(f"action = '{action.id}'")
-                        )
-                    ).order_by(text("row_index"), text("col_index"))
-
-                    result = session.execute(stmt)
+                    
+                    # Query all aggregated_metrics for this matrix
+                    results = session.query(
+                        MatrixCell.hand_combination,
+                        metric_column
+                    ).join(
+                        AggregatedMetric, MatrixCell.id == AggregatedMetric.cell_id
+                    ).filter(
+                        MatrixCell.matrix_id == hand_matrix.id
+                    ).all()
+                    
+                    # Build the matrix data dict
                     matrix_data = {}
-
-                    for row in result:
-                        row_idx, col_idx, value, hand_combo = row
-                        hand_key = self._matrix_coords_to_hand_key(row_idx, col_idx)
-
-                        if hand_key not in matrix_data:
-                            matrix_data[hand_key] = {}
-
-                        matrix_data[hand_key][metric.id] = float(value) if value is not None else 0.0
-
+                    for hand_combination, value in results:
+                        if value is not None:
+                            # Extract hero hand from combination (e.g., "AA vs Random" -> "AA")
+                            hero_hand = hand_combination.split(' vs ')[0]
+                            matrix_data[hero_hand] = {metric.id: float(value)}
+                    
                     return matrix_data
             except Exception as e:
                 logger.error(f"Database query failed for matrix {position.id}/{action.id}/{metric.id}: {e}")
@@ -120,6 +135,66 @@ class DatabaseRepository:
         except Exception as e:
             logger.error(f"Async execution failed: {e}")
             raise DatabaseConnectionError(f"Async database operation failed: {e}") from e
+
+    def get_strategy_matrix_sync(
+        self,
+        position: PositionContext,
+        action: ActionContext,
+        metric: MetricType
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Synchronous version of get_strategy_matrix.
+        """
+        def _query_matrix() -> Dict[str, Dict[str, float]]:
+            try:
+                with self.connection.session_scope() as session:
+                    # Find simulation matching position and action
+                    position_filter = self._build_position_filter(position)
+                    action_filter = self._build_action_filter(action)
+                    
+                    # Get the simulation
+                    simulation = session.query(Simulation).filter(
+                        and_(position_filter, action_filter)
+                    ).order_by(Simulation.created_at.desc()).first()
+                    
+                    if not simulation:
+                        return {}
+                    
+                    # Get the hand_matrix for this simulation
+                    hand_matrix = session.query(HandMatrix).filter(
+                        HandMatrix.simulation_id == simulation.id
+                    ).first()
+                    
+                    if not hand_matrix:
+                        return {}
+                    
+                    # Get metric column
+                    metric_column = self._get_metric_column(metric)
+                    
+                    # Query all aggregated_metrics for this matrix
+                    results = session.query(
+                        MatrixCell.hand_combination,
+                        metric_column
+                    ).join(
+                        AggregatedMetric, MatrixCell.id == AggregatedMetric.cell_id
+                    ).filter(
+                        MatrixCell.matrix_id == hand_matrix.id
+                    ).all()
+                    
+                    # Build the matrix data dict
+                    matrix_data = {}
+                    for hand_combination, value in results:
+                        if value is not None:
+                            # Extract hero hand from combination (e.g., "AA vs Random" -> "AA")
+                            hero_hand = hand_combination.split(' vs ')[0]
+                            matrix_data[hero_hand] = {metric.id: float(value)}
+                    
+                    return matrix_data
+            except Exception as e:
+                logger.error(f"Database query failed for matrix {position.id}/{action.id}/{metric.id}: {e}")
+                raise DatabaseConnectionError(f"Failed to retrieve strategy matrix: {e}") from e
+
+        return _query_matrix()
 
     async def get_hand_metric(
         self,
@@ -186,39 +261,13 @@ class DatabaseRepository:
 
     def _build_position_filter(self, position: PositionContext):
         """Build SQLAlchemy filter for position context."""
-        # For now, store position in simulation parameters JSON
-        # TODO: Add dedicated position column to Simulations table
-        return Simulation.parameters.like(f'%"position": "{position.id}"%')
+        # Simple like filter
+        return Simulation.parameters.like(f'%{position.id}%')
 
     def _build_action_filter(self, action: ActionContext):
         """Build SQLAlchemy filter for action context."""
-        # Map action to betting patterns
-        # FOLD = no raise, ALL_IN = raise to stack
-        if action.id == "ALL_IN":
-            # Look for raise actions in bets
-            return Simulation.id.in_(
-                select(Simulation.id).join(
-                    HandMatrix, Simulation.id == HandMatrix.simulation_id
-                ).join(
-                    MatrixCell, HandMatrix.id == MatrixCell.matrix_id
-                ).join(
-                    GameState, MatrixCell.id == GameState.cell_id
-                ).join(
-                    Bet, GameState.id == Bet.game_state_id
-                ).where(Bet.action_type == 'raise')
-            )
-        else:  # FOLD
-            return Simulation.id.in_(
-                select(Simulation.id).join(
-                    HandMatrix, Simulation.id == HandMatrix.simulation_id
-                ).join(
-                    MatrixCell, HandMatrix.id == MatrixCell.matrix_id
-                ).join(
-                    GameState, MatrixCell.id == GameState.cell_id
-                ).join(
-                    Bet, GameState.id == Bet.game_state_id
-                ).where(Bet.action_type == 'fold')
-            )
+        # Simple like filter
+        return Simulation.parameters.like(f'%{action.id}%')
 
     def _get_metric_column(self, metric: MetricType):
         """Get SQLAlchemy column for metric type."""
@@ -654,76 +703,89 @@ class DatabaseRepository:
 
     def create_simulation(self, parameters: str) -> int:
         """Create a new Simulation record and return its ID."""
-        def _create_sim():
-            with self.connection.session_scope() as session:
-                # Generate name from timestamp
-                sim_name = f"sim_{datetime.now(timezone.utc).isoformat()}"
-                sim = Simulation(
-                    name=sim_name,
-                    parameters=parameters,
-                    start_timestamp=datetime.now(timezone.utc)
-                )
-                session.add(sim)
-                session.commit()
-                return sim.id
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop.run_until_complete(self._async_write(_create_sim))
+        with self.connection.session_scope() as session:
+            # Generate name from timestamp
+            sim_name = f"sim_{datetime.now(timezone.utc).isoformat()}"
+            sim = Simulation(
+                name=sim_name,
+                parameters=parameters,
+                start_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.commit()
+            return sim.id
 
     def create_hand_matrix(self, simulation_id: int, matrix_size: str = "13x13") -> int:
         """Create HandMatrix record for storing strategy data."""
-        def _create_matrix():
-            with self.connection.session_scope() as session:
-                matrix = HandMatrix(
-                    simulation_id=simulation_id,
-                    matrix_size=matrix_size
+        with self.connection.session_scope() as session:
+            matrix = HandMatrix(
+                simulation_id=simulation_id,
+                matrix_size=matrix_size
+            )
+            session.add(matrix)
+            session.commit()
+            return matrix.id
+
+    def upsert_matrix_cell(self, matrix_id: int, row_idx: int, col_idx: int, hand_key: str, metrics: Dict[str, float], status: str) -> None:
+        """
+        Create or update MatrixCell and associated AggregatedMetric with equity data.
+        
+        According to schema:
+        - MatrixCell stores: row_index, col_index, hand_combination
+        - AggregatedMetric stores: equity, convergence_status, etc.
+        (Many-to-one relationship: one AggregatedMetric per MatrixCell)
+        """
+        with self.connection.session_scope() as session:
+            from sqlalchemy import and_
+            
+            # Step 1: Create or update MatrixCell
+            existing_cell = session.query(MatrixCell).filter(
+                and_(
+                    MatrixCell.matrix_id == matrix_id,
+                    MatrixCell.row_index == row_idx,
+                    MatrixCell.col_index == col_idx
                 )
-                session.add(matrix)
-                session.commit()
-                return matrix.id
+            ).first()
 
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(self._async_write(_create_matrix))
+            if existing_cell:
+                cell_id = existing_cell.id
+                existing_cell.hand_combination = hand_key
+            else:
+                cell = MatrixCell(
+                    matrix_id=matrix_id,
+                    row_index=row_idx,
+                    col_index=col_idx,
+                    hand_combination=hand_key
+                )
+                session.add(cell)
+                session.flush()
+                cell_id = cell.id
 
-    def upsert_matrix_cell(self, matrix_id: int, row: int, col: int, hand_name: str) -> None:
-        """Insert or update MatrixCell with hand combination."""
-        def _upsert_cell():
-            with self.connection.session_scope() as session:
-                from sqlalchemy import and_
-                # Check if cell exists
-                existing = session.query(MatrixCell).filter(
-                    and_(
-                        MatrixCell.matrix_id == matrix_id,
-                        MatrixCell.row_index == row,
-                        MatrixCell.col_index == col
-                    )
-                ).first()
+            # Step 2: Create or update AggregatedMetric with equity data
+            existing_metric = session.query(AggregatedMetric).filter_by(
+                cell_id=cell_id
+            ).first()
+            
+            equity = metrics.get("equity", 0.5)
+            jackpot_adjusted_ev = metrics.get("jackpot_adjusted_ev", 0.0)
+            
+            if existing_metric:
+                # Update existing metric
+                existing_metric.equity = equity
+                existing_metric.jackpot_adjusted_ev = jackpot_adjusted_ev
+                existing_metric.convergence_status = status
+                existing_metric.last_updated = datetime.now(timezone.utc)
+            else:
+                # Create new metric
+                metric_record = AggregatedMetric(
+                    cell_id=cell_id,
+                    equity=equity,
+                    jackpot_adjusted_ev=jackpot_adjusted_ev,
+                    convergence_status=status,
+                    last_updated=datetime.now(timezone.utc)
+                )
+                session.add(metric_record)
+            
+            session.commit()
 
-                if existing:
-                    # Update
-                    existing.hand_combination = hand_name
-                else:
-                    # Insert
-                    cell = MatrixCell(
-                        matrix_id=matrix_id,
-                        row_index=row,
-                        col_index=col,
-                        hand_combination=hand_name
-                    )
-                    session.add(cell)
-                session.commit()
 
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(self._async_write(_upsert_cell))
-
-    async def _async_write(self, write_func):
-        """Execute write operation asynchronously."""
-        try:
-            return await asyncio.get_event_loop().run_in_executor(None, write_func)
-        except Exception as e:
-            logger.error(f"Database write failed: {e}")
-            raise DatabaseConnectionError(f"Write operation failed: {e}") from e

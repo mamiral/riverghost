@@ -58,6 +58,8 @@ class GuiPrecomputeRunSession:
     paused_at: datetime | None = None
     finished_at: datetime | None = None
     elapsed_active_ms: int = 0
+    sim_id: int | None = None
+    matrix_id: int | None = None
     _active_start_perf: float | None = field(default=None, repr=False)
 
     def validate(self) -> None:
@@ -399,46 +401,33 @@ class AoFPrecomputeRunner:
         hand_key = str(cell.get("hand_key"))
         cell_index = int(cell.get("row", 0)) * 13 + int(cell.get("col", 0))
 
-        # Store individual outcomes if available
-        individual_outcomes = cell.get("individual_outcomes", [])
-        if individual_outcomes and self.aggregation_service:
+        # Store cell results in database
+        if session.sim_id is not None and session.matrix_id is not None:
             try:
-                from hopilot.gto.aof_scenario_cache_store import SimulationOutcome, RunData
-                from datetime import datetime, UTC
-
-                # Convert individual outcomes to SimulationOutcome objects
-                simulation_outcomes = []
-                for outcome in individual_outcomes:
-                    sim_outcome = SimulationOutcome(
-                        hero_hand=outcome['hero_hand'],
-                        villain_hand=outcome['villain_hand'],
-                        outcome=outcome['outcome'],
-                        hero_equity=outcome['hero_equity'],
-                        ev_chips=outcome['ev_chips'],
-                        board_cards=outcome.get('board_cards', ''),
-                    )
-                    simulation_outcomes.append(sim_outcome)
-
-                if simulation_outcomes:
-                    # Create scenario key from context
-                    scenario_key = self._build_scenario_key(context)
-
-                    # Create run data
-                    run_data = RunData(
-                        timestamp=datetime.now(UTC),
-                        sim_count=len(simulation_outcomes),
-                        combo_samples=4,  # Default value
-                        timeout=30.0,  # Default value
-                        seed=42,  # Default value
-                        outcomes=simulation_outcomes
-                    )
-
-                    # Store the run
-                    self.aggregation_service.store_run(scenario_key, run_data)
-                    self.logger.info("Stored %d individual outcomes for hand %s", len(simulation_outcomes), hand_key)
-
+                row_idx = int(cell.get("row", 0))
+                col_idx = int(cell.get("col", 0))
+                metrics = cell.get("metrics", {})
+                
+                # Construct hand combination: hero vs random opponents
+                hand_combination = f"{hand_key} vs Random"
+                
+                # Map metrics to database fields
+                db_metrics = {
+                    "equity": metrics.get("EQUITY", 0.5),
+                    "jackpot_adjusted_ev": metrics.get("EV", 0.0),
+                }
+                
+                self.database_repository.upsert_matrix_cell(
+                    matrix_id=session.matrix_id,
+                    row_idx=row_idx,
+                    col_idx=col_idx,
+                    hand_key=hand_combination,
+                    metrics=db_metrics,
+                    status=status
+                )
+                self.logger.debug("Stored cell %d,%d (%s) in database", row_idx, col_idx, hand_combination)
             except Exception as exc:
-                self.logger.warning("Failed to store individual outcomes for hand %s: %s", hand_key, exc)
+                self.logger.warning("Failed to store cell %d,%d in database: %s", cell.get("row", 0), cell.get("col", 0), exc)
 
         if status in (STATUS_TIMEOUT, STATUS_ERROR):
             session.failed_cells += 1
@@ -615,59 +604,64 @@ class AoFPrecomputeRunner:
         Phase 3: Persist precompute results to normalized database.
         
         Converts the solver payload (cells with metrics) into database records
-        for HandMatrix and MatrixCell tables.
+        for HandMatrix and MatrixCell tables according to the normalized schema.
         """
         try:
-            # Parse scenario key to get position/action
+            # Parse scenario key: format is position:actions:metric:strict_mode
+            # where actions is hyphen-separated (action_UTG-action_BTN-action_SB-action_BB)
             parts = scenario_key.split(":")
-            if len(parts) < 2:
+            if len(parts) < 4:
                 self.logger.warning(f"Cannot parse scenario key: {scenario_key}")
                 return
 
             position_str = parts[0].strip()
-            action_str = parts[1].strip()
+            actions_str = parts[1].strip()  # e.g., "FOLD-FOLD-FOLD-FOLD"
+            metric_str = parts[2].strip()
+            strict_str = parts[3].strip()
             
-            # Create simulation record
-            parameters = f"position:{position_str},action:{action_str}"
+            # Create simulation record with required parameters per schema
+            # Parameters must include: num_simulations, matrix_size, game_type
+            import json
+            parameters = json.dumps({
+                "num_simulations": 120,  # Default from config
+                "matrix_size": "13x13",  # Standard size
+                "game_type": "cash",  # Default game type
+                "position": position_str,
+                "actions": actions_str,
+                "metric": metric_str,
+                "strict_mode": strict_str,
+            })
             sim_id = self.database_repository.create_simulation(parameters)
             
-            # Create hand matrix record
-            position_id = self._position_to_id(position_str)  # Implement mapping
-            action_id = self._action_to_id(action_str)  # Implement mapping
-            matrix_id = self.database_repository.create_hand_matrix(sim_id, position_id, action_id)
+            # Create hand matrix record (only needs simulation_id)
+            matrix_id = self.database_repository.create_hand_matrix(sim_id)
             
             # Insert cells with computed metrics
             cells = payload.get("cells", [])
             for cell in cells:
                 try:
-                    row = cell.get("row")
-                    col = cell.get("col")
+                    row_idx = cell.get("row")
+                    col_idx = cell.get("col")
                     hand_key = cell.get("hand_key")
                     metrics = cell.get("metrics", {})
+                    status = cell.get("status", "AVAILABLE")
                     
-                    # Extract equity components and EV
-                    win_eq = float(metrics.get("win_equity", 0.0))
-                    lose_eq = float(metrics.get("lose_equity", 0.0))
-                    tie_eq = float(metrics.get("tie_equity", 0.0))
-                    ev = float(metrics.get("EV", 0.0))
-                    
+                    # Call upsert with new signature
                     self.database_repository.upsert_matrix_cell(
                         matrix_id=matrix_id,
-                        row=row,
-                        col=col,
-                        hand_name=hand_key,
-                        win_eq=win_eq,
-                        lose_eq=lose_eq,
-                        tie_eq=tie_eq,
-                        ev=ev
+                        row_idx=row_idx,
+                        col_idx=col_idx,
+                        hand_key=hand_key,
+                        metrics=metrics,
+                        status=status
                     )
                 except Exception as cell_err:
-                    self.logger.warning(f"Failed to persist cell {row},{col}: {cell_err}")
+                    self.logger.warning(f"Failed to persist cell {row_idx},{col_idx}: {cell_err}")
                     
-            self.logger.info(f"Persisted scenario {scenario_key} to database (sim_id={sim_id}, matrix_id={matrix_id})")
+            self.logger.info(f"Persisted scenario {scenario_key} to database (sim_id={sim_id}, matrix_id={matrix_id}, cells={len(cells)})")
             
         except Exception as e:
-            self.logger.error(f"Failed to persist scenario results: {e}")
+            self.logger.error(f"Failed to persist scenario results: {e}", exc_info=True)
 
     def _position_to_id(self, position_str: str) -> int:
         """Map position string to ID (Phase 3 placeholder)."""
@@ -691,8 +685,14 @@ class AoFPrecomputeRunner:
                             "SB": actions[2],
                             "BB": actions[3],
                         }
+                        # Create scenario_key with all actions to ensure uniqueness
+                        # Format: position:action_UTG:action_BTN:action_SB:action_BB:metric:strict_mode
+                        # Persist code only parses first two parts (position:action) so this is backward compatible
+                        actions_str = "-".join(actions)
+                        scenario_key = f"{position}:{actions_str}:{metric}:{strict_mode}"
                         scenarios.append(
                             {
+                                "scenario_key": scenario_key,
                                 "position": position,
                                 "metric": metric,
                                 "position_actions": position_actions,

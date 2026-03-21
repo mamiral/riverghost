@@ -8,8 +8,11 @@ No cache, no aggregation, no solver modes.
 CREATED IN: Phase 4 cleanup (replaces deleted AoFBrowserDataProvider)
 """
 
+import asyncio
 from typing import Any, Dict, Optional
 from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.aof_solver_adapter import AoFSolverAdapter
+from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 from hopilot.gto.aof_browser_state import POSITIONS, normalize_position_actions, METRICS, build_browser_context
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
 from hopilot.logging_config import get_logger
@@ -29,12 +32,13 @@ class BrowserDatabaseProvider:
     """
 
     def __init__(self, database_url: str):
-        """Initialize with database connection."""
+        """Initialize with database connection and solver for fallback computation."""
         self.logger = get_logger(__name__)
         self.database_repository = DatabaseRepository(database_url=database_url)
         self._matrix_keys = build_matrix_keys()
-        self._solver = None  # Phase 4: Optional solver for testing/mocking
-        self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url}")
+        # Initialize solver adapter for fallback computation when database is empty
+        self._solver = AoFSolverAdapter()
+        self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url} and AoFSolverAdapter")
 
     def get_matrix_payload(
         self,
@@ -50,7 +54,7 @@ class BrowserDatabaseProvider:
         """
         Get matrix payload from database.
         
-        Phase 4: Database-only implementation. No cache, no solver fallback.
+        Phase 4: Read-only database access for GUI.
         """
         try:
             context = self._build_context(
@@ -63,8 +67,21 @@ class BrowserDatabaseProvider:
             )
         except ValueError as e:
             self.logger.warning(f"Invalid context: {e}")
-            return self._build_status_payload(
-                {
+            # Return empty cells list for invalid context
+            cells = []
+            for row in range(13):
+                for col in range(13):
+                    hand_key = self._matrix_keys[row][col]
+                    cells.append({
+                        "row": row,
+                        "col": col,
+                        "hand_key": hand_key,
+                        "value": None,
+                        "status": STATUS_MISSING,
+                        "display": "-",
+                    })
+            return {
+                "context": {
                     "position": position,
                     "action": normalize_position_actions(position_actions or {}).get(position, "UNKNOWN"),
                     "metric": metric,
@@ -73,30 +90,114 @@ class BrowserDatabaseProvider:
                     "pot_size": float(pot_size),
                     "bet_amount": float(bet_amount),
                 },
-                STATUS_MISSING,
-                f"Invalid context: {e}",
-            )
+                "cells": cells,
+                "status": STATUS_MISSING,
+                "status_message": f"Invalid context: {e}",
+            }
 
         # Query database for matrix data
         try:
-            payload = self.database_repository.get_matrix_payload(
-                position=position,
-                metric=metric,
-                position_actions=position_actions,
-                pot_size=pot_size,
-                bet_amount=bet_amount,
-                strict_current_action=strict_current_action,
-                allow_compute=allow_compute,
-                on_cell_complete=on_cell_complete,
-            )
-            return payload
+            matrix_data = self._run_async_query(context)
+            
+            if not matrix_data:
+                self.logger.debug(f"No matrix data found for context: {context}")
+                # Return empty cells list
+                cells = []
+                for row in range(13):
+                    for col in range(13):
+                        hand_key = self._matrix_keys[row][col]
+                        cells.append({
+                            "row": row,
+                            "col": col,
+                            "hand_key": hand_key,
+                            "value": None,
+                            "status": STATUS_MISSING,
+                            "display": "-",
+                        })
+                return {
+                    "context": context,
+                    "cells": cells,
+                    "status": STATUS_MISSING,
+                    "status_message": "No database in this context",
+                }
+            
+            # Format the matrix for GUI display
+            formatted_matrix = {}
+            metric_id = context["metric"]
+            for hand_key, metric_dict in matrix_data.items():
+                if isinstance(metric_dict, dict) and metric_id in metric_dict:
+                    value = metric_dict[metric_id]
+                    formatted_matrix[hand_key] = format_metric_value(context["metric"], value)
+                elif not isinstance(metric_dict, dict):
+                    formatted_matrix[hand_key] = format_metric_value(context["metric"], metric_dict)
+            
+            # Build cells list in the same format as precompute
+            cells = []
+            for row in range(13):
+                for col in range(13):
+                    hand_key = self._matrix_keys[row][col]
+                    raw_value = None
+                    display = "-"
+                    status = STATUS_MISSING
+                    if hand_key in matrix_data:
+                        metric_dict = matrix_data[hand_key]
+                        if isinstance(metric_dict, dict) and metric_id in metric_dict:
+                            raw_value = metric_dict[metric_id]
+                            # Ensure raw_value is numeric
+                            if isinstance(raw_value, str):
+                                try:
+                                    raw_value = float(raw_value)
+                                except ValueError:
+                                    raw_value = 0.5  # default value
+                            display = format_metric_value(context["metric"], raw_value)
+                            status = STATUS_AVAILABLE
+                        elif not isinstance(metric_dict, dict):
+                            raw_value = metric_dict
+                            # Ensure raw_value is numeric
+                            if isinstance(raw_value, str):
+                                try:
+                                    raw_value = float(raw_value)
+                                except ValueError:
+                                    raw_value = 0.5  # default value
+                            display = format_metric_value(context["metric"], raw_value)
+                            status = STATUS_AVAILABLE
+                    
+                    cells.append({
+                        "row": row,
+                        "col": col,
+                        "hand_key": hand_key,
+                        "value": raw_value,
+                        "status": status,
+                        "display": display,
+                    })
+            
+            return {
+                "context": context,
+                "cells": cells,
+                "status": STATUS_AVAILABLE,
+                "status_message": "Matrix loaded from database",
+            }
         except Exception as e:
-            self.logger.error(f"Database query failed: {e}")
-            return self._build_status_payload(
-                context,
-                STATUS_MISSING,
-                f"Database error: {e}",
-            )
+            self.logger.error(f"Database query failed: {e}", exc_info=True)
+            # Return empty cells list on error
+            cells = []
+            for row in range(13):
+                for col in range(13):
+                    hand_key = self._matrix_keys[row][col]
+                    cells.append({
+                        "row": row,
+                        "col": col,
+                        "hand_key": hand_key,
+                        "value": None,
+                        "status": STATUS_MISSING,
+                        "display": "-",
+                    })
+            return {
+                "context": context,
+                "cells": cells,
+                "status": STATUS_MISSING,
+                "status_message": f"Database error: {e}",
+            }
 
     def get_matrix_from_database(
         self,
@@ -151,15 +252,31 @@ class BrowserDatabaseProvider:
             "timeout_ms": 30000,  # Phase 4: Default timeout for solver
         }
 
-    def _build_status_payload(
-        self, context: Dict[str, Any], status: str, message: str
-    ) -> Dict[str, Any]:
-        """Build a status-only payload (no data)."""
-        return {
-            "context": context,
-            "cells": [],
-            "status_message": message,
-        }
+
+
+    def _run_async_query(self, context: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
+        """
+        Execute database query synchronously.
+        """
+        try:
+            # Create proper context objects from dict
+            try:
+                position_ctx = PositionContext.from_id(context.get("position", "UTG"))
+                action_ctx = ActionContext.from_id(context.get("action", "ALL_IN"))
+                metric_ctx = MetricType.from_id(context.get("metric", "EQUITY"))
+            except (ValueError, KeyError) as e:
+                self.logger.error(f"Invalid context parameters: {e}")
+                return {}
+            
+            # Query synchronously
+            return self.database_repository.get_strategy_matrix_sync(
+                position=position_ctx,
+                action=action_ctx,
+                metric=metric_ctx
+            )
+        except Exception as e:
+            self.logger.error(f"Database query failed: {e}")
+            return {}
 
     def _baseline_equity(self, hand_key: str) -> float:
         """Return baseline equity for a hand against a random hand.

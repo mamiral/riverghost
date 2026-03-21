@@ -6,7 +6,7 @@ import yaml
 from typing import List, Dict, Any, Optional
 
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
-from hopilot.gto.aof_browser_state import AoFBrowserViewState
+from hopilot.gto.aof_browser_state import AoFBrowserViewState, POSITIONS, METRICS
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiPrecomputeRunSession, GuiRunState
 from hopilot.gui_components.aof_action_selector import AoFActionSelector
 from hopilot.gui_components.aof_cell_detail_panel import AoFCellDetailPanel
@@ -25,7 +25,10 @@ class AoFBrowserPanel:
         
         # Phase 4: Use minimal database provider (cache removed)
         if database_url is None:
-            raise ValueError("database_url is required for Phase 4 (cache removed)")
+            raise ValueError(
+                "database_url is required for Phase 4 (cache removed). "
+                "Provide via --database-url argument or configure in gto_defaults.yaml"
+            )
         self.provider = BrowserDatabaseProvider(database_url=database_url)
         self.runner = AoFPrecomputeRunner(self.provider, database_url)
         self.state_machine_controller = None
@@ -42,8 +45,20 @@ class AoFBrowserPanel:
         self.precompute_futures: dict[Future, int] = {}
         self.precompute_payload_persisted = False
 
+        # Initialize payload with empty data
+        self.payload = {
+            "context": {},
+            "cells": [],
+            "status_message": "Initializing...",
+        }
+        self.selected_cell_detail = {}
+
         # Attempt to restore previous session
         self._restore_precompute_checkpoint_if_available()
+        
+        # Load any existing data from database
+        self.is_loading = False
+        self._refresh()
 
         self.top_margin = 20
         self.control_h = 190
@@ -233,35 +248,35 @@ class AoFBrowserPanel:
 
                 # Post result to main thread
                 import pygame
-                pygame.event.post(pygame.event.Event(pygame.USEREVENT, {
-                    "type": "database_refresh",
-                    "payload": payload,
-                    "success": True
-                }))
+                pygame.event.post(pygame.event.Event(pygame.USEREVENT,
+                    event_type="database_refresh",
+                    payload=payload,
+                    success=True
+                ))
 
             except Exception as e:
                 self.logger.error(f"Async refresh failed: {e}")
                 import pygame
-                pygame.event.post(pygame.event.Event(pygame.USEREVENT, {
-                    "type": "database_refresh",
-                    "error": str(e),
-                    "success": False
-                }))
+                pygame.event.post(pygame.event.Event(pygame.USEREVENT,
+                    event_type="database_refresh",
+                    error=str(e),
+                    success=False
+                ))
 
         # Start background thread
         thread = threading.Thread(target=async_refresh, daemon=True)
         thread.start()
 
-    def _handle_async_refresh_result(self, data: dict) -> None:
+    def _handle_async_refresh_result(self, event) -> None:
         """Handle result from async database refresh."""
-        if data.get("success"):
-            self.payload = data["payload"]
+        if getattr(event, 'success', False):
+            self.payload = getattr(event, 'payload', {})
             self._invalidate_selected_cell_if_needed()
             self.state.status_message = self.payload.get("status_message")
             self.selected_cell_detail = self._build_selected_cell_detail_model()
             self._load_convergence_data()
         else:
-            self.state.status_message = f"Database error: {data.get('error', 'Unknown error')}"
+            self.state.status_message = f"Database error: {getattr(event, 'error', 'Unknown error')}"
 
         self.is_loading = False
 
@@ -598,9 +613,30 @@ class AoFBrowserPanel:
         return model
 
     def _restore_precompute_checkpoint_if_available(self) -> None:
-        """Phase 4: Cache store removed. No precompute checkpoint restoration."""
-        # In Phase 4, cache infrastructure is removed, so no checkpoint storage
-        return
+        """Phase 4: Restore context from latest database simulation."""
+        try:
+            # Query for the latest simulation
+            import json
+            with self.provider.database_repository.connection.session_scope() as session:
+                from hopilot.models import Simulation
+                latest_sim = session.query(Simulation).order_by(Simulation.created_at.desc()).first()
+                if latest_sim:
+                    params = json.loads(latest_sim.parameters)
+                    position = params.get("position")
+                    action = params.get("action")  # This might be the action for the selected position
+                    metric = params.get("metric", "WIN_LOSE_PROBABILITY")
+                    
+                    if position and position in POSITIONS:
+                        self.state.set_position(position)
+                        # If action is specified, try to set it
+                        if action:
+                            self.state.set_position_action(position, action)
+                        if metric in METRICS:
+                            self.state.set_metric(metric)
+                        
+                        self.logger.info(f"Restored context from latest simulation: position={position}, action={action}, metric={metric}")
+        except Exception as e:
+            self.logger.warning(f"Failed to restore context from database: {e}")
 
     def _build_current_context(self) -> dict:
         return self.provider._build_context(  # pylint: disable=protected-access
@@ -617,6 +653,28 @@ class AoFBrowserPanel:
             scenario_fingerprint=fingerprint,
             total_cells=169,
         )
+        
+        # Create database records for this precompute session
+        try:
+            import json
+            parameters = json.dumps({
+                "num_simulations": self.precompute_simulations_per_cell,
+                "matrix_size": "13x13",
+                "game_type": "cash",
+                "position": self.precompute_context.get("position"),
+                "action": self.precompute_context.get("action"),
+                "metric": self.precompute_context.get("metric"),
+                "strict_mode": self.precompute_context.get("strict_current_action", False),
+            })
+            self.precompute_session.sim_id = self.runner.database_repository.create_simulation(parameters)
+            self.precompute_session.matrix_id = self.runner.database_repository.create_hand_matrix(self.precompute_session.sim_id)
+            self.logger.info(f"Created database records: sim_id={self.precompute_session.sim_id}, matrix_id={self.precompute_session.matrix_id}")
+        except Exception as e:
+            self.logger.error(f"Failed to create database records: {e}")
+            # Continue without database storage
+            self.precompute_session.sim_id = None
+            self.precompute_session.matrix_id = None
+        
         self.runner.transition_session_state(self.precompute_session, GuiRunState.RUNNING)
         self.runner.bind_gui_run(self.precompute_session)
         if self.precompute_executor is None:
@@ -761,8 +819,8 @@ class AoFBrowserPanel:
     def handle_event(self, event):
         if event.type == pygame.USEREVENT:
             # Handle async database refresh completion
-            if hasattr(event, 'data') and event.data.get('type') == 'database_refresh':
-                self._handle_async_refresh_result(event.data)
+            if hasattr(event, 'event_type') and event.event_type == 'database_refresh':
+                self._handle_async_refresh_result(event)
                 return True
 
         # Route state machine events if controller is attached
@@ -1104,9 +1162,7 @@ class AoFBrowserPanel:
         # Show loading indicator when database is loading
         if self.is_loading:
             loading_msg = self.font.render("Loading from database...", True, (100, 200, 255))
-            loading_y = self.top_margin + self.control_h - 8
-            if self.state.status_message:
-                loading_y -= 24  # Position above status message if present
+            loading_y = self.matrix.y - 25  # Same Y as status message
             screen.blit(loading_msg, loading_msg.get_rect(center=(self.width // 2, loading_y)))
 
         precompute_state = "IDLE"
