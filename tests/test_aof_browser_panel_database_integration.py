@@ -121,11 +121,11 @@ class TestAoFBrowserPanelDatabaseLoading:
 class TestAoFBrowserPanelDataRefresh:
     """Tests for panel data refresh from database."""
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
-    def test_panel_refresh_queries_latest_database(self, mock_db_class, database_url_fixture):
+    @patch('hopilot.gui_components.aof_browser_panel.BrowserDatabaseProvider')
+    def test_panel_refresh_queries_latest_database(self, mock_provider_class, database_url_fixture):
         """Test that panel refresh method queries latest data from database."""
-        mock_db = MagicMock()
-        mock_db_class.return_value = mock_db
+        mock_provider = MagicMock()
+        mock_provider_class.return_value = mock_provider
         
         initial_payload = {
             "context": {"position": "UTG", "metric": "EV"},
@@ -137,7 +137,7 @@ class TestAoFBrowserPanelDataRefresh:
         }
         
         # First call returns initial, second call returns updated
-        mock_db.get_matrix_payload.side_effect = [initial_payload, updated_payload]
+        mock_provider.get_matrix_from_database.side_effect = [initial_payload, updated_payload]
         
         if not pygame.display.get_surface():
             pygame.init()
@@ -153,19 +153,19 @@ class TestAoFBrowserPanelDataRefresh:
         assert panel.payload is not None
         
         # Verify database was called at least once during init
-        assert mock_db.get_matrix_payload.call_count >= 1
+        assert mock_provider.get_matrix_from_database.call_count >= 1
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
-    def test_panel_preserves_state_on_refresh(self, mock_db_class, database_url_fixture):
+    @patch('hopilot.gui_components.aof_browser_panel.BrowserDatabaseProvider')
+    def test_panel_preserves_state_on_refresh(self, mock_provider_class, database_url_fixture):
         """Test that panel preserves selection state when refreshing data."""
-        mock_db = MagicMock()
-        mock_db_class.return_value = mock_db
+        mock_provider = MagicMock()
+        mock_provider_class.return_value = mock_provider
         
         payload = {
             "context": {"position": "UTG", "metric": "EV"},
             "cells": [],
         }
-        mock_db.get_matrix_payload.return_value = payload
+        mock_provider.get_matrix_from_database.return_value = payload
         
         if not pygame.display.get_surface():
             pygame.init()

@@ -35,6 +35,8 @@ class AoFBrowserViewState:
             raise ValueError(f"Unsupported position: {position}")
         self.selected_position = position
         self.position_actions = preset_position_actions(position)
+        # Clear selected cell when position changes to prevent stale convergence data warnings
+        self.clear_selected_cell()
 
     def set_position_action(self, position: str, action: str) -> None:
         # Browser runs in preset-only mode: per-position manual overrides are ignored.
@@ -57,6 +59,8 @@ class AoFBrowserViewState:
         if metric not in METRICS:
             raise ValueError(f"Unsupported metric: {metric}")
         self.selected_metric = metric
+        # Clear selected cell when metric changes to prevent stale convergence data warnings
+        self.clear_selected_cell()
 
     def set_selected_cell(self, row: int, col: int, hand_key: str) -> None:
         if row < 0 or row > 12:
