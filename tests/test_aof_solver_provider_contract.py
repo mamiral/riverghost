@@ -26,6 +26,9 @@ def test_provider_uses_solver_path_not_heuristic():
     called = {"count": 0}
 
     class _FakeSolver:
+        def resolve_num_opponents(self, selected_action, position_actions):
+            return 1
+
         def evaluate_hand_key(self, *args, **kwargs):
             called["count"] += 1
             return {"status": "AVAILABLE", "win_probability": 0.6, "equity": 0.62, "ev": 1.2}

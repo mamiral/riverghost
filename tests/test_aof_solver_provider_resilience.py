@@ -7,11 +7,17 @@ from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 
 
 class _TimeoutSolver:
+    def resolve_num_opponents(self, selected_action, position_actions):
+        return 1
+
     def evaluate_hand_key(self, *args, **kwargs):
         return {"status": "TIMEOUT"}
 
 
 class _ErrorSolver:
+    def resolve_num_opponents(self, selected_action, position_actions):
+        return 1
+
     def evaluate_hand_key(self, *args, **kwargs):
         return {"status": "ERROR"}
 

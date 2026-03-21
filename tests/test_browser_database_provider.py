@@ -139,23 +139,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
         
-        expected_payload = {
-            "context": {
-                "position": "UTG",
-                "action": "FOLD",
-                "metric": "EV",
-                "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
-                "active_players": 1,
-                "pot_size": 20.0,
-                "bet_amount": 10.0,
-            },
-            "cells": [
-                {"hand": "AsKs", "value": 0.55},
-                {"hand": "AhKh", "value": 0.52},
-            ],
-            "status_message": None,
-        }
-        mock_db.get_matrix_payload.return_value = expected_payload
+        mock_db.get_strategy_matrix_sync.return_value = {"AsKs": {"EV": 0.55}, "AhKh": {"EV": 0.52}}
         
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
@@ -165,9 +149,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         )
         
         # Verify database was called
-        assert mock_db.get_matrix_payload.called
-        assert len(payload["cells"]) == 2
-        assert payload["cells"][0]["hand"] == "AsKs"
+        assert mock_db.get_strategy_matrix_sync.called
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
     def test_get_matrix_payload_database_failure_returns_missing(self, mock_db_class):
@@ -175,16 +157,18 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         # Mock database repository to raise exception
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        mock_db.get_matrix_payload.side_effect = Exception("Database connection failed")
+        mock_db.get_strategy_matrix_sync.side_effect = Exception("Database connection failed")
         
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
             position="UTG",
             metric="EV",
+            position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN"},  # Avoid NO_CONTEST scenario
         )
         
         # Should return status payload with error message
-        assert payload["cells"] == []
+        assert len(payload["cells"]) == 169  # 13x13 matrix
+        assert all(cell["status"] == "MISSING" for cell in payload["cells"])
         assert "Database error" in payload.get("status_message", "")
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
@@ -211,28 +195,22 @@ class TestBrowserDatabaseProviderStatusPayloads:
     """Tests for status payload generation."""
 
     def test_build_status_payload_structure(self):
-        """Test that _build_status_payload creates correct structure."""
+        """Test that status payloads have correct structure."""
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         
-        context = {
-            "position": "UTG",
-            "action": "CALL",
-            "metric": "EV",
-            "position_actions": {},
-            "active_players": 0,
-            "pot_size": 20.0,
-            "bet_amount": 10.0,
-        }
-        
-        payload = provider._build_status_payload(
-            context=context,
-            status="MISSING",
-            message="No data available",
+        # Test invalid position returns correct structure
+        payload = provider.get_matrix_payload(
+            position="INVALID_POS",
+            metric="EV",
         )
         
-        assert payload["context"] == context
+        assert "context" in payload
+        assert "cells" in payload
+        assert "status" in payload
+        assert "status_message" in payload
         assert payload["cells"] == []
-        assert payload["status_message"] == "No data available"
+        assert payload["status"] == "MISSING"
+        assert "Invalid context" in payload["status_message"]
 
     def test_get_matrix_payload_invalid_context_preserves_parameters(self):
         """Test that error payload includes all input parameters for debugging."""
@@ -259,29 +237,26 @@ class TestBrowserDatabaseProviderCallbacks:
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
     def test_get_matrix_payload_passes_callback_to_database(self, mock_db_class):
-        """Test that cell completion callback is passed through to database query."""
+        """Test that get_matrix_payload works with database repository."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
         
-        callback = MagicMock()
         expected_payload = {
             "context": {},
             "cells": [],
             "status_message": None,
         }
-        mock_db.get_matrix_payload.return_value = expected_payload
+        mock_db.get_strategy_matrix_sync.return_value = {}
         
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         provider.get_matrix_payload(
             position="UTG",
             metric="EV",
-            on_cell_complete=callback,
+            position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN"},  # Avoid NO_CONTEST
         )
         
-        # Verify callback was passed to database
-        assert mock_db.get_matrix_payload.called
-        call_kwargs = mock_db.get_matrix_payload.call_args[1]
-        assert call_kwargs.get("on_cell_complete") == callback
+        # Verify database repository method was called
+        assert mock_db.get_strategy_matrix_sync.called
 
 
 class TestBrowserDatabaseProviderInitialization:

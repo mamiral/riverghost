@@ -123,9 +123,11 @@ class TestPrecomputeDatabasePersistence:
         for cell in cells:
             repo.upsert_matrix_cell(
                 matrix_id=matrix_id,
-                row=cell["row"],
-                col=cell["col"],
-                hand_name=cell["hand_key"]
+                row_idx=cell["row"],
+                col_idx=cell["col"],
+                hand_key=cell["hand_key"],
+                metrics={"equity": 0.5, "win_probability": 0.6},
+                status="AVAILABLE"
             )
         
         # Assert - All cells persisted
@@ -214,9 +216,11 @@ class TestPrecomputeDatabasePersistence:
         for cell in valid_cells:
             repo.upsert_matrix_cell(
                 matrix_id=matrix_id,
-                row=cell["row"],
-                col=cell["col"],
-                hand_name=cell["hand_key"]
+                row_idx=cell["row"],
+                col_idx=cell["col"],
+                hand_key=cell["hand_key"],
+                metrics={"equity": 0.5, "win_probability": 0.6},
+                status="AVAILABLE"
             )
         
         # Try to write invalid cell with bad data (outside bounds)
@@ -224,9 +228,11 @@ class TestPrecomputeDatabasePersistence:
         try:
             repo.upsert_matrix_cell(
                 matrix_id=matrix_id,
-                row=999,  # Out of bounds
-                col=999,
-                hand_name="Invalid"
+                row_idx=999,  # Out of bounds
+                col_idx=999,
+                hand_key="Invalid",
+                metrics={"equity": 0.0, "win_probability": 0.0},
+                status="MISSING"
             )
         except Exception:
             pass  # Expected to fail

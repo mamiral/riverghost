@@ -7,6 +7,9 @@ from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 
 
 class _FakeSolver:
+    def resolve_num_opponents(self, selected_action, position_actions):
+        return 1
+
     def evaluate_hand_key(self, *args, **kwargs):
         return {"status": "AVAILABLE", "win_probability": 0.64, "equity": 0.60, "ev": 1.5}
 

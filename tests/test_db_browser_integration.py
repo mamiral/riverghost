@@ -12,24 +12,25 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.normalized_db_provider import NormalizedDatabaseProvider
+from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 
 
 @pytest.fixture
 def database_provider():
     """Create database provider for testing."""
-    db_path = os.path.join('hopilot', 'data', 'normalized_poker.db')
+    # Use absolute path to the database file
+    db_path = os.path.join(os.path.dirname(__file__), "..", "python", "hopilot", "data", "normalized_poker.db")
     db_url = f'sqlite:///{db_path}'
-    provider = NormalizedDatabaseProvider(db_url)
+    provider = BrowserDatabaseProvider(db_url)
     return provider
 
 
 def test_database_provider_initialization(database_provider):
     """Test that database provider initializes correctly."""
     assert database_provider is not None
-    assert hasattr(database_provider, 'repository')
-    assert database_provider.repository is not None
+    assert hasattr(database_provider, 'database_repository')
+    assert database_provider.database_repository is not None
 
 
 def test_matrix_display_position_combinations(database_provider):
@@ -214,24 +215,29 @@ def test_convergence_data_retrieval_repository(database_provider):
 
 def test_convergence_data_retrieval_provider(database_provider):
     """T031: Test convergence data retrieval from database provider."""
-    position = "UTG"
-    position_actions = {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
+    import asyncio
+    
+    async def run_test():
+        position = "UTG"
+        position_actions = {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
 
-    # Test provider method
-    convergence_data = database_provider.get_convergence_data(position, position_actions)
+        # Test provider method
+        convergence_data = await database_provider.get_convergence_data(position, position_actions)
 
-    # Should return a list (may be empty if no data)
-    assert isinstance(convergence_data, list)
+        # Should return a list (may be empty if no data)
+        assert isinstance(convergence_data, list)
 
-    # If data exists, verify browser-compatible format
-    if convergence_data:
-        for point in convergence_data:
-            assert isinstance(point, dict)
-            assert "num_simulations" in point
-            assert "average_equity" in point
-            assert "timestamp" in point
-            assert isinstance(point["num_simulations"], int)
-            assert isinstance(point["average_equity"], (int, float))
+        # If data exists, verify browser-compatible format
+        if convergence_data:
+            for point in convergence_data:
+                assert isinstance(point, dict)
+                assert "num_simulations" in point
+                assert "average_equity" in point
+                assert "timestamp" in point
+                assert isinstance(point["num_simulations"], int)
+                assert isinstance(point["average_equity"], (int, float))
+    
+    asyncio.run(run_test())
 
 
 def test_convergence_panel_display():
@@ -281,22 +287,27 @@ def test_convergence_panel_display():
 
 def test_convergence_data_edge_cases(database_provider):
     """T031: Test convergence data retrieval edge cases."""
-    # Test with invalid position
-    try:
-        result = database_provider.get_convergence_data("INVALID_POSITION")
-        # Should return empty list for invalid input
+    import asyncio
+    
+    async def run_test():
+        # Test with invalid position
+        try:
+            result = await database_provider.get_convergence_data("INVALID_POSITION")
+            # Should return empty list for invalid input
+            assert isinstance(result, list)
+        except Exception:
+            # Or handle gracefully with exception
+            pass
+
+        # Test with None position_actions
+        result = await database_provider.get_convergence_data("UTG", None)
         assert isinstance(result, list)
-    except Exception:
-        # Or handle gracefully with exception
-        pass
 
-    # Test with None position_actions
-    result = database_provider.get_convergence_data("UTG", None)
-    assert isinstance(result, list)
-
-    # Test with empty position_actions
-    result = database_provider.get_convergence_data("UTG", {})
-    assert isinstance(result, list)
+        # Test with empty position_actions
+        result = await database_provider.get_convergence_data("UTG", {})
+        assert isinstance(result, list)
+    
+    asyncio.run(run_test())
 
 
 def test_complex_query_simulation_summary(database_provider):

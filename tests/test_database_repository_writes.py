@@ -164,9 +164,11 @@ class TestDatabaseRepositoryWrites:
         # Act
         repo.upsert_matrix_cell(
             matrix_id=matrix_id,
-            row=0,
-            col=0,
-            hand_name="AcAd vs KcKd"
+            row_idx=0,
+            col_idx=0,
+            hand_key="AcAd vs KcKd",
+            metrics={"equity": 0.75, "win_probability": 0.8},
+            status="AVAILABLE"
         )
         
         # Assert - Cell created with hand combination
@@ -196,7 +198,8 @@ class TestDatabaseRepositoryWrites:
         
         # Insert first version
         repo.upsert_matrix_cell(
-            matrix_id=matrix_id, row=1, col=1, hand_name="QcQd vs JcJd"
+            matrix_id=matrix_id, row_idx=1, col_idx=1, hand_key="QcQd vs JcJd",
+            metrics={"equity": 0.6, "win_probability": 0.7}, status="AVAILABLE"
         )
         
         # Get original ID
@@ -211,7 +214,8 @@ class TestDatabaseRepositoryWrites:
         
         # Act - Update same cell
         repo.upsert_matrix_cell(
-            matrix_id=matrix_id, row=1, col=1, hand_name="QcQd vs JcJd (updated)"
+            matrix_id=matrix_id, row_idx=1, col_idx=1, hand_key="QcQd vs JcJd (updated)",
+            metrics={"equity": 0.65, "win_probability": 0.75}, status="AVAILABLE"
         )
         
         # Assert - Same cell updated
@@ -249,9 +253,11 @@ class TestDatabaseRepositoryWrites:
             # Act
             repo.upsert_matrix_cell(
                 matrix_id=matrix_id,
-                row=test_case["row"],
-                col=test_case["col"],
-                hand_name=test_case["hand"]
+                row_idx=test_case["row"],
+                col_idx=test_case["col"],
+                hand_key=test_case["hand"],
+                metrics={"equity": 0.5 + i * 0.1, "win_probability": 0.6 + i * 0.1},
+                status="AVAILABLE"
             )
         
         # Assert - All cells stored correctly
