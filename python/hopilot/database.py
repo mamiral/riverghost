@@ -6,6 +6,7 @@ session management and transaction handling.
 """
 
 import os
+import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
@@ -18,6 +19,22 @@ from sqlalchemy.pool import QueuePool
 from hopilot.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+# Register proper SQLite datetime adapters to avoid deprecation warnings
+def adapt_datetime(dt):
+    """Convert datetime to ISO format string for SQLite."""
+    return dt.isoformat()
+
+
+def convert_datetime(s):
+    """Convert ISO format string back to datetime for SQLite."""
+    return datetime.fromisoformat(s)
+
+
+# Register the adapters
+sqlite3.register_adapter(datetime, adapt_datetime)
+sqlite3.register_converter("timestamp", convert_datetime)
 
 
 class DatabaseConnection:
@@ -45,6 +62,7 @@ class DatabaseConnection:
             connect_args = {
                 "check_same_thread": False,  # Allow multi-threaded access
                 "timeout": 30.0,  # Connection timeout
+                "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,  # Enable type detection
             }
 
         self._engine = create_engine(

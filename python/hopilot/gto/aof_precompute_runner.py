@@ -11,6 +11,7 @@ from typing import Any
 from hopilot.gto.aof_hand_matrix import format_metric_value
 from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.logging_config import get_logger
+from hopilot.performance_monitor import performance_monitor
 
 # Phase 4: Status constants (previously from deleted provider)
 STATUS_ERROR = "ERROR"
@@ -417,7 +418,8 @@ class AoFPrecomputeRunner:
                     "jackpot_adjusted_ev": metrics.get("EV", 0.0),
                 }
                 
-                self.database_repository.upsert_matrix_cell(
+                # Get matrix cell ID for GameState creation
+                cell_id = self.database_repository.upsert_matrix_cell(
                     matrix_id=session.matrix_id,
                     row_idx=row_idx,
                     col_idx=col_idx,
@@ -426,6 +428,16 @@ class AoFPrecomputeRunner:
                     status=status
                 )
                 self.logger.debug("Stored cell %d,%d (%s) in database", row_idx, col_idx, hand_combination)
+                
+                # SIM-001: Store individual simulation outcomes as GameStates
+                individual_outcomes = cell.get("individual_outcomes", [])
+                if individual_outcomes and status not in (STATUS_TIMEOUT, STATUS_ERROR):
+                    self._store_individual_outcomes_as_game_states(
+                        cell_id=cell_id,
+                        individual_outcomes=individual_outcomes,
+                        context=context
+                    )
+                
             except Exception as exc:
                 self.logger.warning("Failed to store cell %d,%d in database: %s", cell.get("row", 0), cell.get("col", 0), exc)
 
@@ -484,6 +496,227 @@ class AoFPrecomputeRunner:
         }
         encoded = json.dumps(scenario_data, sort_keys=True)
         return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
+
+    def _store_individual_outcomes_as_game_states(
+        self,
+        *,
+        cell_id: int,
+        individual_outcomes: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> None:
+        """
+        Store individual simulation outcomes as GameState records.
+        
+        SIM-001: Convert individual_outcomes from solver to GameStates-first architecture.
+        PERF-002: Performance monitoring integrated for data capture operations.
+        """
+        with performance_monitor.track_operation(
+            "store_individual_outcomes",
+            cell_id=cell_id,
+            outcome_count=len(individual_outcomes)
+        ):
+            try:
+                pot_size = float(context.get("pot_size", 1000))
+                bet_amount = float(context.get("bet_amount", pot_size))
+                
+                for outcome in individual_outcomes:
+                    # Create board cards (handle empty board cards for preflop)
+                    board_cards_str = outcome.get("board_cards", "")
+                    if not board_cards_str.strip():
+                        # Preflop game - create placeholder board cards
+                        board_card_data = {
+                            'flop1': '??', 'flop2': '??', 'flop3': '??',
+                            'turn': '??', 'river': '??'
+                        }
+                    else:
+                        # Parse board cards string (assuming format like "As Ks Qs")
+                        cards = board_cards_str.split()
+                        if len(cards) >= 5:
+                            board_card_data = {
+                                'flop1': cards[0], 'flop2': cards[1], 'flop3': cards[2],
+                                'turn': cards[3], 'river': cards[4]
+                            }
+                        else:
+                            # Incomplete board - pad with placeholders
+                            cards.extend(['??'] * (5 - len(cards)))
+                            board_card_data = {
+                                'flop1': cards[0], 'flop2': cards[1], 'flop3': cards[2],
+                                'turn': cards[3], 'river': cards[4]
+                            }
+                
+                    with performance_monitor.track_operation("create_board_card", cell_id=cell_id):
+                        board_cards_id = self.database_repository.get_or_create_board_card(board_card_data)
+                
+                    # Create GameState
+                    game_state_data = {
+                        'cell_id': cell_id,
+                        'round': 'preflop',
+                        'pot_size': pot_size,
+                        'board_cards_id': board_cards_id,
+                        'outcome': outcome.get('outcome')
+                    }
+                    
+                    with performance_monitor.track_operation("create_game_state", cell_id=cell_id):
+                        game_state_id = self.database_repository.create_game_state(game_state_data)
+                
+                    # Create Players
+                    hero_hand = outcome.get('hero_hand', 'AA')
+                    villain_hand = outcome.get('villain_hand', 'RANDOM')
+                
+                    # Hero player
+                    hero_data = {
+                        'game_state_id': game_state_id,
+                        'position': 'hero',
+                        'hole_cards': hero_hand,
+                        'stack_size': pot_size,  # All-in scenario
+                        'is_hero': True
+                    }
+                    
+                    with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=True):
+                        hero_id = self.database_repository.create_player(hero_data)
+                
+                    # Villain player (if not uncontested)
+                    villain_id = None
+                    if villain_hand != 'NONE':
+                        villain_data = {
+                            'game_state_id': game_state_id,
+                            'position': 'villain',
+                            'hole_cards': villain_hand if villain_hand != 'RANDOM' else '??',
+                            'stack_size': pot_size,  # All-in scenario
+                            'is_hero': False
+                        }
+                        
+                        with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=False):
+                            villain_id = self.database_repository.create_player(villain_data)
+                    
+                    # Create Bets (all-in raises)
+                    # Hero bet
+                    hero_bet_data = {
+                        'game_state_id': game_state_id,
+                        'player_id': hero_id,
+                        'amount': bet_amount,
+                        'action_type': 'raise',
+                        'round': 'preflop'
+                    }
+                    
+                    with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=hero_id):
+                        self.database_repository.create_bet(hero_bet_data)
+                    
+                    # Villain bet (if exists)
+                    if villain_id:
+                        villain_bet_data = {
+                            'game_state_id': game_state_id,
+                            'player_id': villain_id,
+                            'amount': bet_amount,
+                            'action_type': 'raise',
+                            'round': 'preflop'
+                        }
+                        
+                        with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=villain_id):
+                            self.database_repository.create_bet(villain_bet_data)
+                    
+                    # Check for jackpots
+                    with performance_monitor.track_operation("check_jackpots", game_state_id=game_state_id):
+                        self._check_and_create_jackpots_for_game_state(
+                            game_state_id=game_state_id,
+                            hero_hand=hero_hand,
+                            villain_hand=villain_hand,
+                            board_cards=board_card_data,
+                            pot_size=pot_size,
+                            hero_id=hero_id,
+                            villain_id=villain_id
+                        )
+                        self._check_and_create_jackpots_for_game_state(
+                            game_state_id=game_state_id,
+                            hero_hand=hero_hand,
+                            villain_hand=villain_hand,
+                            board_cards=board_card_data,
+                            pot_size=pot_size,
+                            hero_id=hero_id,
+                            villain_id=villain_id
+                        )
+                
+            except Exception as exc:
+                self.logger.warning("Failed to store individual outcomes as GameStates: %s", exc)
+            # Don't fail the entire cell processing for GameState storage issues
+
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """
+        Get performance summary for data capture operations.
+        
+        PERF-002: Provides performance metrics for monitoring and alerting.
+        
+        Returns:
+            Dictionary with performance statistics for all tracked operations
+        """
+        return performance_monitor.get_performance_summary()
+
+    def reset_performance_baseline(self, operation_name: Optional[str] = None) -> None:
+        """
+        Reset performance baseline for monitoring.
+        
+        Args:
+            operation_name: Specific operation to reset, or None for all
+        """
+        performance_monitor.reset_baseline(operation_name)
+
+    def _check_and_create_jackpots_for_game_state(
+        self,
+        *,
+        game_state_id: int,
+        hero_hand: str,
+        villain_hand: str,
+        board_cards: dict[str, str],
+        pot_size: float,
+        hero_id: int,
+        villain_id: int | None,
+    ) -> None:
+        """
+        Check for jackpots in the game state and create Jackpot records.
+        
+        Uses the jackpot detector to identify qualifying hands and create records.
+        """
+        try:
+            from hopilot.gto.jackpot_detector import JackpotDetector
+            
+            detector = JackpotDetector()
+            
+            # Convert board cards to list format expected by detector
+            board_cards_list = [
+                board_cards['flop1'], board_cards['flop2'], board_cards['flop3'],
+                board_cards['turn'], board_cards['river']
+            ]
+            
+            # Check hero hand for jackpots
+            if hero_hand and hero_hand != '??':
+                hero_cards = [hero_hand[:2], hero_hand[2:]]  # Split hole cards
+                hero_result = detector.detect_jackpot(hero_cards, board_cards_list, pot_size)
+                if hero_result and hero_result.jackpot_type != 'high_card':
+                    jackpot_data = {
+                        'game_state_id': game_state_id,
+                        'player_id': hero_id,
+                        'jackpot_type': hero_result.jackpot_type,
+                        'payout_amount': hero_result.payout_amount,
+                        'qualifying_cards': hero_result.qualifying_cards
+                    }
+                    self.database_repository.create_jackpot(jackpot_data)
+            
+            # Check villain hand for jackpots (if specific hand, not random)
+            if villain_id and villain_hand and villain_hand not in ('RANDOM', '??', 'NONE'):
+                villain_cards = [villain_hand[:2], villain_hand[2:]]  # Split hole cards
+                villain_result = detector.detect_jackpot(villain_cards, board_cards_list, pot_size)
+                if villain_result and villain_result.jackpot_type != 'high_card':
+                    jackpot_data = {
+                        'game_state_id': game_state_id,
+                        'player_id': villain_id,
+                        'jackpot_type': villain_result.jackpot_type,
+                        'payout_amount': villain_result.payout_amount,
+                        'qualifying_cards': villain_result.qualifying_cards
+                    }
+                    self.database_repository.create_jackpot(jackpot_data)
+                    
+        except Exception as exc:
+            self.logger.warning("Failed to check/create jackpots for game state %d: %s", game_state_id, exc)
 
     def run_gui_scenario(
         self,

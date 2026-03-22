@@ -26,6 +26,7 @@ class Bet(BaseModel):
     player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
     amount = Column(Numeric(10, 2), nullable=False)
     action_type = Column(String(10), default="raise", nullable=False)
+    round = Column(String(10), default="preflop", nullable=False)
 
     # Note: Relationships defined on GameState/Player sides to avoid backref conflicts
     # game_state = relationship("GameState", backref="bets")
@@ -48,6 +49,9 @@ class Bet(BaseModel):
 
         if self.action_type not in ["fold", "call", "raise"]:
             raise ValueError("Action type must be 'fold', 'call', or 'raise'")
+
+        if self.round not in ["preflop", "flop", "turn", "river"]:
+            raise ValueError("Round must be 'preflop', 'flop', 'turn', or 'river'")
 
     @property
     def is_all_in(self) -> bool:
@@ -72,4 +76,4 @@ class Bet(BaseModel):
 
     def __repr__(self) -> str:
         """String representation."""
-        return f"<Bet(id={self.id}, player_id={self.player_id}, amount={self.amount}, action={self.action_type})>"
+        return f"<Bet(id={self.id}, player_id={self.player_id}, amount={self.amount}, action={self.action_type}, round={self.round})>"

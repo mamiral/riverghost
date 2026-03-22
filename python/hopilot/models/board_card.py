@@ -42,15 +42,20 @@ class BoardCard(BaseModel):
             if not self._is_valid_card(card):
                 raise ValueError(f"Invalid card format: {card}")
 
-        # Check for duplicates
-        if len(set(cards)) != 5:
-            raise ValueError("Board cards must not contain duplicates")
+        # Check for duplicates (allow multiple ?? placeholders)
+        non_placeholder_cards = [card for card in cards if card != '??']
+        if len(set(non_placeholder_cards)) != len(non_placeholder_cards):
+            raise ValueError("Board cards must not contain duplicate non-placeholder cards")
 
     @staticmethod
     def _is_valid_card(card: str) -> bool:
-        """Validate single card format (e.g., 'As', 'Kh')."""
+        """Validate single card format (e.g., 'As', 'Kh', or '??' for preflop)."""
         if len(card) != 2:
             return False
+
+        # Allow placeholder cards for preflop games
+        if card == '??':
+            return True
 
         rank, suit = card[0], card[1]
         valid_ranks = "23456789TJQKA"

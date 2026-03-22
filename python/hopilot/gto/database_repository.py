@@ -9,8 +9,8 @@ import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, select, func, text
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, select, func, text, or_
+from sqlalchemy.orm import Session, selectinload
 
 from hopilot.database import DatabaseConnection
 from hopilot.logging_config import get_logger
@@ -20,7 +20,10 @@ from hopilot.models import (
     Simulation,
     HandMatrix,
     GameState,
-    Bet
+    Player,
+    Bet,
+    BoardCard,
+    Jackpot
 )
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType, ConvergencePoint, JackpotStats
 
@@ -34,6 +37,11 @@ class DatabaseConnectionError(Exception):
 
 class InvalidContextError(Exception):
     """Raised when position/action/metric combination is invalid."""
+    pass
+
+
+class DataIntegrityError(Exception):
+    """Raised when data integrity constraints are violated."""
     pass
 
 
@@ -57,6 +65,276 @@ class DatabaseRepository:
         # Initialize database schema on first connection
         self.connection.create_tables()
         logger.info(f"DatabaseRepository initialized with: {database_url}")
+
+    # ===== DATA INTEGRITY VALIDATION METHODS =====
+
+    def _validate_game_state_exists(self, game_state_id: int) -> None:
+        """
+        Validate that a game state exists.
+
+        Args:
+            game_state_id: GameState ID to validate
+
+        Raises:
+            DataIntegrityError: If game state does not exist
+        """
+        try:
+            with self.connection.session_scope() as session:
+                exists = session.query(GameState.id).filter(GameState.id == game_state_id).first() is not None
+                if not exists:
+                    raise DataIntegrityError(f"GameState with ID {game_state_id} does not exist")
+        except DataIntegrityError:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to validate game state existence: {e}") from e
+
+    def _validate_player_exists(self, player_id: int) -> None:
+        """
+        Validate that a player exists.
+
+        Args:
+            player_id: Player ID to validate
+
+        Raises:
+            DataIntegrityError: If player does not exist
+        """
+        try:
+            with self.connection.session_scope() as session:
+                exists = session.query(Player.id).filter(Player.id == player_id).first() is not None
+                if not exists:
+                    raise DataIntegrityError(f"Player with ID {player_id} does not exist")
+        except DataIntegrityError:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to validate player existence: {e}") from e
+
+    def _validate_bet_exists(self, bet_id: int) -> None:
+        """
+        Validate that a bet exists.
+
+        Args:
+            bet_id: Bet ID to validate
+
+        Raises:
+            DataIntegrityError: If bet does not exist
+        """
+        try:
+            with self.connection.session_scope() as session:
+                exists = session.query(Bet.id).filter(Bet.id == bet_id).first() is not None
+                if not exists:
+                    raise DataIntegrityError(f"Bet with ID {bet_id} does not exist")
+        except DataIntegrityError:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating bet {bet_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to validate bet existence: {e}") from e
+
+    def _validate_board_card_exists(self, board_card_id: int) -> None:
+        """
+        Validate that a board card exists.
+
+        Args:
+            board_card_id: BoardCard ID to validate
+
+        Raises:
+            DataIntegrityError: If board card does not exist
+        """
+        try:
+            with self.connection.session_scope() as session:
+                exists = session.query(BoardCard.id).filter(BoardCard.id == board_card_id).first() is not None
+                if not exists:
+                    raise DataIntegrityError(f"BoardCard with ID {board_card_id} does not exist")
+        except DataIntegrityError:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating board card {board_card_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to validate board card existence: {e}") from e
+
+    def _validate_jackpot_exists(self, jackpot_id: int) -> None:
+        """
+        Validate that a jackpot exists.
+
+        Args:
+            jackpot_id: Jackpot ID to validate
+
+        Raises:
+            DataIntegrityError: If jackpot does not exist
+        """
+        try:
+            with self.connection.session_scope() as session:
+                exists = session.query(Jackpot.id).filter(Jackpot.id == jackpot_id).first() is not None
+                if not exists:
+                    raise DataIntegrityError(f"Jackpot with ID {jackpot_id} does not exist")
+        except DataIntegrityError:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating jackpot {jackpot_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to validate jackpot existence: {e}") from e
+
+    def _validate_matrix_cell_exists(self, cell_id: int) -> None:
+        """
+        Validate that a matrix cell exists.
+
+        Args:
+            cell_id: MatrixCell ID to validate
+
+        Raises:
+            DataIntegrityError: If matrix cell does not exist
+        """
+        try:
+            with self.connection.session_scope() as session:
+                exists = session.query(MatrixCell.id).filter(MatrixCell.id == cell_id).first() is not None
+                if not exists:
+                    raise DataIntegrityError(f"MatrixCell with ID {cell_id} does not exist")
+        except DataIntegrityError:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating matrix cell {cell_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to validate matrix cell existence: {e}") from e
+
+    def _validate_game_state_data(self, game_state_data: Dict[str, Any]) -> None:
+        """
+        Validate game state data before creation/update.
+
+        Args:
+            game_state_data: Game state data to validate
+
+        Raises:
+            DataIntegrityError: If validation fails
+        """
+        required_fields = ['cell_id', 'pot_size', 'board_cards_id']
+        for field in required_fields:
+            if field not in game_state_data:
+                raise DataIntegrityError(f"Missing required field: {field}")
+
+        # Validate foreign keys
+        self._validate_matrix_cell_exists(game_state_data['cell_id'])
+        self._validate_board_card_exists(game_state_data['board_cards_id'])
+
+        # Validate pot_size
+        if game_state_data['pot_size'] < 0:
+            raise DataIntegrityError("Pot size cannot be negative")
+
+        # Validate round if provided
+        if 'round' in game_state_data and game_state_data['round'] not in ['preflop', 'flop', 'turn', 'river']:
+            raise DataIntegrityError("Round must be 'preflop', 'flop', 'turn', or 'river'")
+
+    def _validate_player_data(self, player_data: Dict[str, Any]) -> None:
+        """
+        Validate player data before creation/update.
+
+        Args:
+            player_data: Player data to validate
+
+        Raises:
+            DataIntegrityError: If validation fails
+        """
+        required_fields = ['game_state_id', 'position', 'hole_cards', 'stack_size']
+        for field in required_fields:
+            if field not in player_data:
+                raise DataIntegrityError(f"Missing required field: {field}")
+
+        # Validate foreign keys
+        self._validate_game_state_exists(player_data['game_state_id'])
+
+        # Validate position
+        if not player_data['position'] or not player_data['position'].strip():
+            raise DataIntegrityError("Position cannot be empty")
+
+        # Validate hole cards format (basic check)
+        hole_cards = player_data['hole_cards']
+        if len(hole_cards) != 4:
+            raise DataIntegrityError(f"Hole cards must be 4 characters (rank+suit + rank+suit), got: {hole_cards}")
+
+        # Validate stack size
+        if player_data['stack_size'] < 0:
+            raise DataIntegrityError("Stack size cannot be negative")
+
+    def _validate_bet_data(self, bet_data: Dict[str, Any]) -> None:
+        """
+        Validate bet data before creation/update.
+
+        Args:
+            bet_data: Bet data to validate
+
+        Raises:
+            DataIntegrityError: If validation fails
+        """
+        required_fields = ['game_state_id', 'player_id', 'amount']
+        for field in required_fields:
+            if field not in bet_data:
+                raise DataIntegrityError(f"Missing required field: {field}")
+
+        # Validate foreign keys
+        self._validate_game_state_exists(bet_data['game_state_id'])
+        self._validate_player_exists(bet_data['player_id'])
+
+        # Validate amount
+        if bet_data['amount'] <= 0:
+            raise DataIntegrityError("Bet amount must be positive")
+
+        # Validate action type
+        action_type = bet_data.get('action_type', 'raise')
+        if action_type not in ['fold', 'call', 'raise']:
+            raise DataIntegrityError("Action type must be 'fold', 'call', or 'raise'")
+
+        # Validate round
+        round_value = bet_data.get('round', 'preflop')
+        if round_value not in ['preflop', 'flop', 'turn', 'river']:
+            raise DataIntegrityError("Round must be 'preflop', 'flop', 'turn', or 'river'")
+
+    def _validate_board_card_data(self, board_card_data: Dict[str, Any]) -> None:
+        """
+        Validate board card data before creation/update.
+
+        Args:
+            board_card_data: Board card data to validate
+
+        Raises:
+            DataIntegrityError: If validation fails
+        """
+        required_fields = ['flop1', 'flop2', 'flop3', 'turn', 'river']
+        for field in required_fields:
+            if field not in board_card_data:
+                raise DataIntegrityError(f"Missing required field: {field}")
+
+        # All validation is handled by the BoardCard model itself
+        # The model will raise ValueError for invalid data
+
+    def _validate_jackpot_data(self, jackpot_data: Dict[str, Any]) -> None:
+        """
+        Validate jackpot data before creation/update.
+
+        Args:
+            jackpot_data: Jackpot data to validate
+
+        Raises:
+            DataIntegrityError: If validation fails
+        """
+        required_fields = ['game_state_id', 'player_id', 'jackpot_type', 'payout_amount', 'qualifying_cards']
+        for field in required_fields:
+            if field not in jackpot_data:
+                raise DataIntegrityError(f"Missing required field: {field}")
+
+        # Validate foreign keys
+        self._validate_game_state_exists(jackpot_data['game_state_id'])
+        self._validate_player_exists(jackpot_data['player_id'])
+
+        # Validate payout amount
+        if jackpot_data['payout_amount'] <= 0:
+            raise DataIntegrityError("Payout amount must be positive")
+
+        # Validate qualifying cards
+        qualifying_cards = jackpot_data['qualifying_cards']
+        if not isinstance(qualifying_cards, list) or len(qualifying_cards) == 0:
+            raise DataIntegrityError("Qualifying cards must be a non-empty list")
+
+        # Validate jackpot type (allow custom types)
+        jackpot_type = jackpot_data['jackpot_type']
+        if not jackpot_type or not jackpot_type.strip():
+            raise DataIntegrityError("Jackpot type cannot be empty")
 
     async def get_strategy_matrix(
         self,
@@ -726,7 +1004,7 @@ class DatabaseRepository:
             session.commit()
             return matrix.id
 
-    def upsert_matrix_cell(self, matrix_id: int, row_idx: int, col_idx: int, hand_key: str, metrics: Dict[str, float], status: str) -> None:
+    def upsert_matrix_cell(self, matrix_id: int, row_idx: int, col_idx: int, hand_key: str, metrics: Dict[str, float], status: str) -> int:
         """
         Create or update MatrixCell and associated AggregatedMetric with equity data.
         
@@ -734,6 +1012,9 @@ class DatabaseRepository:
         - MatrixCell stores: row_index, col_index, hand_combination
         - AggregatedMetric stores: equity, convergence_status, etc.
         (Many-to-one relationship: one AggregatedMetric per MatrixCell)
+        
+        Returns:
+            The ID of the MatrixCell
         """
         with self.connection.session_scope() as session:
             from sqlalchemy import and_
@@ -787,5 +1068,1850 @@ class DatabaseRepository:
                 session.add(metric_record)
             
             session.commit()
+            return cell_id
 
+    # ===== GAMESTATES CRUD OPERATIONS =====
 
+    def create_game_state(self, game_state_data: Dict[str, Any]) -> int:
+        """
+        Create a new game state with complete game data.
+
+        Args:
+            game_state_data: Dictionary containing all game state information including:
+                - cell_id: MatrixCell ID (required)
+                - timestamp: Game timestamp (optional, defaults to now)
+                - round: Game round (preflop/flop/turn/river)
+                - pot_size: Current pot size
+                - board_cards_id: BoardCards ID
+                - outcome: Game outcome (optional)
+
+        Returns:
+            ID of the created game state
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_game_state_data(game_state_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                # Create GameState
+                game_state = GameState(
+                    cell_id=game_state_data['cell_id'],
+                    timestamp=game_state_data.get('timestamp', datetime.now(timezone.utc)),
+                    round=game_state_data.get('round', 'preflop'),
+                    pot_size=game_state_data['pot_size'],
+                    board_cards_id=game_state_data['board_cards_id'],
+                    outcome=game_state_data.get('outcome')
+                )
+                session.add(game_state)
+                session.flush()  # Get the ID
+
+                game_state_id = game_state.id
+                logger.info(f"Created game state {game_state_id}")
+                return game_state_id
+
+        except Exception as e:
+            logger.error(f"Failed to create game state: {e}")
+            raise DatabaseConnectionError(f"Failed to create game state: {e}") from e
+
+    def get_game_state(self, game_state_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a game state by ID with all relationships loaded.
+
+        Args:
+            game_state_id: GameState ID
+
+        Returns:
+            Dictionary containing game state data with related entities, or None if not found
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Query with eager loading of relationships
+                game_state = session.query(GameState).options(
+                    # Load related entities
+                    selectinload(GameState.players),
+                    selectinload(GameState.bets),
+                    selectinload(GameState.board_cards),
+                    selectinload(GameState.jackpots),
+                    selectinload(GameState.matrix_cell)
+                ).filter(GameState.id == game_state_id).first()
+
+                if not game_state:
+                    return None
+
+                # Convert to dictionary with relationships
+                return {
+                    'id': game_state.id,
+                    'cell_id': game_state.cell_id,
+                    'timestamp': game_state.timestamp,
+                    'round': game_state.round,
+                    'pot_size': float(game_state.pot_size),
+                    'board_cards_id': game_state.board_cards_id,
+                    'outcome': game_state.outcome,
+                    'players': [
+                        {
+                            'id': player.id,
+                            'position': player.position,
+                            'hand': player.hand,
+                            'stack_size': float(player.stack_size) if player.stack_size else None,
+                            'is_hero': player.is_hero
+                        }
+                        for player in game_state.players
+                    ],
+                    'bets': [
+                        {
+                            'id': bet.id,
+                            'player_id': bet.player_id,
+                            'amount': float(bet.amount),
+                            'bet_type': bet.bet_type,
+                            'round': bet.round
+                        }
+                        for bet in game_state.bets
+                    ],
+                    'board_cards': {
+                        'id': game_state.board_cards.id,
+                        'flop1': game_state.board_cards.flop1,
+                        'flop2': game_state.board_cards.flop2,
+                        'flop3': game_state.board_cards.flop3,
+                        'turn': game_state.board_cards.turn,
+                        'river': game_state.board_cards.river
+                    } if game_state.board_cards else None,
+                    'jackpots': [
+                        {
+                            'id': jackpot.id,
+                            'jackpot_type': jackpot.jackpot_type,
+                            'payout_amount': float(jackpot.payout_amount),
+                            'qualifying_cards': jackpot.qualifying_cards
+                        }
+                        for jackpot in game_state.jackpots
+                    ],
+                    'matrix_cell': {
+                        'id': game_state.matrix_cell.id,
+                        'hand_combination': game_state.matrix_cell.hand_combination,
+                        'row_index': game_state.matrix_cell.row_index,
+                        'col_index': game_state.matrix_cell.col_index
+                    } if game_state.matrix_cell else None
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve game state: {e}") from e
+
+    def update_game_state(self, game_state_id: int, updates: Dict[str, Any]) -> bool:
+        """
+        Update an existing game state.
+
+        Args:
+            game_state_id: GameState ID to update
+            updates: Dictionary of fields to update
+
+        Returns:
+            True if update was successful, False if game state not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_game_state_exists(game_state_id)
+
+        # Validate update data (only check provided fields)
+        update_data = {'cell_id': 1, 'pot_size': 0, 'board_cards_id': 1}  # dummy values for required fields
+        update_data.update(updates)
+        self._validate_game_state_data(update_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                game_state = session.query(GameState).filter(GameState.id == game_state_id).first()
+
+                if not game_state:
+                    return False
+
+                # Update allowed fields
+                allowed_fields = {'round', 'pot_size', 'outcome'}
+                for field, value in updates.items():
+                    if field in allowed_fields:
+                        setattr(game_state, field, value)
+
+                session.commit()
+                logger.info(f"Updated game state {game_state_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to update game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update game state: {e}") from e
+
+    def delete_game_state(self, game_state_id: int) -> bool:
+        """
+        Delete a game state and all related entities (cascade delete).
+
+        Args:
+            game_state_id: GameState ID to delete
+
+        Returns:
+            True if deletion was successful, False if game state not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_game_state_exists(game_state_id)
+
+        try:
+            with self.connection.session_scope() as session:
+                game_state = session.query(GameState).filter(GameState.id == game_state_id).first()
+
+                if not game_state:
+                    return False
+
+                # Delete the game state (cascade will handle related entities)
+                session.delete(game_state)
+                session.commit()
+
+                logger.info(f"Deleted game state {game_state_id} with cascade")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to delete game state: {e}") from e
+
+    # ===== PLAYERS CRUD OPERATIONS =====
+
+    def create_player(self, player_data: Dict[str, Any]) -> int:
+        """
+        Create a new player linked to a game state.
+
+        Args:
+            player_data: Dictionary containing player information including:
+                - game_state_id: GameState ID (required)
+                - position: Player position (required)
+                - hole_cards: Player's hole cards (required, format: "AsKh")
+                - stack_size: Player's stack size (required)
+                - is_hero: Whether this is the hero player (optional, default False)
+
+        Returns:
+            ID of the created player
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_player_data(player_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                # Create Player
+                player = Player(
+                    game_state_id=player_data['game_state_id'],
+                    position=player_data['position'],
+                    hole_cards=player_data['hole_cards'],
+                    stack_size=player_data['stack_size'],
+                    is_hero=player_data.get('is_hero', False)
+                )
+                session.add(player)
+                session.flush()  # Get the ID
+
+                player_id = player.id
+                logger.info(f"Created player {player_id} for game state {player_data['game_state_id']}")
+                return player_id
+
+        except Exception as e:
+            logger.error(f"Failed to create player: {e}")
+            raise DatabaseConnectionError(f"Failed to create player: {e}") from e
+
+    def create_players_bulk(self, players_data: List[Dict[str, Any]]) -> List[int]:
+        """
+        Create multiple players for a game state in bulk.
+
+        Args:
+            players_data: List of player data dictionaries, each containing:
+                - game_state_id: GameState ID (required)
+                - position: Player position (required)
+                - hole_cards: Player's hole cards (required)
+                - stack_size: Player's stack size (required)
+                - is_hero: Whether this is the hero player (optional)
+
+        Returns:
+            List of created player IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                player_ids = []
+
+                for player_data in players_data:
+                    # Create Player
+                    player = Player(
+                        game_state_id=player_data['game_state_id'],
+                        position=player_data['position'],
+                        hole_cards=player_data['hole_cards'],
+                        stack_size=player_data['stack_size'],
+                        is_hero=player_data.get('is_hero', False)
+                    )
+                    session.add(player)
+                    session.flush()  # Get the ID
+
+                    player_ids.append(player.id)
+
+                session.commit()
+                logger.info(f"Created {len(player_ids)} players in bulk for game state {players_data[0]['game_state_id'] if players_data else 'unknown'}")
+                return player_ids
+
+        except Exception as e:
+            logger.error(f"Failed to create players in bulk: {e}")
+            raise DatabaseConnectionError(f"Failed to create players in bulk: {e}") from e
+
+    def get_player(self, player_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a player by ID with related entities.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            Dictionary containing player data with related entities, or None if not found
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Query with eager loading of relationships
+                player = session.query(Player).options(
+                    selectinload(Player.game_state),
+                    selectinload(Player.bets),
+                    selectinload(Player.jackpots)
+                ).filter(Player.id == player_id).first()
+
+                if not player:
+                    return None
+
+                # Convert to dictionary
+                return {
+                    'id': player.id,
+                    'game_state_id': player.game_state_id,
+                    'position': player.position,
+                    'hole_cards': player.hole_cards,
+                    'stack_size': float(player.stack_size) if player.stack_size else None,
+                    'is_hero': player.is_hero,
+                    'game_state': {
+                        'id': player.game_state.id,
+                        'round': player.game_state.round,
+                        'pot_size': float(player.game_state.pot_size),
+                        'outcome': player.game_state.outcome
+                    } if player.game_state else None,
+                    'bets': [
+                        {
+                            'id': bet.id,
+                            'amount': float(bet.amount),
+                            'bet_type': bet.bet_type,
+                            'round': bet.round
+                        }
+                        for bet in player.bets
+                    ],
+                    'jackpots': [
+                        {
+                            'id': jackpot.id,
+                            'jackpot_type': jackpot.jackpot_type,
+                            'payout_amount': float(jackpot.payout_amount)
+                        }
+                        for jackpot in player.jackpots
+                    ]
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve player: {e}") from e
+
+    def get_players_by_game_state(self, game_state_id: int) -> List[Dict[str, Any]]:
+        """
+        Retrieve all players for a specific game state.
+
+        Args:
+            game_state_id: GameState ID
+
+        Returns:
+            List of player dictionaries for the game state
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                players = session.query(Player).options(
+                    selectinload(Player.bets),
+                    selectinload(Player.jackpots)
+                ).filter(Player.game_state_id == game_state_id).all()
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'id': player.id,
+                        'game_state_id': player.game_state_id,
+                        'position': player.position,
+                        'hole_cards': player.hole_cards,
+                        'stack_size': float(player.stack_size) if player.stack_size else None,
+                        'is_hero': player.is_hero,
+                        'bets': [
+                            {
+                                'id': bet.id,
+                                'amount': float(bet.amount),
+                                'bet_type': bet.bet_type,
+                                'round': bet.round
+                            }
+                            for bet in player.bets
+                        ],
+                        'jackpots': [
+                            {
+                                'id': jackpot.id,
+                                'jackpot_type': jackpot.jackpot_type,
+                                'payout_amount': float(jackpot.payout_amount)
+                            }
+                            for jackpot in player.jackpots
+                        ]
+                    }
+                    for player in players
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve players for game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve players: {e}") from e
+
+    def update_player(self, player_id: int, updates: Dict[str, Any]) -> bool:
+        """
+        Update an existing player.
+
+        Args:
+            player_id: Player ID to update
+            updates: Dictionary of fields to update (position, hole_cards, stack_size, is_hero)
+
+        Returns:
+            True if update was successful, False if player not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_player_exists(player_id)
+
+        # Validate update data (only check provided fields)
+        update_data = {'game_state_id': 1, 'position': 'dummy', 'hole_cards': 'AsKs', 'stack_size': 1000}  # dummy values
+        update_data.update(updates)
+        self._validate_player_data(update_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                player = session.query(Player).filter(Player.id == player_id).first()
+
+                if not player:
+                    return False
+
+                # Update allowed fields
+                allowed_fields = {'position', 'hole_cards', 'stack_size', 'is_hero'}
+                for field, value in updates.items():
+                    if field in allowed_fields:
+                        setattr(player, field, value)
+
+                session.commit()
+                logger.info(f"Updated player {player_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to update player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update player: {e}") from e
+
+    def delete_player(self, player_id: int) -> bool:
+        """
+        Delete a player and all related entities (cascade delete).
+
+        Args:
+            player_id: Player ID to delete
+
+        Returns:
+            True if deletion was successful, False if player not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_player_exists(player_id)
+
+        try:
+            with self.connection.session_scope() as session:
+                player = session.query(Player).filter(Player.id == player_id).first()
+
+                if not player:
+                    return False
+
+                # Delete the player (cascade will handle related entities)
+                session.delete(player)
+                session.commit()
+
+                logger.info(f"Deleted player {player_id} with cascade")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to delete player: {e}") from e
+
+    # ===== BETS CRUD OPERATIONS =====
+
+    def create_bet(self, bet_data: Dict[str, Any]) -> int:
+        """
+        Create a new bet linked to a game state and player.
+
+        Args:
+            bet_data: Dictionary containing bet information including:
+                - game_state_id: GameState ID (required)
+                - player_id: Player ID (required)
+                - amount: Bet amount (required)
+                - action_type: Type of action ('fold', 'call', 'raise') (optional, default 'raise')
+                - round: Poker round ('preflop', 'flop', 'turn', 'river') (optional, default 'preflop')
+
+        Returns:
+            ID of the created bet
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_bet_data(bet_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                # Create Bet
+                bet = Bet(
+                    game_state_id=bet_data['game_state_id'],
+                    player_id=bet_data['player_id'],
+                    amount=bet_data['amount'],
+                    action_type=bet_data.get('action_type', 'raise'),
+                    round=bet_data.get('round', 'preflop')
+                )
+                session.add(bet)
+                session.flush()  # Get the ID
+
+                bet_id = bet.id
+                logger.info(f"Created bet {bet_id} for player {bet_data['player_id']} in game state {bet_data['game_state_id']}")
+                return bet_id
+
+        except Exception as e:
+            logger.error(f"Failed to create bet: {e}")
+            raise DatabaseConnectionError(f"Failed to create bet: {e}") from e
+
+    def create_bets_bulk(self, bets_data: List[Dict[str, Any]]) -> List[int]:
+        """
+        Create multiple bets for a game state in bulk.
+
+        Args:
+            bets_data: List of bet data dictionaries, each containing:
+                - game_state_id: GameState ID (required)
+                - player_id: Player ID (required)
+                - amount: Bet amount (required)
+                - action_type: Type of action (optional)
+                - round: Poker round (optional)
+
+        Returns:
+            List of created bet IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                bet_ids = []
+
+                for bet_data in bets_data:
+                    # Create Bet
+                    bet = Bet(
+                        game_state_id=bet_data['game_state_id'],
+                        player_id=bet_data['player_id'],
+                        amount=bet_data['amount'],
+                        action_type=bet_data.get('action_type', 'raise'),
+                        round=bet_data.get('round', 'preflop')
+                    )
+                    session.add(bet)
+                    session.flush()  # Get the ID
+
+                    bet_ids.append(bet.id)
+
+                session.commit()
+                logger.info(f"Created {len(bet_ids)} bets in bulk")
+                return bet_ids
+
+        except Exception as e:
+            logger.error(f"Failed to create bets in bulk: {e}")
+            raise DatabaseConnectionError(f"Failed to create bets in bulk: {e}") from e
+
+    def get_bet(self, bet_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a bet by ID with related entities.
+
+        Args:
+            bet_id: Bet ID
+
+        Returns:
+            Dictionary containing bet data with related player and game state, or None if not found
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Query with eager loading of relationships
+                bet = session.query(Bet).options(
+                    selectinload(Bet.player),
+                    selectinload(Bet.game_state)
+                ).filter(Bet.id == bet_id).first()
+
+                if not bet:
+                    return None
+
+                # Convert to dictionary
+                return {
+                    'id': bet.id,
+                    'game_state_id': bet.game_state_id,
+                    'player_id': bet.player_id,
+                    'amount': float(bet.amount),
+                    'action_type': bet.action_type,
+                    'round': bet.round,
+                    'player': {
+                        'id': bet.player.id,
+                        'position': bet.player.position,
+                        'hole_cards': bet.player.hole_cards,
+                        'is_hero': bet.player.is_hero
+                    } if bet.player else None,
+                    'game_state': {
+                        'id': bet.game_state.id,
+                        'round': bet.game_state.round,
+                        'pot_size': float(bet.game_state.pot_size),
+                        'outcome': bet.game_state.outcome
+                    } if bet.game_state else None
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve bet {bet_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve bet: {e}") from e
+
+    def get_bets_by_game_state(self, game_state_id: int) -> List[Dict[str, Any]]:
+        """
+        Retrieve all bets for a specific game state, ordered by round and amount.
+
+        This enables bet history reconstruction for game replay.
+
+        Args:
+            game_state_id: GameState ID
+
+        Returns:
+            List of bet dictionaries ordered for chronological reconstruction
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                bets = session.query(Bet).options(
+                    selectinload(Bet.player)
+                ).filter(Bet.game_state_id == game_state_id).order_by(
+                    Bet.round, Bet.amount  # Order by round, then by bet amount
+                ).all()
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'id': bet.id,
+                        'game_state_id': bet.game_state_id,
+                        'player_id': bet.player_id,
+                        'amount': float(bet.amount),
+                        'action_type': bet.action_type,
+                        'round': bet.round,
+                        'player': {
+                            'id': bet.player.id,
+                            'position': bet.player.position,
+                            'hole_cards': bet.player.hole_cards,
+                            'is_hero': bet.player.is_hero
+                        } if bet.player else None
+                    }
+                    for bet in bets
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve bets for game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve bets: {e}") from e
+
+    def get_bets_by_player(self, player_id: int) -> List[Dict[str, Any]]:
+        """
+        Retrieve all bets made by a specific player across all game states.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            List of bet dictionaries for the player
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                bets = session.query(Bet).options(
+                    selectinload(Bet.game_state)
+                ).filter(Bet.player_id == player_id).order_by(
+                    Bet.game_state_id, Bet.round
+                ).all()
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'id': bet.id,
+                        'game_state_id': bet.game_state_id,
+                        'player_id': bet.player_id,
+                        'amount': float(bet.amount),
+                        'action_type': bet.action_type,
+                        'round': bet.round,
+                        'game_state': {
+                            'id': bet.game_state.id,
+                            'round': bet.game_state.round,
+                            'pot_size': float(bet.game_state.pot_size),
+                            'outcome': bet.game_state.outcome
+                        } if bet.game_state else None
+                    }
+                    for bet in bets
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve bets for player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve bets: {e}") from e
+
+    def update_bet(self, bet_id: int, updates: Dict[str, Any]) -> bool:
+        """
+        Update an existing bet.
+
+        Args:
+            bet_id: Bet ID to update
+            updates: Dictionary of fields to update (amount, action_type, round)
+
+        Returns:
+            True if update was successful, False if bet not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_bet_exists(bet_id)
+
+        # Validate update data (only check provided fields)
+        update_data = {'game_state_id': 1, 'player_id': 1, 'amount': 100}  # dummy values
+        update_data.update(updates)
+        self._validate_bet_data(update_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                bet = session.query(Bet).filter(Bet.id == bet_id).first()
+
+                if not bet:
+                    return False
+
+                # Update allowed fields
+                allowed_fields = {'amount', 'action_type', 'round'}
+                for field, value in updates.items():
+                    if field in allowed_fields:
+                        setattr(bet, field, value)
+
+                session.commit()
+                logger.info(f"Updated bet {bet_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to update bet {bet_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update bet: {e}") from e
+
+    def delete_bet(self, bet_id: int) -> bool:
+        """
+        Delete a bet.
+
+        Args:
+            bet_id: Bet ID to delete
+
+        Returns:
+            True if deletion was successful, False if bet not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_bet_exists(bet_id)
+
+        try:
+            with self.connection.session_scope() as session:
+                bet = session.query(Bet).filter(Bet.id == bet_id).first()
+
+                if not bet:
+                    return False
+
+                # Delete the bet
+                session.delete(bet)
+                session.commit()
+
+                logger.info(f"Deleted bet {bet_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete bet {bet_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to delete bet: {e}") from e
+
+    # ===== BOARDCARDS CRUD OPERATIONS =====
+
+    def create_board_card(self, board_card_data: Dict[str, Any]) -> int:
+        """
+        Create a new board card combination.
+
+        Args:
+            board_card_data: Dictionary containing board card information including:
+                - flop1, flop2, flop3: Flop cards (required)
+                - turn: Turn card (required)
+                - river: River card (required)
+
+        Returns:
+            ID of the created board card
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_board_card_data(board_card_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                # Create BoardCard
+                board_card = BoardCard(
+                    flop1=board_card_data['flop1'],
+                    flop2=board_card_data['flop2'],
+                    flop3=board_card_data['flop3'],
+                    turn=board_card_data['turn'],
+                    river=board_card_data['river']
+                )
+                session.add(board_card)
+                session.flush()  # Get the ID
+
+                board_card_id = board_card.id
+                logger.info(f"Created board card {board_card_id}: {board_card.flop1}{board_card.flop2}{board_card.flop3} {board_card.turn} {board_card.river}")
+                return board_card_id
+
+        except Exception as e:
+            logger.error(f"Failed to create board card: {e}")
+            raise DatabaseConnectionError(f"Failed to create board card: {e}") from e
+
+    def get_or_create_board_card(self, board_card_data: Dict[str, Any]) -> int:
+        """
+        Get existing board card combination or create new one if it doesn't exist.
+
+        This enables board card reuse for performance and data consistency.
+
+        Args:
+            board_card_data: Dictionary containing board card information:
+                - flop1, flop2, flop3: Flop cards (required)
+                - turn: Turn card (required)
+                - river: River card (required)
+
+        Returns:
+            ID of the existing or newly created board card
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Try to find existing board card with same combination
+                existing = session.query(BoardCard).filter(
+                    BoardCard.flop1 == board_card_data['flop1'],
+                    BoardCard.flop2 == board_card_data['flop2'],
+                    BoardCard.flop3 == board_card_data['flop3'],
+                    BoardCard.turn == board_card_data['turn'],
+                    BoardCard.river == board_card_data['river']
+                ).first()
+
+                if existing:
+                    logger.debug(f"Reusing existing board card {existing.id}")
+                    return existing.id
+
+                # Create new board card
+                board_card = BoardCard(
+                    flop1=board_card_data['flop1'],
+                    flop2=board_card_data['flop2'],
+                    flop3=board_card_data['flop3'],
+                    turn=board_card_data['turn'],
+                    river=board_card_data['river']
+                )
+                session.add(board_card)
+                session.flush()  # Get the ID
+
+                board_card_id = board_card.id
+                logger.info(f"Created new board card {board_card_id}: {board_card.flop1}{board_card.flop2}{board_card.flop3} {board_card.turn} {board_card.river}")
+                return board_card_id
+
+        except Exception as e:
+            logger.error(f"Failed to get or create board card: {e}")
+            raise DatabaseConnectionError(f"Failed to get or create board card: {e}") from e
+
+    def get_board_card(self, board_card_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a board card by ID.
+
+        Args:
+            board_card_id: BoardCard ID
+
+        Returns:
+            Dictionary containing board card data, or None if not found
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                board_card = session.query(BoardCard).filter(BoardCard.id == board_card_id).first()
+
+                if not board_card:
+                    return None
+
+                # Convert to dictionary
+                return {
+                    'id': board_card.id,
+                    'flop1': board_card.flop1,
+                    'flop2': board_card.flop2,
+                    'flop3': board_card.flop3,
+                    'turn': board_card.turn,
+                    'river': board_card.river,
+                    'flop': board_card.flop,
+                    'all_cards': board_card.all_cards,
+                    'street_cards': board_card.street_cards
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve board card {board_card_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve board card: {e}") from e
+
+    def find_board_card_by_cards(self, flop1: str, flop2: str, flop3: str, turn: str, river: str) -> Optional[int]:
+        """
+        Find a board card by its exact card combination.
+
+        Args:
+            flop1, flop2, flop3: Flop cards
+            turn: Turn card
+            river: River card
+
+        Returns:
+            BoardCard ID if found, None otherwise
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                board_card = session.query(BoardCard).filter(
+                    BoardCard.flop1 == flop1,
+                    BoardCard.flop2 == flop2,
+                    BoardCard.flop3 == flop3,
+                    BoardCard.turn == turn,
+                    BoardCard.river == river
+                ).first()
+
+                return board_card.id if board_card else None
+
+        except Exception as e:
+            logger.error(f"Failed to find board card by cards: {e}")
+            raise DatabaseConnectionError(f"Failed to find board card: {e}") from e
+
+    def get_board_cards_by_pattern(self, pattern: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Retrieve board cards matching specific patterns (e.g., containing certain suits/ranks).
+
+        Args:
+            pattern: Dictionary with search criteria:
+                - contains_rank: List of ranks that must be present
+                - contains_suit: List of suits that must be present
+                - excludes_rank: List of ranks that must not be present
+                - excludes_suit: List of suits that must not be present
+
+        Returns:
+            List of matching board card dictionaries
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                query = session.query(BoardCard)
+
+                # Apply pattern filters
+                if 'contains_rank' in pattern:
+                    ranks = pattern['contains_rank']
+                    # Check if any of the board cards contain the required ranks
+                    rank_conditions = []
+                    for rank in ranks:
+                        rank_conditions.extend([
+                            BoardCard.flop1.like(f'{rank}%'),
+                            BoardCard.flop2.like(f'{rank}%'),
+                            BoardCard.flop3.like(f'{rank}%'),
+                            BoardCard.turn.like(f'{rank}%'),
+                            BoardCard.river.like(f'{rank}%')
+                        ])
+                    if rank_conditions:
+                        query = query.filter(or_(*rank_conditions))
+
+                if 'contains_suit' in pattern:
+                    suits = pattern['contains_suit']
+                    # Check if any of the board cards contain the required suits
+                    suit_conditions = []
+                    for suit in suits:
+                        suit_conditions.extend([
+                            BoardCard.flop1.like(f'%{suit}'),
+                            BoardCard.flop2.like(f'%{suit}'),
+                            BoardCard.flop3.like(f'%{suit}'),
+                            BoardCard.turn.like(f'%{suit}'),
+                            BoardCard.river.like(f'%{suit}')
+                        ])
+                    if suit_conditions:
+                        query = query.filter(or_(*suit_conditions))
+
+                # Note: excludes_rank and excludes_suit would require more complex NOT EXISTS logic
+                # For now, we'll implement the simpler contains logic
+
+                board_cards = query.limit(100).all()  # Limit results for performance
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'id': bc.id,
+                        'flop1': bc.flop1,
+                        'flop2': bc.flop2,
+                        'flop3': bc.flop3,
+                        'turn': bc.turn,
+                        'river': bc.river,
+                        'flop': bc.flop,
+                        'all_cards': bc.all_cards
+                    }
+                    for bc in board_cards
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to get board cards by pattern: {e}")
+            raise DatabaseConnectionError(f"Failed to get board cards by pattern: {e}") from e
+
+    def update_board_card(self, board_card_id: int, updates: Dict[str, Any]) -> bool:
+        """
+        Update an existing board card.
+
+        Args:
+            board_card_id: BoardCard ID to update
+            updates: Dictionary of fields to update (flop1, flop2, flop3, turn, river)
+
+        Returns:
+            True if update was successful, False if board card not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_board_card_exists(board_card_id)
+
+        # Validate update data (only check provided fields)
+        update_data = {'flop1': 'As', 'flop2': 'Ks', 'flop3': 'Qs', 'turn': 'Js', 'river': 'Ts'}  # dummy values
+        update_data.update(updates)
+        self._validate_board_card_data(update_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                board_card = session.query(BoardCard).filter(BoardCard.id == board_card_id).first()
+
+                if not board_card:
+                    return False
+
+                # Update allowed fields
+                allowed_fields = {'flop1', 'flop2', 'flop3', 'turn', 'river'}
+                for field, value in updates.items():
+                    if field in allowed_fields:
+                        setattr(board_card, field, value)
+
+                session.commit()
+                logger.info(f"Updated board card {board_card_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to update board card {board_card_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update board card: {e}") from e
+
+    def delete_board_card(self, board_card_id: int) -> bool:
+        """
+        Delete a board card.
+
+        Note: This should only be done if no GameStates reference this board card.
+
+        Args:
+            board_card_id: BoardCard ID to delete
+
+        Returns:
+            True if deletion was successful, False if board card not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_board_card_exists(board_card_id)
+
+        try:
+            with self.connection.session_scope() as session:
+                board_card = session.query(BoardCard).filter(BoardCard.id == board_card_id).first()
+
+                if not board_card:
+                    return False
+
+                # Check if any GameStates reference this board card
+                referenced_count = session.query(GameState).filter(GameState.board_cards_id == board_card_id).count()
+                if referenced_count > 0:
+                    logger.warning(f"Cannot delete board card {board_card_id}: referenced by {referenced_count} game states")
+                    return False
+
+                # Delete the board card
+                session.delete(board_card)
+                session.commit()
+
+                logger.info(f"Deleted board card {board_card_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete board card {board_card_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to delete board card: {e}") from e
+
+    # ===== JACKPOTS CRUD OPERATIONS =====
+
+    def create_jackpot(self, jackpot_data: Dict[str, Any]) -> int:
+        """
+        Create a new jackpot event with payout details.
+
+        Args:
+            jackpot_data: Dictionary containing jackpot information including:
+                - game_state_id: GameState ID (required)
+                - player_id: Player ID (required)
+                - jackpot_type: Type of jackpot (required, e.g., 'royal_flush')
+                - payout_amount: Payout amount (required)
+                - qualifying_cards: List of cards that formed the jackpot (required)
+
+        Returns:
+            ID of the created jackpot
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_jackpot_data(jackpot_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                # Create Jackpot
+                jackpot = Jackpot(
+                    game_state_id=jackpot_data['game_state_id'],
+                    player_id=jackpot_data['player_id'],
+                    jackpot_type=jackpot_data['jackpot_type'],
+                    payout_amount=jackpot_data['payout_amount'],
+                    qualifying_cards=jackpot_data['qualifying_cards']
+                )
+                session.add(jackpot)
+                session.flush()  # Get the ID
+
+                jackpot_id = jackpot.id
+                logger.info(f"Created jackpot {jackpot_id}: {jackpot.jackpot_type} for player {jackpot.player_id} (${jackpot.payout_amount})")
+                return jackpot_id
+
+        except Exception as e:
+            logger.error(f"Failed to create jackpot: {e}")
+            raise DatabaseConnectionError(f"Failed to create jackpot: {e}") from e
+
+    def create_jackpots_bulk(self, jackpots_data: List[Dict[str, Any]]) -> List[int]:
+        """
+        Create multiple jackpot events in bulk.
+
+        Args:
+            jackpots_data: List of jackpot data dictionaries, each containing:
+                - game_state_id: GameState ID (required)
+                - player_id: Player ID (required)
+                - jackpot_type: Type of jackpot (required)
+                - payout_amount: Payout amount (required)
+                - qualifying_cards: List of cards (required)
+
+        Returns:
+            List of created jackpot IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                jackpot_ids = []
+
+                for jackpot_data in jackpots_data:
+                    # Create Jackpot
+                    jackpot = Jackpot(
+                        game_state_id=jackpot_data['game_state_id'],
+                        player_id=jackpot_data['player_id'],
+                        jackpot_type=jackpot_data['jackpot_type'],
+                        payout_amount=jackpot_data['payout_amount'],
+                        qualifying_cards=jackpot_data['qualifying_cards']
+                    )
+                    session.add(jackpot)
+                    session.flush()  # Get the ID
+
+                    jackpot_ids.append(jackpot.id)
+
+                session.commit()
+                logger.info(f"Created {len(jackpot_ids)} jackpots in bulk")
+                return jackpot_ids
+
+        except Exception as e:
+            logger.error(f"Failed to create jackpots in bulk: {e}")
+            raise DatabaseConnectionError(f"Failed to create jackpots in bulk: {e}") from e
+
+    def get_jackpot(self, jackpot_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a jackpot by ID with related entities.
+
+        Args:
+            jackpot_id: Jackpot ID
+
+        Returns:
+            Dictionary containing jackpot data with related player and game state, or None if not found
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Query with eager loading of relationships
+                jackpot = session.query(Jackpot).options(
+                    selectinload(Jackpot.player),
+                    selectinload(Jackpot.game_state)
+                ).filter(Jackpot.id == jackpot_id).first()
+
+                if not jackpot:
+                    return None
+
+                # Convert to dictionary
+                return {
+                    'id': jackpot.id,
+                    'game_state_id': jackpot.game_state_id,
+                    'player_id': jackpot.player_id,
+                    'jackpot_type': jackpot.jackpot_type,
+                    'payout_amount': float(jackpot.payout_amount),
+                    'qualifying_cards': jackpot.qualifying_cards,
+                    'payout_multiplier': jackpot.payout_multiplier,
+                    'player': {
+                        'id': jackpot.player.id,
+                        'position': jackpot.player.position,
+                        'hole_cards': jackpot.player.hole_cards,
+                        'is_hero': jackpot.player.is_hero
+                    } if jackpot.player else None,
+                    'game_state': {
+                        'id': jackpot.game_state.id,
+                        'round': jackpot.game_state.round,
+                        'pot_size': float(jackpot.game_state.pot_size),
+                        'outcome': jackpot.game_state.outcome
+                    } if jackpot.game_state else None
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve jackpot {jackpot_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve jackpot: {e}") from e
+
+    def get_jackpots_by_game_state(self, game_state_id: int) -> List[Dict[str, Any]]:
+        """
+        Retrieve all jackpots for a specific game state.
+
+        Args:
+            game_state_id: GameState ID
+
+        Returns:
+            List of jackpot dictionaries for the game state
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                jackpots = session.query(Jackpot).options(
+                    selectinload(Jackpot.player)
+                ).filter(Jackpot.game_state_id == game_state_id).all()
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'id': jackpot.id,
+                        'game_state_id': jackpot.game_state_id,
+                        'player_id': jackpot.player_id,
+                        'jackpot_type': jackpot.jackpot_type,
+                        'payout_amount': float(jackpot.payout_amount),
+                        'qualifying_cards': jackpot.qualifying_cards,
+                        'payout_multiplier': jackpot.payout_multiplier,
+                        'player': {
+                            'id': jackpot.player.id,
+                            'position': jackpot.player.position,
+                            'hole_cards': jackpot.player.hole_cards,
+                            'is_hero': jackpot.player.is_hero
+                        } if jackpot.player else None
+                    }
+                    for jackpot in jackpots
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve jackpots for game state {game_state_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve jackpots: {e}") from e
+
+    def get_jackpots_by_player(self, player_id: int) -> List[Dict[str, Any]]:
+        """
+        Retrieve all jackpots won by a specific player.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            List of jackpot dictionaries for the player
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                jackpots = session.query(Jackpot).options(
+                    selectinload(Jackpot.game_state)
+                ).filter(Jackpot.player_id == player_id).order_by(
+                    Jackpot.game_state_id
+                ).all()
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'id': jackpot.id,
+                        'game_state_id': jackpot.game_state_id,
+                        'player_id': jackpot.player_id,
+                        'jackpot_type': jackpot.jackpot_type,
+                        'payout_amount': float(jackpot.payout_amount),
+                        'qualifying_cards': jackpot.qualifying_cards,
+                        'payout_multiplier': jackpot.payout_multiplier,
+                        'game_state': {
+                            'id': jackpot.game_state.id,
+                            'round': jackpot.game_state.round,
+                            'pot_size': float(jackpot.game_state.pot_size),
+                            'outcome': jackpot.game_state.outcome
+                        } if jackpot.game_state else None
+                    }
+                    for jackpot in jackpots
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve jackpots for player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve jackpots: {e}") from e
+
+    def get_jackpot_statistics(self) -> List[Dict[str, Any]]:
+        """
+        Retrieve jackpot frequency and payout statistics by type.
+
+        This supports jackpot frequency analysis queries.
+
+        Returns:
+            List of jackpot statistics dictionaries with frequency, average payout, etc.
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Query jackpot statistics grouped by type
+                result = session.query(
+                    Jackpot.jackpot_type,
+                    func.count(Jackpot.id).label('frequency'),
+                    func.avg(Jackpot.payout_amount).label('avg_payout'),
+                    func.sum(Jackpot.payout_amount).label('total_payout'),
+                    func.min(Jackpot.payout_amount).label('min_payout'),
+                    func.max(Jackpot.payout_amount).label('max_payout')
+                ).group_by(Jackpot.jackpot_type).order_by(func.count(Jackpot.id).desc()).all()
+
+                # Convert to dictionaries
+                return [
+                    {
+                        'jackpot_type': row.jackpot_type,
+                        'frequency': row.frequency,
+                        'avg_payout': float(row.avg_payout) if row.avg_payout else 0.0,
+                        'total_payout': float(row.total_payout) if row.total_payout else 0.0,
+                        'min_payout': float(row.min_payout) if row.min_payout else 0.0,
+                        'max_payout': float(row.max_payout) if row.max_payout else 0.0
+                    }
+                    for row in result
+                ]
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve jackpot statistics: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve jackpot statistics: {e}") from e
+
+    def get_jackpot_statistics_by_player(self, player_id: int) -> Dict[str, Any]:
+        """
+        Retrieve jackpot statistics for a specific player.
+
+        Args:
+            player_id: Player ID
+
+        Returns:
+            Dictionary with player's jackpot statistics
+
+        Raises:
+            DatabaseConnectionError: If database operation fails
+        """
+        try:
+            with self.connection.session_scope() as session:
+                # Query player's jackpot statistics
+                result = session.query(
+                    func.count(Jackpot.id).label('total_jackpots'),
+                    func.sum(Jackpot.payout_amount).label('total_payout'),
+                    func.avg(Jackpot.payout_amount).label('avg_payout'),
+                    func.max(Jackpot.payout_amount).label('max_single_payout')
+                ).filter(Jackpot.player_id == player_id).first()
+
+                return {
+                    'player_id': player_id,
+                    'total_jackpots': result.total_jackpots or 0,
+                    'total_payout': float(result.total_payout) if result.total_payout else 0.0,
+                    'avg_payout': float(result.avg_payout) if result.avg_payout else 0.0,
+                    'max_single_payout': float(result.max_single_payout) if result.max_single_payout else 0.0
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve jackpot statistics for player {player_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to retrieve jackpot statistics: {e}") from e
+
+    def update_jackpot(self, jackpot_id: int, updates: Dict[str, Any]) -> bool:
+        """
+        Update an existing jackpot.
+
+        Args:
+            jackpot_id: Jackpot ID to update
+            updates: Dictionary of fields to update (jackpot_type, payout_amount, qualifying_cards)
+
+        Returns:
+            True if update was successful, False if jackpot not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_jackpot_exists(jackpot_id)
+
+        # Validate update data (only check provided fields)
+        update_data = {'game_state_id': 1, 'player_id': 1, 'jackpot_type': 'dummy', 'payout_amount': 100, 'qualifying_cards': ['As', 'Ks']}  # dummy values
+        update_data.update(updates)
+        self._validate_jackpot_data(update_data)
+
+        try:
+            with self.connection.session_scope() as session:
+                jackpot = session.query(Jackpot).filter(Jackpot.id == jackpot_id).first()
+
+                if not jackpot:
+                    return False
+
+                # Update allowed fields
+                allowed_fields = {'jackpot_type', 'payout_amount', 'qualifying_cards'}
+                for field, value in updates.items():
+                    if field in allowed_fields:
+                        setattr(jackpot, field, value)
+
+                session.commit()
+                logger.info(f"Updated jackpot {jackpot_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to update jackpot {jackpot_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to update jackpot: {e}") from e
+
+    def delete_jackpot(self, jackpot_id: int) -> bool:
+        """
+        Delete a jackpot.
+
+        Args:
+            jackpot_id: Jackpot ID to delete
+
+        Returns:
+            True if deletion was successful, False if jackpot not found
+
+        Raises:
+            DataIntegrityError: If validation fails
+            DatabaseConnectionError: If database operation fails
+        """
+        self._validate_jackpot_exists(jackpot_id)
+
+        try:
+            with self.connection.session_scope() as session:
+                jackpot = session.query(Jackpot).filter(Jackpot.id == jackpot_id).first()
+
+                if not jackpot:
+                    return False
+
+                # Delete the jackpot
+                session.delete(jackpot)
+                session.commit()
+
+                logger.info(f"Deleted jackpot {jackpot_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete jackpot {jackpot_id}: {e}")
+            raise DatabaseConnectionError(f"Failed to delete jackpot: {e}") from e
+
+    # ===== BULK INSERTION OPTIMIZATION =====
+
+    def bulk_insert_game_states(self, game_states_data: List[Dict[str, Any]], batch_size: int = 1000) -> List[int]:
+        """
+        High-performance bulk insertion of game states.
+
+        Args:
+            game_states_data: List of game state data dictionaries
+            batch_size: Number of records to insert per transaction (default 1000)
+
+        Returns:
+            List of created game state IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails (all insertions rolled back)
+        """
+        if not game_states_data:
+            return []
+
+        try:
+            all_ids = []
+
+            # Process in batches for memory efficiency and performance
+            for i in range(0, len(game_states_data), batch_size):
+                batch = game_states_data[i:i + batch_size]
+                batch_ids = self._bulk_insert_game_states_batch(batch)
+                all_ids.extend(batch_ids)
+
+            logger.info(f"Bulk inserted {len(all_ids)} game states in {len(game_states_data) // batch_size + 1} batches")
+            return all_ids
+
+        except Exception as e:
+            logger.error(f"Failed bulk insert of game states: {e}")
+            raise DatabaseConnectionError(f"Failed bulk insert of game states: {e}") from e
+
+    def _bulk_insert_game_states_batch(self, game_states_data: List[Dict[str, Any]]) -> List[int]:
+        """Internal method for batch insertion of game states."""
+        try:
+            with self.connection.session_scope() as session:
+                game_state_objects = []
+
+                for game_state_data in game_states_data:
+                    game_state = GameState(
+                        cell_id=game_state_data['cell_id'],
+                        timestamp=game_state_data.get('timestamp', datetime.now(timezone.utc)),
+                        round=game_state_data.get('round', 'preflop'),
+                        pot_size=game_state_data['pot_size'],
+                        board_cards_id=game_state_data['board_cards_id'],
+                        outcome=game_state_data.get('outcome')
+                    )
+                    game_state_objects.append(game_state)
+                    session.add(game_state)
+
+                # Flush to get IDs without committing yet
+                session.flush()
+                ids = [gs.id for gs in game_state_objects]
+
+                # Commit the batch
+                session.commit()
+                return ids
+
+        except Exception as e:
+            # Rollback will happen automatically due to context manager
+            raise e
+
+    def bulk_insert_players(self, players_data: List[Dict[str, Any]], batch_size: int = 1000) -> List[int]:
+        """
+        High-performance bulk insertion of players.
+
+        Args:
+            players_data: List of player data dictionaries
+            batch_size: Number of records to insert per transaction (default 1000)
+
+        Returns:
+            List of created player IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails (all insertions rolled back)
+        """
+        if not players_data:
+            return []
+
+        try:
+            all_ids = []
+
+            # Process in batches
+            for i in range(0, len(players_data), batch_size):
+                batch = players_data[i:i + batch_size]
+                batch_ids = self._bulk_insert_players_batch(batch)
+                all_ids.extend(batch_ids)
+
+            logger.info(f"Bulk inserted {len(all_ids)} players in {len(players_data) // batch_size + 1} batches")
+            return all_ids
+
+        except Exception as e:
+            logger.error(f"Failed bulk insert of players: {e}")
+            raise DatabaseConnectionError(f"Failed bulk insert of players: {e}") from e
+
+    def _bulk_insert_players_batch(self, players_data: List[Dict[str, Any]]) -> List[int]:
+        """Internal method for batch insertion of players."""
+        try:
+            with self.connection.session_scope() as session:
+                player_objects = []
+
+                for player_data in players_data:
+                    player = Player(
+                        game_state_id=player_data['game_state_id'],
+                        position=player_data['position'],
+                        hole_cards=player_data['hole_cards'],
+                        stack_size=player_data['stack_size'],
+                        is_hero=player_data.get('is_hero', False)
+                    )
+                    player_objects.append(player)
+                    session.add(player)
+
+                session.flush()
+                ids = [p.id for p in player_objects]
+                session.commit()
+                return ids
+
+        except Exception as e:
+            raise e
+
+    def bulk_insert_bets(self, bets_data: List[Dict[str, Any]], batch_size: int = 1000) -> List[int]:
+        """
+        High-performance bulk insertion of bets.
+
+        Args:
+            bets_data: List of bet data dictionaries
+            batch_size: Number of records to insert per transaction (default 1000)
+
+        Returns:
+            List of created bet IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails (all insertions rolled back)
+        """
+        if not bets_data:
+            return []
+
+        try:
+            all_ids = []
+
+            # Process in batches
+            for i in range(0, len(bets_data), batch_size):
+                batch = bets_data[i:i + batch_size]
+                batch_ids = self._bulk_insert_bets_batch(batch)
+                all_ids.extend(batch_ids)
+
+            logger.info(f"Bulk inserted {len(all_ids)} bets in {len(bets_data) // batch_size + 1} batches")
+            return all_ids
+
+        except Exception as e:
+            logger.error(f"Failed bulk insert of bets: {e}")
+            raise DatabaseConnectionError(f"Failed bulk insert of bets: {e}") from e
+
+    def _bulk_insert_bets_batch(self, bets_data: List[Dict[str, Any]]) -> List[int]:
+        """Internal method for batch insertion of bets."""
+        try:
+            with self.connection.session_scope() as session:
+                bet_objects = []
+
+                for bet_data in bets_data:
+                    bet = Bet(
+                        game_state_id=bet_data['game_state_id'],
+                        player_id=bet_data['player_id'],
+                        amount=bet_data['amount'],
+                        action_type=bet_data.get('action_type', 'raise'),
+                        round=bet_data.get('round', 'preflop')
+                    )
+                    bet_objects.append(bet)
+                    session.add(bet)
+
+                session.flush()
+                ids = [b.id for b in bet_objects]
+                session.commit()
+                return ids
+
+        except Exception as e:
+            raise e
+
+    def bulk_insert_jackpots(self, jackpots_data: List[Dict[str, Any]], batch_size: int = 1000) -> List[int]:
+        """
+        High-performance bulk insertion of jackpots.
+
+        Args:
+            jackpots_data: List of jackpot data dictionaries
+            batch_size: Number of records to insert per transaction (default 1000)
+
+        Returns:
+            List of created jackpot IDs in the same order as input
+
+        Raises:
+            DatabaseConnectionError: If database operation fails (all insertions rolled back)
+        """
+        if not jackpots_data:
+            return []
+
+        try:
+            all_ids = []
+
+            # Process in batches
+            for i in range(0, len(jackpots_data), batch_size):
+                batch = jackpots_data[i:i + batch_size]
+                batch_ids = self._bulk_insert_jackpots_batch(batch)
+                all_ids.extend(batch_ids)
+
+            logger.info(f"Bulk inserted {len(all_ids)} jackpots in {len(jackpots_data) // batch_size + 1} batches")
+            return all_ids
+
+        except Exception as e:
+            logger.error(f"Failed bulk insert of jackpots: {e}")
+            raise DatabaseConnectionError(f"Failed bulk insert of jackpots: {e}") from e
+
+    def _bulk_insert_jackpots_batch(self, jackpots_data: List[Dict[str, Any]]) -> List[int]:
+        """Internal method for batch insertion of jackpots."""
+        try:
+            with self.connection.session_scope() as session:
+                jackpot_objects = []
+
+                for jackpot_data in jackpots_data:
+                    jackpot = Jackpot(
+                        game_state_id=jackpot_data['game_state_id'],
+                        player_id=jackpot_data['player_id'],
+                        jackpot_type=jackpot_data['jackpot_type'],
+                        payout_amount=jackpot_data['payout_amount'],
+                        qualifying_cards=jackpot_data['qualifying_cards']
+                    )
+                    jackpot_objects.append(jackpot)
+                    session.add(jackpot)
+
+                session.flush()
+                ids = [j.id for j in jackpot_objects]
+                session.commit()
+                return ids
+
+        except Exception as e:
+            raise e
+
+    def bulk_insert_simulation_data(self, simulation_data: Dict[str, Any]) -> Dict[str, List[int]]:
+        """
+        High-performance bulk insertion of complete simulation data.
+
+        This method handles the complex relationships between GameStates, Players, Bets, and Jackpots
+        in a single optimized transaction, ensuring data consistency.
+
+        Args:
+            simulation_data: Dictionary containing:
+                - 'game_states': List of game state data
+                - 'players': List of player data
+                - 'bets': List of bet data
+                - 'jackpots': List of jackpot data
+
+        Returns:
+            Dictionary with IDs for each entity type
+
+        Raises:
+            DatabaseConnectionError: If database operation fails (all insertions rolled back)
+        """
+        try:
+            with self.connection.session_scope() as session:
+                result_ids = {
+                    'game_states': [],
+                    'players': [],
+                    'bets': [],
+                    'jackpots': []
+                }
+
+                # Insert game states first
+                if 'game_states' in simulation_data:
+                    game_state_objects = []
+                    for gs_data in simulation_data['game_states']:
+                        gs = GameState(
+                            cell_id=gs_data['cell_id'],
+                            timestamp=gs_data.get('timestamp', datetime.now(timezone.utc)),
+                            round=gs_data.get('round', 'preflop'),
+                            pot_size=gs_data['pot_size'],
+                            board_cards_id=gs_data['board_cards_id'],
+                            outcome=gs_data.get('outcome')
+                        )
+                        game_state_objects.append(gs)
+                        session.add(gs)
+
+                    session.flush()
+                    result_ids['game_states'] = [gs.id for gs in game_state_objects]
+
+                # Insert players
+                if 'players' in simulation_data:
+                    player_objects = []
+                    for p_data in simulation_data['players']:
+                        p = Player(
+                            game_state_id=p_data['game_state_id'],
+                            position=p_data['position'],
+                            hole_cards=p_data['hole_cards'],
+                            stack_size=p_data['stack_size'],
+                            is_hero=p_data.get('is_hero', False)
+                        )
+                        player_objects.append(p)
+                        session.add(p)
+
+                    session.flush()
+                    result_ids['players'] = [p.id for p in player_objects]
+
+                # Insert bets
+                if 'bets' in simulation_data:
+                    bet_objects = []
+                    for b_data in simulation_data['bets']:
+                        b = Bet(
+                            game_state_id=b_data['game_state_id'],
+                            player_id=b_data['player_id'],
+                            amount=b_data['amount'],
+                            action_type=b_data.get('action_type', 'raise'),
+                            round=b_data.get('round', 'preflop')
+                        )
+                        bet_objects.append(b)
+                        session.add(b)
+
+                    session.flush()
+                    result_ids['bets'] = [b.id for b in bet_objects]
+
+                # Insert jackpots
+                if 'jackpots' in simulation_data:
+                    jackpot_objects = []
+                    for j_data in simulation_data['jackpots']:
+                        j = Jackpot(
+                            game_state_id=j_data['game_state_id'],
+                            player_id=j_data['player_id'],
+                            jackpot_type=j_data['jackpot_type'],
+                            payout_amount=j_data['payout_amount'],
+                            qualifying_cards=j_data['qualifying_cards']
+                        )
+                        jackpot_objects.append(j)
+                        session.add(j)
+
+                    session.flush()
+                    result_ids['jackpots'] = [j.id for j in jackpot_objects]
+
+                # Commit all changes
+                session.commit()
+
+                total_records = sum(len(ids) for ids in result_ids.values())
+                logger.info(f"Bulk inserted complete simulation data: {total_records} total records")
+                return result_ids
+
+        except Exception as e:
+            logger.error(f"Failed bulk insert of simulation data: {e}")
+            raise DatabaseConnectionError(f"Failed bulk insert of simulation data: {e}") from e

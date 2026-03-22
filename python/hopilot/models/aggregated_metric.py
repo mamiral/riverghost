@@ -24,12 +24,14 @@ class AggregatedMetric(BaseModel):
     __tablename__ = "aggregated_metrics"
 
     cell_id = Column(Integer, ForeignKey("matrix_cells.id"), unique=True, nullable=False)
-    last_updated = Column(String(27), nullable=False)  # ISO timestamp
     equity = Column(Numeric(5, 4), nullable=True)  # Standard win probability (0.0000-1.0000)
+    win_probability = Column(Numeric(5, 4), nullable=True)  # Alternative win probability metric
+    ev = Column(Numeric(10, 4), nullable=True)  # Expected value calculation
     jackpot_adjusted_ev = Column(Numeric(10, 4), nullable=True)  # EV including jackpots
-    jackpot_frequency = Column(Numeric(5, 4), nullable=True)  # Jackpot occurrence rate (0.0000-1.0000)
-    avg_jackpot_payout = Column(Numeric(10, 2), nullable=True)  # Average jackpot amount
+    jackpot_frequency = Column(Numeric(5, 4), nullable=True)  # Frequency of jackpots (0.0000-1.0000)
+    avg_jackpot_payout = Column(Numeric(10, 2), nullable=True)  # Average jackpot payout amount
     convergence_status = Column(String(20), nullable=True)  # Convergence assessment
+    last_updated = Column(String(27), nullable=False)  # ISO timestamp
 
     # Note: Relationship defined on MatrixCell side to avoid backref conflicts
     # matrix_cell = relationship("MatrixCell", backref="aggregated_metric")

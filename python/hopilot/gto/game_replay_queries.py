@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""
+Game Replay Query Engine.
+
+This module implements queries to reconstruct complete poker game sequences
+chronologically from stored GameStates, Players, Bets, and BoardCards data.
+"""
+
+import logging
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
+
+from sqlalchemy import text, func, and_, or_, asc, desc
+from sqlalchemy.orm import Session, joinedload
+
+from hopilot.database import DatabaseConnection
+from hopilot.models import GameState, Player, Bet, BoardCard, HandMatrix, MatrixCell
+from hopilot.performance_monitor import PerformanceMonitor
+
+logger = logging.getLogger(__name__)
+
+
+class GameReplayQueryEngine:
+    """
+    Engine for reconstructing complete poker game sequences from stored data.
+
+    This class provides methods to replay entire poker hands chronologically,
+    including all betting actions, board reveals, and player decisions.
+    """
+
+    def __init__(self, database_url: str):
+        """
+        Initialize the game replay query engine.
+
+        Args:
+            database_url: Database connection URL
+        """
+        self.database_url = database_url
+        self.db_connection = DatabaseConnection(database_url)
+        self.performance_monitor = PerformanceMonitor()
+
+    def replay_game_sequence(
+        self,
+        game_state_id: int,
+        include_player_details: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Reconstruct a complete game sequence for a single hand.
+
+        Args:
+            game_state_id: Specific GameState ID to replay
+            include_player_details: Whether to include detailed player information
+
+        Returns:
+            Complete game sequence with chronological events
+        """
+        with self.performance_monitor.track_operation("replay_game_sequence"):
+            with self.db_connection.session_scope() as session:
+                # Get the base GameState with relationships
+                game_state = session.query(GameState).options(
+                    joinedload(GameState.matrix_cell),
+                    joinedload(GameState.players),
+                    joinedload(GameState.bets),
+                    joinedload(GameState.board_cards),
+                    joinedload(GameState.jackpots)
+                ).filter(GameState.id == game_state_id).first()
+
+                if not game_state:
+                    logger.warning(f"GameState {game_state_id} not found")
+                    return None
+
+                # Build chronological sequence
+                sequence = self._build_chronological_sequence(session, game_state)
+
+                return {
+                    'game_state_id': game_state_id,
+                    'hand_combination': game_state.matrix_cell.hand_combination if game_state.matrix_cell else None,
+                    'final_outcome': game_state.outcome,
+                    'final_pot_size': float(game_state.pot_size),
+                    'sequence': sequence,
+                    'total_events': len(sequence),
+                    'timestamp': game_state.timestamp.isoformat() if game_state.timestamp else None
+                }
+
+    def replay_games_by_hand_combination(
+        self,
+        matrix_id: int,
+        hand_combination: str,
+        limit: int = 10,
+        chronological: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Replay multiple games for a specific hand combination.
+
+        Args:
+            matrix_id: Hand matrix ID
+            hand_combination: Specific hand combination to filter by
+            limit: Maximum number of games to return
+            chronological: Whether to order by timestamp
+
+        Returns:
+            List of game sequences
+        """
+        with self.performance_monitor.track_operation("replay_games_by_hand"):
+            with self.db_connection.session_scope() as session:
+                # Find MatrixCell for this hand combination
+                matrix_cell = session.query(MatrixCell).filter(
+                    and_(
+                        MatrixCell.matrix_id == matrix_id,
+                        MatrixCell.hand_combination == hand_combination
+                    )
+                ).first()
+
+                if not matrix_cell:
+                    logger.warning(f"No MatrixCell found for hand combination '{hand_combination}' in matrix {matrix_id}")
+                    return []
+
+                # Get GameStates for this cell
+                query = session.query(GameState).filter(GameState.cell_id == matrix_cell.id)
+
+                if chronological:
+                    query = query.order_by(asc(GameState.timestamp))
+
+                game_states = query.limit(limit).all()
+
+                # Build sequences for each game
+                results = []
+                for gs in game_states:
+                    sequence = self.replay_game_sequence(gs.id, include_player_details=False)
+                    if sequence:
+                        results.append(sequence)
+
+                return results
+
+    def get_game_timeline_summary(
+        self,
+        game_state_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a high-level summary of game events without full details.
+
+        Args:
+            game_state_id: GameState ID to summarize
+
+        Returns:
+            Timeline summary with key events
+        """
+        with self.performance_monitor.track_operation("game_timeline_summary"):
+            with self.db_connection.session_scope() as session:
+                game_state = session.query(GameState).filter(GameState.id == game_state_id).first()
+                if not game_state:
+                    return None
+
+                # Count events by type
+                bet_count = session.query(func.count(Bet.id)).filter(Bet.game_state_id == game_state_id).scalar()
+                player_count = session.query(func.count(Player.id)).filter(Player.game_state_id == game_state_id).scalar()
+                # Each game state has one set of board cards (5 cards: flop3 + turn + river)
+                board_card_count = 5 if game_state.board_cards_id else 0
+
+                return {
+                    'game_state_id': game_state_id,
+                    'round': game_state.round,
+                    'outcome': game_state.outcome,
+                    'pot_size': float(game_state.pot_size),
+                    'event_counts': {
+                        'bets': bet_count or 0,
+                        'players': player_count or 0,
+                        'board_cards': board_card_count or 0
+                    },
+                    'timestamp': game_state.timestamp.isoformat() if game_state.timestamp else None
+                }
+
+    def _build_chronological_sequence(
+        self,
+        session: Session,
+        game_state: GameState
+    ) -> List[Dict[str, Any]]:
+        """
+        Build a chronological sequence of game events.
+
+        Args:
+            session: Database session
+            game_state: GameState object with loaded relationships
+
+        Returns:
+            Chronologically ordered list of game events
+        """
+        events = []
+
+        # Add game start event
+        events.append({
+            'event_type': 'game_start',
+            'timestamp': game_state.timestamp.isoformat() if game_state.timestamp else None,
+            'round': game_state.round,
+            'data': {
+                'pot_size': float(game_state.pot_size),
+                'player_count': len(game_state.players) if game_state.players else 0
+            }
+        })
+
+        # Add board card reveals (chronological by street)
+        if game_state.board_cards:
+            # BoardCard contains all community cards in one record
+            board_card = game_state.board_cards
+
+            # Add flop reveal
+            events.append({
+                'event_type': 'board_reveal',
+                'timestamp': None,  # No individual timestamps for board cards
+                'round': 'flop',
+                'data': {
+                    'cards': [board_card.flop1, board_card.flop2, board_card.flop3],
+                    'street': 'flop'
+                }
+            })
+
+            # Add turn reveal
+            events.append({
+                'event_type': 'board_reveal',
+                'timestamp': None,
+                'round': 'turn',
+                'data': {
+                    'card': board_card.turn,
+                    'street': 'turn'
+                }
+            })
+
+            # Add river reveal
+            events.append({
+                'event_type': 'board_reveal',
+                'timestamp': None,
+                'round': 'river',
+                'data': {
+                    'card': board_card.river,
+                    'street': 'river'
+                }
+            })
+
+        # Add betting actions (chronological)
+        if game_state.bets:
+            # Sort bets by ID (assuming sequential creation) and round
+            sorted_bets = sorted(game_state.bets, key=lambda b: (b.id, b.round))
+
+            for bet in sorted_bets:
+                events.append({
+                    'event_type': 'bet',
+                    'timestamp': None,  # Bets don't have individual timestamps
+                    'round': bet.round,
+                    'data': {
+                        'player_id': bet.player_id,
+                        'action': bet.action_type,
+                        'amount': float(bet.amount) if bet.amount else 0.0
+                    }
+                })
+
+        # Add game end event
+        events.append({
+            'event_type': 'game_end',
+            'timestamp': None,  # Would need to be calculated from last event
+            'round': game_state.round,
+            'data': {
+                'outcome': game_state.outcome,
+                'final_pot_size': float(game_state.pot_size)
+            }
+        })
+
+        return events
+
+    def get_replay_statistics(
+        self,
+        matrix_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Get statistics about available game replays.
+
+        Args:
+            matrix_id: Optional matrix ID to filter by
+
+        Returns:
+            Statistics about replayable games
+        """
+        with self.performance_monitor.track_operation("replay_statistics"):
+            with self.db_connection.session_scope() as session:
+                # Base query
+                query = session.query(
+                    func.count(GameState.id).label('total_games'),
+                    func.count(func.distinct(MatrixCell.hand_combination)).label('unique_hands'),
+                    func.min(GameState.timestamp).label('earliest_game'),
+                    func.max(GameState.timestamp).label('latest_game')
+                ).join(MatrixCell)
+
+                if matrix_id:
+                    query = query.filter(MatrixCell.matrix_id == matrix_id)
+
+                result = query.first()
+
+                return {
+                    'total_games': result.total_games or 0,
+                    'unique_hand_combinations': result.unique_hands or 0,
+                    'date_range': {
+                        'earliest': result.earliest_game.isoformat() if result.earliest_game else None,
+                        'latest': result.latest_game.isoformat() if result.latest_game else None
+                    },
+                    'matrix_id': matrix_id
+                }

@@ -29,8 +29,7 @@ class Jackpot(BaseModel):
     player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
     jackpot_type = Column(String(50), nullable=False, index=True)
     payout_amount = Column(Numeric(10, 2), nullable=False)
-    cards_used = Column(JSON, nullable=False)  # Cards that formed the jackpot hand
-    triggered_at = Column(String(27), nullable=False)  # ISO timestamp
+    qualifying_cards = Column(JSON, nullable=False)  # Cards that formed the jackpot hand
 
     # Relationships
     # Note: Backrefs removed - relationships defined on GameState/Player sides
@@ -55,8 +54,8 @@ class Jackpot(BaseModel):
         if self.payout_amount <= 0:
             raise ValueError("Payout amount must be positive")
 
-        if not self.cards_used or not isinstance(self.cards_used, list):
-            raise ValueError("Cards used must be a non-empty list")
+        if not self.qualifying_cards or not isinstance(self.qualifying_cards, list):
+            raise ValueError("Qualifying cards must be a non-empty list")
 
         # Validate jackpot types (extensible)
         valid_types = [

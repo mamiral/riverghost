@@ -9,7 +9,7 @@ CREATED IN: Phase 4 cleanup (replaces deleted AoFBrowserDataProvider)
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.aof_solver_adapter import AoFSolverAdapter
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 
 STATUS_AVAILABLE = "AVAILABLE"
 STATUS_MISSING = "MISSING"
+STATUS_NO_CONTEST = "NO_CONTEST"
 
 
 class BrowserDatabaseProvider:
@@ -39,6 +40,28 @@ class BrowserDatabaseProvider:
         # Initialize solver adapter for fallback computation when database is empty
         self._solver = AoFSolverAdapter()
         self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url} and AoFSolverAdapter")
+
+    def _is_no_contest_scenario(self, position: str, position_actions: Dict[str, str], strict_current_action: bool) -> bool:
+        """
+        Check if this is a no-contest scenario where the player automatically wins or loses.
+        
+        NO_CONTEST occurs when:
+        1. All other players fold (uncontested pot)
+        2. Current player folds but others are all-in (also uncontested for that player)
+        """
+        normalized_actions = normalize_position_actions(position_actions)
+        current_action = normalized_actions.get(position, "FOLD")
+        
+        # Count active players (those who haven't folded)
+        active_positions = [pos for pos, action in normalized_actions.items() if action != "FOLD"]
+        
+        if strict_current_action:
+            # In strict mode, only consider the current player's action
+            return len(active_positions) <= 1  # Only current player is active, or no one is active
+        
+        # All other players folded
+        other_active = [pos for pos in active_positions if pos != position]
+        return len(other_active) == 0
 
     def get_matrix_payload(
         self,
@@ -68,18 +91,6 @@ class BrowserDatabaseProvider:
         except ValueError as e:
             self.logger.warning(f"Invalid context: {e}")
             # Return empty cells list for invalid context
-            cells = []
-            for row in range(13):
-                for col in range(13):
-                    hand_key = self._matrix_keys[row][col]
-                    cells.append({
-                        "row": row,
-                        "col": col,
-                        "hand_key": hand_key,
-                        "value": None,
-                        "status": STATUS_MISSING,
-                        "display": "-",
-                    })
             return {
                 "context": {
                     "position": position,
@@ -90,9 +101,39 @@ class BrowserDatabaseProvider:
                     "pot_size": float(pot_size),
                     "bet_amount": float(bet_amount),
                 },
-                "cells": cells,
+                "cells": [],
                 "status": STATUS_MISSING,
                 "status_message": f"Invalid context: {e}",
+            }
+
+        # Check for NO_CONTEST scenarios first
+        if self._is_no_contest_scenario(position, position_actions or {}, strict_current_action):
+            self.logger.debug(f"NO_CONTEST scenario detected for position {position}")
+            cells = []
+            for row in range(13):
+                for col in range(13):
+                    hand_key = self._matrix_keys[row][col]
+                    # For NO_CONTEST, the value depends on the metric
+                    if metric == "WIN_LOSE_PROBABILITY":
+                        value = 1.0  # Player wins uncontested
+                    elif metric == "EV":
+                        value = pot_size  # Player wins the pot
+                    else:
+                        value = 1.0  # Default to 1.0 for other metrics
+                    
+                    cells.append({
+                        "row": row,
+                        "col": col,
+                        "hand_key": hand_key,
+                        "value": value,
+                        "status": STATUS_NO_CONTEST,
+                        "display": format_metric_value(metric, value),
+                    })
+            return {
+                "context": context,
+                "cells": cells,
+                "status": STATUS_AVAILABLE,
+                "status_message": "No contest - all other players folded",
             }
 
         # Query database for matrix data
@@ -101,7 +142,20 @@ class BrowserDatabaseProvider:
             
             if not matrix_data:
                 self.logger.debug(f"No matrix data found for context: {context}")
-                # Return empty cells list
+                
+                # Try solver fallback if allowed
+                if allow_compute:
+                    self.logger.debug("Attempting solver fallback for missing data")
+                    cells = self._compute_matrix_with_solver(context)
+                    if cells:
+                        return {
+                            "context": context,
+                            "cells": cells,
+                            "status": STATUS_AVAILABLE,
+                            "status_message": "Matrix computed with solver",
+                        }
+                
+                # Return empty cells list if no data and no solver fallback
                 cells = []
                 for row in range(13):
                     for col in range(13):
@@ -112,7 +166,7 @@ class BrowserDatabaseProvider:
                             "hand_key": hand_key,
                             "value": None,
                             "status": STATUS_MISSING,
-                            "display": "-",
+                            "display": format_metric_value(context["metric"], None),
                         })
                 return {
                     "context": context,
@@ -179,7 +233,7 @@ class BrowserDatabaseProvider:
             }
         except Exception as e:
             self.logger.error(f"Database query failed: {e}", exc_info=True)
-            # Return empty cells list on error
+            # Return full matrix of MISSING cells on database error (no solver fallback)
             cells = []
             for row in range(13):
                 for col in range(13):
@@ -190,7 +244,7 @@ class BrowserDatabaseProvider:
                         "hand_key": hand_key,
                         "value": None,
                         "status": STATUS_MISSING,
-                        "display": "-",
+                        "display": format_metric_value(context["metric"], None),
                     })
             return {
                 "context": context,
@@ -221,6 +275,82 @@ class BrowserDatabaseProvider:
             allow_compute=allow_compute,
             on_cell_complete=on_cell_complete,
         )
+
+    def _compute_matrix_with_solver(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Compute matrix data using the AoF solver as fallback.
+        """
+        cells = []
+        position = context["position"]
+        metric = context["metric"]
+        position_actions = context["position_actions"]
+        pot_size = context["pot_size"]
+        bet_amount = context["bet_amount"]
+        
+        # Get number of opponents
+        num_opponents = self._solver.resolve_num_opponents(
+            context["action"], 
+            position_actions
+        )
+        
+        for row in range(13):
+            for col in range(13):
+                hand_key = self._matrix_keys[row][col]
+                
+                try:
+                    # Use solver to compute value
+                    result = self._solver.evaluate_hand_key(
+                        hand_key=hand_key,
+                        num_opponents=num_opponents,
+                        pot_size=pot_size,
+                        bet_amount=bet_amount,
+                    )
+                    
+                    if result["status"] == "AVAILABLE" and result.get("win_probability") is not None:
+                        # Extract the appropriate value based on metric
+                        if metric == "WIN_LOSE_PROBABILITY":
+                            value = result.get("win_probability", 0.5)
+                        elif metric == "EV":
+                            value = result.get("ev", 0.0)
+                        elif metric == "EQUITY":
+                            value = result.get("equity", 0.5)
+                        elif metric == "EQR":
+                            # EQR (EV Ratio) - for now use equity as fallback since mock doesn't provide it
+                            value = result.get("equity", 0.5)
+                        else:
+                            value = result.get("win_probability", 0.5)  # Default fallback
+                        
+                        status = STATUS_AVAILABLE
+                        display = format_metric_value(metric, value)
+                    elif result["status"] == "TIMEOUT":
+                        value = None
+                        status = "TIMEOUT"
+                        display = "TIMEOUT"
+                    elif result["status"] == "ERROR":
+                        value = None
+                        status = "ERROR"
+                        display = "ERROR"
+                    else:
+                        value = None
+                        status = STATUS_MISSING
+                        display = format_metric_value(metric, value)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Solver failed for hand {hand_key}: {e}")
+                    value = None
+                    status = STATUS_MISSING
+                    display = format_metric_value(metric, value)
+                
+                cells.append({
+                    "row": row,
+                    "col": col,
+                    "hand_key": hand_key,
+                    "value": value,
+                    "status": status,
+                    "display": display,
+                })
+        
+        return cells
 
     def _build_context(
         self,
@@ -258,25 +388,39 @@ class BrowserDatabaseProvider:
         """
         Execute database query synchronously.
         """
+        # Create proper context objects from dict
         try:
-            # Create proper context objects from dict
-            try:
-                position_ctx = PositionContext.from_id(context.get("position", "UTG"))
-                action_ctx = ActionContext.from_id(context.get("action", "ALL_IN"))
-                metric_ctx = MetricType.from_id(context.get("metric", "EQUITY"))
-            except (ValueError, KeyError) as e:
-                self.logger.error(f"Invalid context parameters: {e}")
-                return {}
-            
-            # Query synchronously
-            return self.database_repository.get_strategy_matrix_sync(
-                position=position_ctx,
-                action=action_ctx,
-                metric=metric_ctx
-            )
-        except Exception as e:
-            self.logger.error(f"Database query failed: {e}")
+            position_ctx = PositionContext.from_id(context.get("position", "UTG"))
+            action_ctx = ActionContext.from_id(context.get("action", "ALL_IN"))
+            metric_ctx = MetricType.from_id(context.get("metric", "EQUITY"))
+        except (ValueError, KeyError) as e:
+            self.logger.error(f"Invalid context parameters: {e}")
             return {}
+        
+        # Query synchronously - let exceptions bubble up
+        return self.database_repository.get_strategy_matrix_sync(
+            position=position_ctx,
+            action=action_ctx,
+            metric=metric_ctx
+        )
+
+    async def get_convergence_data(self, position: str, position_actions: Dict[str, str] | None = None):
+        """
+        Get convergence data for a specific position and action context.
+        
+        Delegates to the database repository for convergence analysis.
+        """
+        try:
+            # Convert position and actions to context objects
+            position_ctx = PositionContext.from_id(position)
+            actions = normalize_position_actions(position_actions or {})
+            action_ctx = ActionContext.from_id(actions.get(position, "ALL_IN"))
+            
+            # Get convergence data from repository
+            return await self.database_repository.get_convergence_data(position_ctx, action_ctx)
+        except Exception as e:
+            self.logger.error(f"Failed to get convergence data: {e}")
+            return []
 
     def _baseline_equity(self, hand_key: str) -> float:
         """Return baseline equity for a hand against a random hand.

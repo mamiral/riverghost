@@ -80,6 +80,106 @@ class BaseModel(Base):
                 result[column.name] = value
         return result
 
+    def to_json(self) -> str:
+        """
+        Serialize model to JSON string.
+
+        Returns:
+            JSON string representation of the model
+        """
+        import json
+        return json.dumps(self.to_dict(), default=str)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]):
+        """
+        Create model instance from dictionary.
+
+        Args:
+            data: Dictionary with model data
+
+        Returns:
+            New model instance
+        """
+        # Remove any computed fields that aren't actual columns
+        column_names = {column.name for column in cls.__table__.columns}
+        filtered_data = {k: v for k, v in data.items() if k in column_names}
+        return cls(**filtered_data)
+
+    @classmethod
+    def from_json(cls, json_str: str):
+        """
+        Deserialize model from JSON string.
+
+        Args:
+            json_str: JSON string representation
+
+        Returns:
+            New model instance
+        """
+        import json
+        data = json.loads(json_str)
+        return cls.from_dict(data)
+
+    def to_pickle(self) -> bytes:
+        """
+        Serialize model to pickle bytes for efficient storage.
+        
+        This provides faster serialization/deserialization than JSON
+        with minimal overhead for SIM-002 requirements.
+        
+        Returns:
+            Pickle bytes representation of the model
+        """
+        import pickle
+        return pickle.dumps(self.to_dict())
+
+    @classmethod
+    def from_pickle(cls, pickle_bytes: bytes):
+        """
+        Deserialize model from pickle bytes.
+
+        Args:
+            pickle_bytes: Pickle bytes representation
+
+        Returns:
+            New model instance
+        """
+        import pickle
+        data = pickle.loads(pickle_bytes)
+        return cls.from_dict(data)
+
+    def to_compressed_pickle(self) -> bytes:
+        """
+        Serialize model to compressed pickle for storage efficiency.
+        
+        Uses gzip compression to minimize storage overhead while
+        maintaining fast serialization/deserialization.
+        
+        Returns:
+            Compressed pickle bytes
+        """
+        import gzip
+        import pickle
+        data = self.to_dict()
+        return gzip.compress(pickle.dumps(data))
+
+    @classmethod
+    def from_compressed_pickle(cls, compressed_bytes: bytes):
+        """
+        Deserialize model from compressed pickle bytes.
+
+        Args:
+            compressed_bytes: Compressed pickle bytes
+
+        Returns:
+            New model instance
+        """
+        import gzip
+        import pickle
+        data = pickle.loads(gzip.decompress(compressed_bytes))
+        return cls.from_dict(data)
+
     def update_from_dict(self, data: Dict[str, Any]) -> None:
         """
         Update model from dictionary.
