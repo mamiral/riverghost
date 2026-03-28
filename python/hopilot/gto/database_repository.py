@@ -26,6 +26,7 @@ from hopilot.models import (
     Jackpot
 )
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType, ConvergencePoint, JackpotStats
+from hopilot.gto.aggregation_engine import AggregationEngine
 
 logger = get_logger(__name__)
 
@@ -64,6 +65,8 @@ class DatabaseRepository:
         self.connection = DatabaseConnection(database_url)
         # Initialize database schema on first connection
         self.connection.create_tables()
+        # Initialize aggregation engine for on-demand matrix computation
+        self.aggregation_engine = AggregationEngine(database_url)
         logger.info(f"DatabaseRepository initialized with: {database_url}")
 
     # ===== DATA INTEGRITY VALIDATION METHODS =====
@@ -421,7 +424,10 @@ class DatabaseRepository:
         metric: MetricType
     ) -> Dict[str, Dict[str, float]]:
         """
-        Synchronous version of get_strategy_matrix.
+        Get strategy matrix using on-demand aggregation from GameStates.
+
+        This method replaces the old AggregatedMetric-based approach with
+        real-time computation using the aggregation engine.
         """
         def _query_matrix() -> Dict[str, Dict[str, float]]:
             try:
@@ -429,45 +435,65 @@ class DatabaseRepository:
                     # Find simulation matching position and action
                     position_filter = self._build_position_filter(position)
                     action_filter = self._build_action_filter(action)
-                    
+
                     # Get the simulation
                     simulation = session.query(Simulation).filter(
                         and_(position_filter, action_filter)
                     ).order_by(Simulation.created_at.desc()).first()
-                    
+
                     if not simulation:
+                        logger.debug(f"No simulation found for position={position.id}, action={action.id}")
                         return {}
-                    
+
                     # Get the hand_matrix for this simulation
                     hand_matrix = session.query(HandMatrix).filter(
                         HandMatrix.simulation_id == simulation.id
                     ).first()
-                    
+
                     if not hand_matrix:
+                        logger.debug(f"No hand matrix found for simulation {simulation.id}")
                         return {}
-                    
-                    # Get metric column
-                    metric_column = self._get_metric_column(metric)
-                    
-                    # Query all aggregated_metrics for this matrix
-                    results = session.query(
-                        MatrixCell.hand_combination,
-                        metric_column
-                    ).join(
-                        AggregatedMetric, MatrixCell.id == AggregatedMetric.cell_id
-                    ).filter(
+
+                    # Get all matrix cells for this matrix
+                    matrix_cells = session.query(MatrixCell).filter(
                         MatrixCell.matrix_id == hand_matrix.id
                     ).all()
-                    
-                    # Build the matrix data dict
+
+                    if not matrix_cells:
+                        logger.debug(f"No matrix cells found for matrix {hand_matrix.id}")
+                        return {}
+
+                    # Build matrix data by computing aggregations for each cell
                     matrix_data = {}
-                    for hand_combination, value in results:
-                        if value is not None:
-                            # Extract hero hand from combination (e.g., "AA vs Random" -> "AA")
-                            hero_hand = hand_combination.split(' vs ')[0]
-                            matrix_data[hero_hand] = {metric.id: float(value)}
-                    
+                    for cell in matrix_cells:
+                        # Use aggregation engine to compute metrics for this cell
+                        aggregated_data = self.aggregation_engine.compute_matrix_cell_from_game_states(
+                            matrix_id=hand_matrix.id,
+                            row_index=cell.row_index,
+                            col_index=cell.col_index,
+                            min_samples=100  # Minimum samples for reliable aggregation
+                        )
+
+                        if aggregated_data:
+                            # Extract the requested metric
+                            metric_value = None
+                            if metric.id == "EQUITY":
+                                metric_value = aggregated_data.get('equity', 0.0)
+                            elif metric.id == "EV":
+                                metric_value = aggregated_data.get('jackpot_adjusted_ev', 0.0)
+                            elif metric.id == "WIN_LOSE_PROBABILITY":
+                                # For win/lose probability, use equity as approximation
+                                metric_value = aggregated_data.get('equity', 0.0)
+                            else:
+                                logger.warning(f"Unsupported metric: {metric.id}")
+                                continue
+
+                            # Use hand_combination as the key (e.g., "AA vs Random")
+                            matrix_data[cell.hand_combination] = {metric.id: float(metric_value)}
+
+                    logger.info(f"Computed matrix data for {len(matrix_data)} cells using aggregation engine")
                     return matrix_data
+
             except Exception as e:
                 logger.error(f"Database query failed for matrix {position.id}/{action.id}/{metric.id}: {e}")
                 raise DatabaseConnectionError(f"Failed to retrieve strategy matrix: {e}") from e

@@ -12,6 +12,7 @@ Created: 2026-03-21
 import os
 import sys
 from typing import Optional
+from datetime import datetime, UTC
 
 # Add the project root to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -137,8 +138,7 @@ class Migration004DbSchemaRemediation:
             """))
 
             # Record this migration
-            from datetime import datetime
-            applied_at = datetime.utcnow().isoformat()
+            applied_at = datetime.now(UTC).isoformat()
 
             connection.execute(text("""
                 INSERT OR REPLACE INTO schema_migrations

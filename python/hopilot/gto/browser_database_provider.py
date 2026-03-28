@@ -136,26 +136,15 @@ class BrowserDatabaseProvider:
                 "status_message": "No contest - all other players folded",
             }
 
-        # Query database for matrix data
+        # Query database for matrix data (now uses aggregation engine)
         try:
             matrix_data = self._run_async_query(context)
-            
+
             if not matrix_data:
                 self.logger.debug(f"No matrix data found for context: {context}")
-                
-                # Try solver fallback if allowed
-                if allow_compute:
-                    self.logger.debug("Attempting solver fallback for missing data")
-                    cells = self._compute_matrix_with_solver(context)
-                    if cells:
-                        return {
-                            "context": context,
-                            "cells": cells,
-                            "status": STATUS_AVAILABLE,
-                            "status_message": "Matrix computed with solver",
-                        }
-                
-                # Return empty cells list if no data and no solver fallback
+
+                # For missing data, return cells with LOADING status instead of trying solver fallback
+                # This allows the GUI to show loading state and request computation
                 cells = []
                 for row in range(13):
                     for col in range(13):
@@ -165,14 +154,15 @@ class BrowserDatabaseProvider:
                             "col": col,
                             "hand_key": hand_key,
                             "value": None,
-                            "status": STATUS_MISSING,
-                            "display": format_metric_value(context["metric"], None),
+                            "status": "LOADING",  # Changed from MISSING to LOADING
+                            "display": "Computing...",  # Changed from "-" to "Computing..."
                         })
+
                 return {
                     "context": context,
                     "cells": cells,
-                    "status": STATUS_MISSING,
-                    "status_message": "No database in this context",
+                    "status": "LOADING",
+                    "status_message": "Matrix data is being computed from game states",
                 }
             
             # Format the matrix for GUI display
@@ -184,7 +174,7 @@ class BrowserDatabaseProvider:
                     formatted_matrix[hand_key] = format_metric_value(context["metric"], value)
                 elif not isinstance(metric_dict, dict):
                     formatted_matrix[hand_key] = format_metric_value(context["metric"], metric_dict)
-            
+
             # Build cells list in the same format as precompute
             cells = []
             for row in range(13):
@@ -205,6 +195,14 @@ class BrowserDatabaseProvider:
                                     raw_value = 0.5  # default value
                             display = format_metric_value(context["metric"], raw_value)
                             status = STATUS_AVAILABLE
+
+                            # Call completion callback if provided
+                            if on_cell_complete and callable(on_cell_complete):
+                                try:
+                                    on_cell_complete(row, col, raw_value, status)
+                                except Exception as callback_error:
+                                    self.logger.warning(f"Cell completion callback failed: {callback_error}")
+
                         elif not isinstance(metric_dict, dict):
                             raw_value = metric_dict
                             # Ensure raw_value is numeric
@@ -215,7 +213,14 @@ class BrowserDatabaseProvider:
                                     raw_value = 0.5  # default value
                             display = format_metric_value(context["metric"], raw_value)
                             status = STATUS_AVAILABLE
-                    
+
+                            # Call completion callback if provided
+                            if on_cell_complete and callable(on_cell_complete):
+                                try:
+                                    on_cell_complete(row, col, raw_value, status)
+                                except Exception as callback_error:
+                                    self.logger.warning(f"Cell completion callback failed: {callback_error}")
+
                     cells.append({
                         "row": row,
                         "col": col,

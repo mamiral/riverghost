@@ -261,9 +261,9 @@ def test_convergence_panel_display():
 
         # Test with sample convergence data
         sample_data = [
-            {"num_simulations": 100, "average_equity": 0.45, "timestamp": "2024-01-01T00:00:00"},
-            {"num_simulations": 500, "average_equity": 0.52, "timestamp": "2024-01-01T00:01:00"},
-            {"num_simulations": 1000, "average_equity": 0.48, "timestamp": "2024-01-01T00:02:00"},
+            {"sample_count": 100, "equity": 0.45, "timestamp": "2024-01-01T00:00:00"},
+            {"sample_count": 500, "equity": 0.52, "timestamp": "2024-01-01T00:01:00"},
+            {"sample_count": 1000, "equity": 0.48, "timestamp": "2024-01-01T00:02:00"},
         ]
         panel.set_convergence_data(sample_data, "BTN", "FOLD")
 
@@ -275,8 +275,8 @@ def test_convergence_panel_display():
         panel.draw(screen)
 
         # Verify data extraction for plotting
-        x_data = [point["num_simulations"] for point in panel.convergence_data]
-        y_data = [point["average_equity"] for point in panel.convergence_data]
+        x_data = [point["sample_count"] for point in panel.convergence_data]
+        y_data = [point["equity"] for point in panel.convergence_data]
 
         assert x_data == [100, 500, 1000]
         assert y_data == [0.45, 0.52, 0.48]

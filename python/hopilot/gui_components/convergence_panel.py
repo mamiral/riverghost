@@ -27,11 +27,11 @@ class ConvergencePanel:
         self.width = width
         self.height = height
 
-        # Plot area (leaving space for labels and title)
+        # Plot area (leaving space for labels, title, and statistics)
         self.plot_x = x + 60
-        self.plot_y = y + 50
+        self.plot_y = y + 70  # Moved down to make room for stats
         self.plot_width = width - 80
-        self.plot_height = height - 90
+        self.plot_height = height - 120  # Reduced to make room for stats
 
         # Colors
         self.bg_color = (25, 25, 25)
@@ -55,6 +55,10 @@ class ConvergencePanel:
         self.last_set_time = 0
         self.set_call_count = 0
 
+        # Interaction state
+        self.hovered_point = None
+        self.selected_range = None
+
     def set_bounds(self, x: int, y: int, width: int, height: int):
         """Update panel position and size."""
         self.x = x
@@ -64,16 +68,16 @@ class ConvergencePanel:
         
         # Recalculate plot area
         self.plot_x = x + 60
-        self.plot_y = y + 50
+        self.plot_y = y + 70  # Moved down to make room for stats
         self.plot_width = width - 80
-        self.plot_height = height - 90
+        self.plot_height = height - 120  # Reduced to make room for stats
 
     def set_convergence_data(self, data: List[Dict[str, Any]], position: str, action: str, metric: str = ""):
         """
         Set convergence data to display.
 
         Args:
-            data: List of convergence points with num_simulations, average_equity, timestamp
+            data: List of convergence points with sample_count, equity, timestamp
             position: Player position (for display)
             action: Player action (for display)
             metric: Metric being displayed (WIN_LOSE_PROBABILITY, EQUITY, EV, EQR)
@@ -129,8 +133,8 @@ class ConvergencePanel:
         screen.blit(title, (title_x, self.y + 8))
 
         # Extract data for plotting
-        x_data = [point["num_simulations"] for point in self.convergence_data]
-        y_data = [point["average_equity"] for point in self.convergence_data]
+        x_data = [point["sample_count"] for point in self.convergence_data]
+        y_data = [point["equity"] for point in self.convergence_data]
 
         # Calculate plot bounds
         if x_data and y_data:
@@ -151,6 +155,9 @@ class ConvergencePanel:
 
             # Draw data line
             self._draw_convergence_line(screen, x_data, y_data, x_min, x_max, y_min, y_max)
+
+            # Draw statistical analysis
+            self._draw_statistics(screen, x_data, y_data)
 
             # Draw axis labels
             self._draw_axis_labels(screen, x_max, y_max)
@@ -205,8 +212,16 @@ class ConvergencePanel:
             pygame.draw.lines(screen, self.line_color, False, points, 2)
 
         # Draw points
-        for x_pixel, y_pixel in points:
-            pygame.draw.circle(screen, self.point_color, (x_pixel, y_pixel), 3)
+        for i, (x_pixel, y_pixel) in enumerate(points):
+            color = self.point_color
+            radius = 3
+
+            # Highlight hovered point
+            if self.hovered_point == i:
+                color = (255, 255, 0)  # Yellow for hover
+                radius = 5
+
+            pygame.draw.circle(screen, color, (x_pixel, y_pixel), radius)
 
     def _draw_axis_labels(self, screen: pygame.Surface, x_max: float, y_max: float):
         """Draw axis labels."""
@@ -224,3 +239,126 @@ class ConvergencePanel:
         y_label_x = self.x + 10
         y_label_y = self.plot_y - 25
         screen.blit(y_label, (y_label_x, y_label_y))
+
+    def _draw_statistics(self, screen: pygame.Surface, x_data: List[float], y_data: List[float]):
+        """Draw statistical analysis information."""
+        if not x_data or not y_data:
+            return
+
+        # Calculate statistics
+        final_value = y_data[-1] if y_data else 0.0
+        initial_value = y_data[0] if y_data else 0.0
+        total_samples = x_data[-1] if x_data else 0
+
+        # Calculate convergence metrics
+        if len(y_data) >= 2:
+            # Simple convergence rate (change per sample)
+            convergence_rate = abs(final_value - initial_value) / len(y_data)
+        else:
+            convergence_rate = 0.0
+
+        # Calculate standard deviation of last half of data (stability measure)
+        if len(y_data) >= 4:
+            recent_data = y_data[len(y_data)//2:]
+            mean = sum(recent_data) / len(recent_data)
+            variance = sum((x - mean) ** 2 for x in recent_data) / len(recent_data)
+            std_dev = variance ** 0.5
+        else:
+            std_dev = 0.0
+
+        # Display statistics
+        stats_y = self.y + 25  # Below title
+        stats_x = self.x + 10
+
+        # Final value
+        final_text = f"Final: {final_value:.4f}"
+        final_render = self.label_font.render(final_text, True, self.text_color)
+        screen.blit(final_render, (stats_x, stats_y))
+
+        # Total samples
+        samples_text = f"Samples: {int(total_samples)}"
+        samples_render = self.label_font.render(samples_text, True, self.text_color)
+        screen.blit(samples_render, (stats_x + 120, stats_y))
+
+        # Convergence rate
+        rate_text = f"Rate: {convergence_rate:.6f}"
+        rate_render = self.label_font.render(rate_text, True, self.text_color)
+        screen.blit(rate_render, (stats_x, stats_y + 15))
+
+        # Stability (standard deviation)
+        stability_text = f"Stability: {std_dev:.6f}"
+        stability_render = self.label_font.render(stability_text, True, self.text_color)
+        screen.blit(stability_render, (stats_x + 120, stats_y + 15))
+
+        # Convergence status
+        if std_dev < 0.01 and len(y_data) >= 5:
+            status_text = "CONVERGED"
+            status_color = (0, 255, 0)  # Green
+        elif std_dev < 0.05:
+            status_text = "CONVERGING"
+            status_color = (255, 255, 0)  # Yellow
+        else:
+            status_text = "UNSTABLE"
+            status_color = (255, 0, 0)  # Red
+
+        status_render = self.label_font.render(status_text, True, status_color)
+        screen.blit(status_render, (self.x + self.width - status_render.get_width() - 10, stats_y))
+
+    def handle_mouse_motion(self, mouse_x: int, mouse_y: int) -> bool:
+        """Handle mouse motion for data exploration."""
+        if not self.convergence_data:
+            return False
+
+        # Check if mouse is over plot area
+        if (self.plot_x <= mouse_x <= self.plot_x + self.plot_width and
+            self.plot_y <= mouse_y <= self.plot_y + self.plot_height):
+
+            # Find closest data point
+            x_data = [point["sample_count"] for point in self.convergence_data]
+            y_data = [point["equity"] for point in self.convergence_data]
+
+            if x_data and y_data:
+                x_min, x_max = min(x_data), max(x_data)
+                y_min, y_max = min(y_data), max(y_data)
+
+                # Convert mouse position to data coordinates
+                x_ratio = (mouse_x - self.plot_x) / self.plot_width
+                y_ratio = 1.0 - (mouse_y - self.plot_y) / self.plot_height
+
+                data_x = x_min + (x_max - x_min) * x_ratio
+                data_y = y_min + (y_max - y_min) * y_ratio
+
+                # Find closest point
+                min_distance = float('inf')
+                closest_idx = -1
+
+                for i, (x_val, y_val) in enumerate(zip(x_data, y_data)):
+                    distance = ((x_val - data_x) / (x_max - x_min)) ** 2 + ((y_val - data_y) / (y_max - y_min)) ** 2
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_idx = i
+
+                if min_distance < 0.01:  # Close enough to highlight
+                    self.hovered_point = closest_idx
+                    return True
+
+        self.hovered_point = None
+        return False
+
+    def handle_mouse_click(self, mouse_x: int, mouse_y: int, button: int) -> bool:
+        """Handle mouse clicks for data exploration."""
+        if button == 1 and self.hovered_point is not None:  # Left click on hovered point
+            # Could implement point selection or detail view
+            return True
+        return False
+
+    def get_tooltip_text(self) -> Optional[str]:
+        """Get tooltip text for currently hovered point."""
+        if self.hovered_point is not None and self.convergence_data:
+            point = self.convergence_data[self.hovered_point]
+            sample_count = point["sample_count"]
+            equity = point["equity"]
+            timestamp = point.get("timestamp", "N/A")
+
+            return f"Samples: {sample_count}, Value: {equity:.4f}, Time: {timestamp}"
+        return None

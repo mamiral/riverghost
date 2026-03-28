@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 from hopilot.database import DatabaseConnection
 from hopilot.models import GameState, Player, Bet, BoardCard, HandMatrix, MatrixCell
 from hopilot.performance_monitor import PerformanceMonitor
+from hopilot.gto.query_cache import cached_query
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ class GameReplayQueryEngine:
 
                 return results
 
+    @cached_query(ttl=600)  # Cache for 10 minutes
     def get_game_timeline_summary(
         self,
         game_state_id: int
@@ -266,6 +268,7 @@ class GameReplayQueryEngine:
 
         return events
 
+    @cached_query(ttl=600)  # Cache for 10 minutes
     def get_replay_statistics(
         self,
         matrix_id: Optional[int] = None

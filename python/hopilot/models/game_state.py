@@ -8,7 +8,7 @@ and references to all related entities.
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 
 from hopilot.models.base import BaseModel
@@ -30,6 +30,11 @@ class GameState(BaseModel):
     pot_size = Column(Numeric(10, 2), nullable=False)
     board_cards_id = Column(Integer, ForeignKey("board_cards.id"), nullable=False)
     outcome = Column(String(20), nullable=True)
+
+    # Composite indexes for analytical query optimization
+    __table_args__ = (
+        Index('ix_game_states_cell_id_outcome', 'cell_id', 'outcome'),
+    )
 
     # Relationships
     # Note: Using relationship without backref since MatrixCell.game_states manages the relationship

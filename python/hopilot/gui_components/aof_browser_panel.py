@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.gto.aof_browser_state import AoFBrowserViewState, POSITIONS, METRICS
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiPrecomputeRunSession, GuiRunState
+from hopilot.gto.convergence_analysis_queries import ConvergenceAnalysisQueries
 from hopilot.gui_components.aof_action_selector import AoFActionSelector
 from hopilot.gui_components.aof_cell_detail_panel import AoFCellDetailPanel
 from hopilot.gui_components.aof_hand_matrix_panel import AoFHandMatrixPanel
@@ -30,6 +31,7 @@ class AoFBrowserPanel:
                 "Provide via --database-url argument or configure in gto_defaults.yaml"
             )
         self.provider = BrowserDatabaseProvider(database_url=database_url)
+        self.convergence_queries = ConvergenceAnalysisQueries(database_url)
         self.runner = AoFPrecomputeRunner(self.provider, database_url)
         self.state_machine_controller = None
         self.precompute_session: GuiPrecomputeRunSession | None = None
@@ -281,205 +283,61 @@ class AoFBrowserPanel:
         self.is_loading = False
 
     def _load_convergence_data(self):
-        """Load convergence data for selected cell only."""
+        """Load convergence data for selected cell using convergence analysis queries."""
         if not hasattr(self, 'convergence_panel') or self.convergence_panel is None:
             self.logger.warning("Convergence panel not initialized, skipping convergence data loading")
             return
-            
+
         try:
             # Only show convergence plot when a cell is selected
             if self.state.selected_cell is None:
                 self.convergence_panel.set_convergence_data([], "", "")
                 return
-            
-            current_action = self.state.get_position_action(self.state.selected_position)
+
             row, col, hand_key = self.state.selected_cell
-            
-            # Calculate convergence from historical data for this specific cell and metric
-            cell_convergence_data = self._calculate_cell_convergence_from_outcomes()
-            self.logger.debug(f"Convergence data calculated: {len(cell_convergence_data) if cell_convergence_data else 0} points")
-            
-            if cell_convergence_data:
+
+            # Get matrix ID from current payload context
+            matrix_id = self.payload.get("context", {}).get("matrix_id")
+            if not matrix_id:
+                self.logger.debug("No matrix_id in payload context, cannot load convergence data")
+                self.convergence_panel.set_convergence_data([], "", "")
+                return
+
+            # Get convergence data using the convergence analysis queries
+            convergence_result = self.convergence_queries.get_equity_convergence_series(
+                matrix_id=matrix_id,
+                row_idx=row,
+                col_idx=col,
+                sample_intervals=[100, 250, 500, 1000, 2500, 5000, 10000]
+            )
+
+            if convergence_result and convergence_result.get('convergence_series'):
+                # Convert the data format for the convergence panel
+                convergence_data = []
+                for point in convergence_result['convergence_series']:
+                    convergence_data.append({
+                        'sample_count': point['sample_count'],
+                        'equity': point['equity'],
+                        'timestamp': point.get('timestamp')
+                    })
+
+                position_action = self.state.get_position_action(self.state.selected_position)
                 self.convergence_panel.set_convergence_data(
-                    cell_convergence_data,
+                    convergence_data,
                     f"{self.state.selected_position} - {hand_key}",
-                    current_action,
+                    position_action,
                     self.state.selected_metric
                 )
+
+                self.logger.debug(f"Loaded convergence data: {len(convergence_data)} points for {hand_key}")
             else:
-                self.logger.warning(f"No convergence data for {hand_key}")
+                self.logger.debug(f"No convergence data available for {hand_key}")
                 self.convergence_panel.set_convergence_data([], "", "")
-                
+
         except Exception as e:
             self.logger.warning(f"Failed to load convergence data: {e}", exc_info=True)
             if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
                 self.convergence_panel.set_convergence_data([], "", "")
-
-    def _calculate_cell_convergence_from_outcomes(self) -> List[Dict[str, Any]]:
-        """Calculate convergence for selected cell's metric from historical outcomes.
-        
-        IMPORTANT: Convergence is ALWAYS computed dynamically from raw simulation outcomes.
-        Convergence data is NEVER stored in the database - it is computed on-the-fly
-        whenever needed. The only persistent data is the raw simulation outcomes.
-        """
-        if self.state.selected_cell is None:
-            return []
-        
-        row, col, hand_key = self.state.selected_cell
-        
-        # Try: get real outcomes from aggregation service and compute convergence
-        calculated = self._try_calculate_from_aggregation_service(hand_key)
-        if calculated:
-            self.logger.debug(f"Using aggregation service convergence: {len(calculated)} points")
-            return calculated
-        
-        self.logger.debug("Phase 4: Aggregation service removed, using fallback")
-        # Fallback: generate convergence from cell's current displayed value
-        fallback = self._generate_convergence_from_cell_value(row, col)
-        self.logger.debug(f"Fallback generated {len(fallback) if fallback else 0} convergence points")
-        return fallback
-
-    def _try_calculate_from_aggregation_service(self, hand_key: str) -> List[Dict[str, Any]]:
-        """Phase 4: Aggregation service removed. Always returns empty."""
-        # Convergence data now retrieved from database directly
-        return []
-
-    def _get_actual_outcome_count(self, row: int, col: int) -> int:
-        """Phase 4: Aggregation service removed. Returns 0."""
-        return 0
-
-    def _generate_convergence_from_cell_value(self, row: int, col: int) -> List[Dict[str, Any]]:
-        """Generate convergence curve from the cell's final computed value.
-        
-        This is used when outcomes aren't available (e.g., with old cached data).
-        It extrapolates a reasonable convergence curve showing how the metric
-        likely stabilized as more simulations were accumulated.
-        """
-        try:
-            # Always try to get the final value - from cell first, then from detail model
-            final_value = None
-            # Get actual sample count from database for this cell
-            sample_count = self._get_actual_outcome_count(row, col)
-            if sample_count <= 0:
-                sample_count = 1000  # fallback to configured default if no data
-            
-            # Approach 1: Try to find cell in payload
-            cell = self._find_payload_cell(row, col)
-            
-            if cell:
-                metric = self.state.selected_metric
-                metrics = cell.get("metrics", {})
-                
-                if metric == "WIN_LOSE_PROBABILITY":
-                    final_value = float(cell.get("value", 0.0))
-                elif metric == "EQUITY":
-                    final_value = float(metrics.get("EQUITY", 0.0))
-                elif metric == "EV":
-                    final_value = float(metrics.get("EV", 0.0))
-                elif metric == "EQR":
-                    final_value = float(metrics.get("EQR", 0.0))
-                else:
-                    final_value = float(cell.get("value", 0.0))
-                
-                self.logger.debug(f"Got final_value from cell: {final_value}")
-            
-            # Approach 2: Use detail model as fallback and get sample count
-            if final_value is None and self.selected_cell_detail:
-                detail = self.selected_cell_detail
-                if detail.get("selected") and detail.get("status") == "AVAILABLE":
-                    # Try to extract value from segments
-                    segments = detail.get("segments", [])
-                    if segments and len(segments) > 0:
-                        final_value = float(segments[0].get("value", 0.0))
-                        self.logger.debug(f"Got final_value from detail model: {final_value}")
-                    # Get sample count from detail model
-                    if detail.get("sample_count"):
-                        sample_count = int(detail["sample_count"])
-            
-            # If still no value, return empty
-            if final_value is None:
-                self.logger.debug("Could not get final_value from any source")
-                return []
-            
-            # Generate convergence points showing stabilization up to actual sample count
-            # Use logarithmic spacing to show early convergence behavior better
-            target_points = self._load_convergence_target_points()
-            simulation_counts = []
-            
-            # Generate log-spaced points from 100 to sample_count
-            import math
-            for i in range(target_points):
-                ratio = i / max(1, target_points - 1)
-                # Log-space interpolation: start small, end at sample_count
-                sim_count = int(100 * (sample_count / 100) ** ratio)
-                sim_count = max(100, min(sample_count, sim_count))
-                if not simulation_counts or sim_count != simulation_counts[-1]:
-                    simulation_counts.append(sim_count)
-            
-            convergence_data = []
-            
-            for i, sim_count in enumerate(simulation_counts):
-                # Add decreasing noise to simulate convergence
-                progress = i / max(1, len(simulation_counts) - 1) if len(simulation_counts) > 1 else 0
-                noise_magnitude = 0.15 * (1.0 - progress)
-                noise = noise_magnitude * (0.5 - progress)
-                value = final_value + noise
-                
-                # Clamp to valid range based on metric
-                if self.state.selected_metric in ("EQUITY", "WIN_LOSE_PROBABILITY"):
-                    value = max(0.0, min(1.0, value))
-                
-                convergence_data.append({
-                    "num_simulations": sim_count,
-                    "average_equity": value,
-                    "timestamp": None
-                })
-            
-            self.logger.debug(f"Generated {len(convergence_data)} fallback convergence points up to {sample_count} simulations")
-            return convergence_data
-        
-        except Exception as e:
-            self.logger.debug(f"Error generating convergence from cell value: {e}", exc_info=True)
-            return []
-
-    def _calculate_metric_for_outcomes(self, outcomes: List[Dict[str, Any]]) -> float:
-        """Calculate the selected metric value for a list of outcomes."""
-        if not outcomes:
-            return 0.0
-        
-        metric = self.state.selected_metric
-        
-        if metric == "WIN_LOSE_PROBABILITY":
-            # Count wins
-            wins = sum(1 for o in outcomes if o.get("outcome") == "WIN")
-            return wins / len(outcomes) if outcomes else 0.0
-        
-        elif metric == "EQUITY":
-            # Equity = win% + tie% * 0.5
-            wins = sum(1 for o in outcomes if o.get("outcome") == "WIN")
-            ties = sum(1 for o in outcomes if o.get("outcome") == "TIE")
-            win_prob = wins / len(outcomes) if outcomes else 0.0
-            tie_prob = ties / len(outcomes) if outcomes else 0.0
-            return win_prob + (tie_prob * 0.5)
-        
-        elif metric == "EV":
-            # Average EV
-            total_ev = sum(o.get("ev_chips", 0.0) for o in outcomes)
-            return total_ev / len(outcomes) if outcomes else 0.0
-        
-        elif metric == "EQR":
-            # EV-relative. For MVP, use equity-based calculation
-            # EQR = equity / baseline_equity
-            wins = sum(1 for o in outcomes if o.get("outcome") == "WIN")
-            ties = sum(1 for o in outcomes if o.get("outcome") == "TIE")
-            equity = (wins + ties * 0.5) / len(outcomes) if outcomes else 0.0
-            
-            # Phase 4: Baseline equity calculation removed (cache-only)
-            # Use fixed baseline of 0.5
-            baseline = 0.5
-            return max(0.0, min(1.0, equity / max(1e-6, baseline)))
-        
-        return 0.0
 
     def _invalidate_selected_cell_if_needed(self) -> None:
         if self.state.selected_cell is None:
@@ -916,6 +774,15 @@ class AoFBrowserPanel:
                     self._load_convergence_data()  # Update convergence plot for selected cell
                     return True
 
+        # Handle convergence panel mouse interactions
+        if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
+            if event.type == pygame.MOUSEMOTION:
+                if self.convergence_panel.handle_mouse_motion(event.pos[0], event.pos[1]):
+                    return True
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if self.convergence_panel.handle_mouse_click(event.pos[0], event.pos[1], event.button):
+                    return True
+
         return False
 
     # State Machine Integration Methods
@@ -1115,6 +982,26 @@ class AoFBrowserPanel:
         self.cell_detail_panel.draw(screen, self.small_font, self.selected_cell_detail)
         if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
             self.convergence_panel.draw(screen)
+            
+            # Show tooltip for convergence panel
+            tooltip_text = self.convergence_panel.get_tooltip_text()
+            if tooltip_text:
+                tooltip_font = pygame.font.SysFont("arial", 11)
+                tooltip_surface = tooltip_font.render(tooltip_text, True, (0, 0, 0))
+                tooltip_bg = pygame.Surface((tooltip_surface.get_width() + 8, tooltip_surface.get_height() + 4))
+                tooltip_bg.fill((255, 255, 200))
+                tooltip_bg.blit(tooltip_surface, (4, 2))
+                
+                # Position tooltip near mouse cursor
+                mouse_x, mouse_y = pygame.mouse.get_pos()
+                tooltip_x = mouse_x + 15
+                tooltip_y = mouse_y - 10
+                
+                # Keep tooltip on screen
+                tooltip_x = max(0, min(tooltip_x, self.width - tooltip_bg.get_width()))
+                tooltip_y = max(0, min(tooltip_y, self.height - tooltip_bg.get_height()))
+                
+                screen.blit(tooltip_bg, (tooltip_x, tooltip_y))
 
         info_x = self.side_x
         info_y = self.top_margin + self.control_h + 10

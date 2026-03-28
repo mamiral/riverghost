@@ -7,7 +7,7 @@ Represents special payout events triggered by specific hand combinations.
 from decimal import Decimal
 from typing import Any, Dict, List
 
-from sqlalchemy import Column, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Column, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import relationship
 
@@ -30,6 +30,11 @@ class Jackpot(BaseModel):
     jackpot_type = Column(String(50), nullable=False, index=True)
     payout_amount = Column(Numeric(10, 2), nullable=False)
     qualifying_cards = Column(JSON, nullable=False)  # Cards that formed the jackpot hand
+
+    # Composite indexes for analytical query optimization
+    __table_args__ = (
+        Index('ix_jackpots_game_state_id_jackpot_type', 'game_state_id', 'jackpot_type'),
+    )
 
     # Relationships
     # Note: Backrefs removed - relationships defined on GameState/Player sides
