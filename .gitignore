@@ -135,6 +135,12 @@ dmypy.json
 .hypothesis/
 .pytest_cache/
 
+# Log files
+*.log
+logs/
+python/hopilot/logs/
+*.log.*
+
 # Translations
 *.mo
 *.pot
