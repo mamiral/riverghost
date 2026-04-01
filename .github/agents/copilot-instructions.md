@@ -70,6 +70,8 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m hopilot.aof_gto_
 - Python 3.x (confirmed: virtual environment with .venv, requirements.txt dependencies) (003-state-machine-completion)
 - Python 3.11+ + SQLAlchemy ORM (existing), Pydantic (config validation), pytest (testing) (001-cache-removal)
 - SQLAlchemy-managed normalized database (PostgreSQL, SQLite, or configured backend) (001-cache-removal)
+- Python 3.x + pytest, unittest.mock (001-test-suite-cleanup)
+- SQLite databases (for test data persistence) (001-test-suite-cleanup)
 
 ## Operational Notes
 - Keep standalone AoF browser decoupled from simulator flow.
