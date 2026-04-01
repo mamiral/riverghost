@@ -166,13 +166,18 @@ def test_get_hand_metric_functionality(database_provider):
                 hand_key
             )
 
-            # Should return a float or None (method works)
-            assert result is None or isinstance(result, (int, float))
+            # Validate database integration behavior
+            if result is not None:
+                # If data exists, validate it's a reasonable probability value
+                assert 0.0 <= result <= 1.0, f"WIN_LOSE_PROBABILITY should be between 0 and 1, got {result}"
+            # If result is None, database is empty which is acceptable
 
         except Exception as e:
-            # Method should handle errors gracefully (database might be empty)
-            # Accept any exception as the method is working correctly
-            assert True  # Method executed without crashing
+            # Method should handle errors gracefully with meaningful error messages
+            # Check that error is database-related, not a generic crash
+            error_msg = str(e).lower()
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'column']), \
+                f"Error should be database-related, got: {e}"
 
     # Run the async test
     asyncio.run(run_test())
@@ -207,8 +212,11 @@ def test_convergence_data_retrieval_repository(database_provider):
                     # timestamp can be None
 
         except Exception as e:
-            # Method should handle errors gracefully
-            assert True  # Method executed without crashing
+            # Method should handle errors gracefully with database-specific errors
+            error_msg = str(e).lower()
+            # Should be database-related, not a generic crash
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'convergence']), \
+                f"Convergence data error should be database-related, got: {e}"
 
     asyncio.run(run_test())
 
@@ -336,8 +344,11 @@ def test_complex_query_simulation_summary(database_provider):
                     assert 'last_updated' in item
 
         except Exception as e:
-            # Method should handle errors gracefully
-            assert True  # Method executed without crashing
+            # Method should handle database errors gracefully
+            error_msg = str(e).lower()
+            # Should be database-related, not a generic crash
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'simulation']), \
+                f"Simulation summary error should be database-related, got: {e}"
 
     asyncio.run(run_test())
 
@@ -366,8 +377,11 @@ def test_complex_query_hand_performance_comparison(database_provider):
                     assert 'last_updated' in item
 
         except Exception as e:
-            # Method should handle errors gracefully
-            assert True
+            # Method should handle database errors gracefully
+            error_msg = str(e).lower()
+            # Should be database-related, not a generic crash
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'comparison']), \
+                f"Hand comparison error should be database-related, got: {e}"
 
     asyncio.run(run_test())
 
@@ -395,8 +409,11 @@ def test_complex_query_matrix_statistics(database_provider):
             assert 'equity_distribution' in stats
 
         except Exception as e:
-            # Method should handle errors gracefully
-            assert True
+            # Method should handle database errors gracefully
+            error_msg = str(e).lower()
+            # Should be database-related, not a generic crash
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'statistics']), \
+                f"Matrix statistics error should be database-related, got: {e}"
 
     asyncio.run(run_test())
 
@@ -589,8 +606,11 @@ def test_jackpot_statistics_retrieval_repository(database_provider):
                     assert isinstance(stat.total_payout, (int, float))
 
         except Exception as e:
-            # Method should handle errors gracefully
-            assert True  # Method executed without crashing
+            # Method should handle database errors gracefully
+            error_msg = str(e).lower()
+            # Should be database-related, not a generic crash
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'jackpot']), \
+                f"Jackpot statistics error should be database-related, got: {e}"
 
     asyncio.run(run_test())
 
@@ -658,7 +678,10 @@ def test_jackpot_statistics_edge_cases(database_provider):
             assert isinstance(stats, list)
 
         except Exception as e:
-            # Should handle database errors gracefully
-            assert True
+            # Should handle database connection errors gracefully
+            error_msg = str(e).lower()
+            # Should be database-related, not a generic crash
+            assert any(keyword in error_msg for keyword in ['database', 'connection', 'query', 'table', 'jackpot']), \
+                f"Jackpot edge case error should be database-related, got: {e}"
 
     asyncio.run(run_test())

@@ -112,10 +112,26 @@ class TestAoFBrowserPanelDatabaseLoading:
             database_url=database_url_fixture,
         )
         
-        # Panel should initialize even if database fails
-        assert panel.provider is not None
-        # Payload might be missing/empty on error
-        assert panel.payload is not None
+        # Validate payload content and structure
+        assert "context" in panel.payload, "Payload should contain context"
+        assert "cells" in panel.payload, "Payload should contain cells"
+        
+        context = panel.payload["context"]
+        assert "position" in context, "Context should contain position"
+        assert "metric" in context, "Context should contain metric"
+        assert "position_actions" in context, "Context should contain position_actions"
+        assert context["position"] == "UTG", "Position should be UTG"
+        assert context["metric"] == "EV", "Metric should be EV"
+        
+        cells = panel.payload["cells"]
+        assert isinstance(cells, list), "Cells should be a list"
+        assert len(cells) >= 2, "Should have at least 2 cells"
+        
+        # Validate cell structure
+        for cell in cells:
+            assert "hand" in cell or "hand_key" in cell, "Cell should contain hand information"
+            assert "value" in cell, "Cell should contain value"
+            assert isinstance(cell["value"], (int, float)), "Cell value should be numeric"
 
 
 class TestAoFBrowserPanelDataRefresh:

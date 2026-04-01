@@ -63,29 +63,25 @@ def db_connection():
 class TestDatabaseConnection:
     """Test database connection functionality."""
 
-    def test_connection_creation(self, db_connection):
-        """Test that database connection can be created."""
-        assert db_connection is not None
-
     def test_table_creation(self, db_connection):
-        """Test that tables can be created."""
-        # Tables should be created without error
-        pass
-
-    def test_session_creation(self, db_connection):
-        """Test that sessions can be created."""
+        """Test that tables can be created and are accessible."""
+        # Verify that core tables exist and can be queried
         session = db_connection.get_session()
-        assert session is not None
-        session.close()
+        try:
+            # Check that we can query the database (tables should exist)
+            # This will fail until actual table creation logic is implemented
+            from hopilot.models import GameState, MatrixCell, AggregatedMetric
+            result = session.query(GameState).limit(1).all()
+            assert isinstance(result, list), "Should be able to query GameState table"
+            
+            result = session.query(MatrixCell).limit(1).all()
+            assert isinstance(result, list), "Should be able to query MatrixCell table"
+            
+            result = session.query(AggregatedMetric).limit(1).all()
+            assert isinstance(result, list), "Should be able to query AggregatedMetric table"
+        finally:
+            session.close()
 
 
 # Placeholder for model-specific tests
 # These will be expanded as models are implemented
-
-class TestBaseModel:
-    """Test base model functionality."""
-
-    def test_base_model_exists(self):
-        """Test that base model class exists."""
-        from hopilot.models.base import Base
-        assert Base is not None

@@ -90,39 +90,38 @@ class TestAllInFoldGTOSolver:
         with pytest.raises(ValueError, match="num_simulations must be an integer between 100 and 10000"):
             solver.analyze_hand_strategy(['As', 'Ks'], num_simulations=100000)
 
-    @patch('hopilot.all_in_fold_gto.AllInFoldGTOSolver._calculate_ev_with_bonus')
-    def test_find_gto_threshold_basic_functionality(self, mock_ev_calc, solver, mock_analyzer):
+    def test_find_gto_threshold_basic_functionality(self, solver, mock_analyzer):
         """Test basic GTO threshold calculation functionality."""
-        # Mock the analyzer's equity calculation
+        # Set up analyzer to return realistic equity values
         mock_analyzer.calculate_odds_random_opponents.return_value = {
             'win_probability': 0.5
         }
 
-        # Mock EV calculation to return positive for strong hands, negative for weak
-        def mock_ev_func(hole_cards, board_cards, equity, pot_size, bet_amount):
-            # Simple heuristic: hands with A or K get positive EV
-            hand_str = ''.join(hole_cards)
-            if 'A' in hand_str or 'K' in hand_str:
-                return 1.0  # Positive EV
-            else:
-                return -1.0  # Negative EV
-
-        mock_ev_calc.side_effect = mock_ev_func
-
-        # This test will fail until the full implementation is done
-        # For now, we're just setting up the test structure
+        # Test will fail until actual GTO threshold implementation is complete
+        # This validates the real algorithm, not mocked internals
         result = solver.find_gto_threshold(num_opponents=8, pot_size=20, bet_amount=10, num_simulations=100)
 
-        # Basic structure checks
-        assert isinstance(result, dict)
-        assert 'threshold_equity' in result
-        assert 'optimal_hands' in result
-        assert 'total_hands' in result
-        assert 'optimal_range' in result
-        assert 'bonus_payouts' in result
+        # Validate result structure and basic properties
+        assert isinstance(result, dict), "Result should be a dictionary"
+        assert 'threshold_equity' in result, "Result should contain threshold_equity"
+        assert 'optimal_hands' in result, "Result should contain optimal_hands"
+        assert 'total_hands' in result, "Result should contain total_hands"
+        assert 'optimal_range' in result, "Result should contain optimal_range"
+        assert 'bonus_payouts' in result, "Result should contain bonus_payouts"
 
-        # Equity should be between 0 and 1
-        assert 0.0 <= result['threshold_equity'] <= 1.0
+        # Validate equity is in valid range
+        assert isinstance(result['threshold_equity'], (int, float)), "Threshold equity should be numeric"
+        assert 0.0 <= result['threshold_equity'] <= 1.0, "Threshold equity should be between 0 and 1"
+
+        # Validate optimal_hands is a list
+        assert isinstance(result['optimal_hands'], list), "Optimal hands should be a list"
+
+        # Validate total_hands is reasonable
+        assert isinstance(result['total_hands'], int), "Total hands should be an integer"
+        assert result['total_hands'] > 0, "Total hands should be positive"
+
+        # Validate optimal_range structure
+        assert isinstance(result['optimal_range'], (list, dict)), "Optimal range should be a list or dict"
 
     def test_get_hand_category(self, mock_analyzer):
         """Test hand category detection for bonus payouts."""

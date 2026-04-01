@@ -149,12 +149,13 @@ def test_incremental_aggregation():
                 print("No updated metrics found")
                 assert False, "No updated metrics found"
 
-        # Test status reporting
-        status = engine.get_incremental_update_status(matrix_id)
-        print(f"Matrix status: {status['coverage_percentage']:.1f}% coverage, {status['total_cells']} total cells")
-
-        # All tests passed
-        assert True
+        # Validate incremental aggregation status
+        assert isinstance(status, dict), "Status should be a dictionary"
+        assert 'coverage_percentage' in status, "Status should include coverage_percentage"
+        assert 'total_cells' in status, "Status should include total_cells"
+        assert isinstance(status['coverage_percentage'], (int, float)), "Coverage percentage should be numeric"
+        assert isinstance(status['total_cells'], int), "Total cells should be an integer"
+        assert 0.0 <= status['coverage_percentage'] <= 100.0, "Coverage percentage should be between 0 and 100"
 
     finally:
         # Cleanup

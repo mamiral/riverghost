@@ -223,8 +223,14 @@ class TestDatabaseLoading:
         
         # Now that the query is implemented, it should return data
         assert isinstance(result, dict), "get_strategy_matrix should return a dict"
-        # Since we inserted data, it should not be empty
-        # But the exact content depends on the test data
+        assert len(result) > 0, "Query should return data since database contains test data"
+        
+        # Validate that result contains expected hand keys and equity values
+        sample_hand_key = next(iter(result.keys()))
+        sample_equity = result[sample_hand_key]
+        assert isinstance(sample_hand_key, str), "Hand key should be a string"
+        assert isinstance(sample_equity, (int, float)), "Equity value should be numeric"
+        assert 0.0 <= sample_equity <= 1.0, "Equity should be between 0 and 1"
 
     def test_database_has_data_but_query_returns_nothing(self, provider):
         """Verify the disconnect: data IS in database, but query returns nothing."""
@@ -285,6 +291,13 @@ class TestDatabaseLoading:
             # Now that the query is implemented, it should return the data we inserted
             assert isinstance(result, dict), "Query should return a dict"
             assert len(result) > 0, "Query should return data since we inserted it"
+            assert len(result) == 169, "Should return 13x13 matrix (169 cells)"
+            
+            # Validate that all cells have proper equity values
+            for hand_key, equity in result.items():
+                assert isinstance(hand_key, str), f"Hand key should be string, got {type(hand_key)}"
+                assert isinstance(equity, (int, float)), f"Equity should be numeric, got {type(equity)}"
+                assert 0.0 <= equity <= 1.0, f"Equity should be between 0 and 1, got {equity}"
 
 
 class TestDatabaseSchema:

@@ -117,11 +117,15 @@ class TestAggregationEngine:
             min_samples=10
         )
 
-        assert result is not None
-        assert 'equity' in result
-        assert 'ev' in result
-        assert 'total_games' in result
-        assert result['total_games'] == test_case['expected_samples']
+        # Validate aggregation result content and structure
+        assert isinstance(result, dict), "Result should be a dictionary"
+        assert 'equity' in result, "Result should contain equity"
+        assert 'ev' in result, "Result should contain EV"
+        assert 'total_games' in result, "Result should contain total_games"
+        assert isinstance(result['equity'], (int, float)), "Equity should be numeric"
+        assert isinstance(result['ev'], (int, float)), "EV should be numeric"
+        assert isinstance(result['total_games'], int), "Total games should be an integer"
+        assert result['total_games'] == test_case['expected_samples'], "Total games should match expected samples"
 
         # Verify equity is between 0 and 1
         assert 0.0 <= result['equity'] <= 1.0
@@ -169,7 +173,11 @@ class TestAggregationEngine:
             min_samples=1
         )
 
-        assert result is not None
+        # Validate mathematical correctness result structure
+        assert isinstance(result, dict), "Mathematical correctness result should be a dictionary"
+        assert 'equity' in result, "Should contain equity calculation"
+        assert 'ev' in result, "Should contain EV calculation"
+        assert 'total_games' in result, "Should contain total games count"
 
         # For 50 samples with pattern: win, loss, tie, win, loss, tie, ...
         # Number of wins: ceil(50/3) = 17
@@ -194,7 +202,10 @@ class TestAggregationEngine:
                     test_case['col_idx'],
                     min_samples=10
                 )
-                assert result is not None
+                # Validate performance test result content
+                assert isinstance(result, dict), "Performance result should be a dictionary"
+                assert 'equity' in result, "Performance result should contain equity"
+                assert 'total_games' in result, "Performance result should contain total_games"
 
         end_time = time.time()
         duration = end_time - start_time
@@ -246,8 +257,10 @@ class TestAggregationEngine:
             matrix_id, 0, 0, min_samples=1
         )
 
-        assert result is not None
-        assert result['total_games'] == 1
+        # Validate jackpot aggregation result content
+        assert isinstance(result, dict), "Jackpot result should be a dictionary"
+        assert 'total_games' in result, "Jackpot result should contain total_games"
+        assert result['total_games'] == 1, "Should have exactly 1 game with jackpot"
 
     def test_aggregation_edge_cases(self, test_db):
         """Test aggregation with edge cases."""
@@ -276,7 +289,11 @@ class TestAggregationEngine:
                 test_case['col_idx'],
                 min_samples=10
             )
-            assert result is not None
+            # Validate consistency test result content
+            assert isinstance(result, dict), "Consistency result should be a dictionary"
+            assert 'equity' in result, "Consistency result should contain equity"
+            assert 'ev' in result, "Consistency result should contain EV"
+            assert 'total_games' in result, "Consistency result should contain total_games"
             results.append(result)
 
         # All results should be identical
