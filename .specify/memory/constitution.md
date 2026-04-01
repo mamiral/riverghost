@@ -1,8 +1,8 @@
 <!--
 Sync Impact Report:
-- Version change: 2.2.1 → 2.3.0 (MINOR bump: added Quality Assurance principle)
-- Modified principles: None
-- Added sections: XII. Quality Assurance under Core Principles
+- Version change: 2.3.0 → 2.4.0 (MINOR bump: expanded Quality Assurance principle with test design guidelines)
+- Modified principles: XII. Quality Assurance (expanded with test design and failure handling requirements)
+- Added sections: None
 - Removed sections: None
 - Templates requiring updates: None
 - Follow-up TODOs: None
@@ -68,9 +68,9 @@ Code MUST use established software design patterns instead of inventing custom s
 **Rationale:** Leverages proven solutions, improves code quality, and enhances maintainability.
 
 ### XII. Quality Assurance
-Never use fake data or take any other form of shortcut. Always implement complete, working solutions. Never write tests that check mocks instead of real implementation behavior. Never use meaningless assertions like `assert True` or only check basic object existence. Never expect deterministic results from random or non-deterministic behavior. Never write placeholder tests with `pass` or incomplete logic. Always ensure tests validate actual functionality and correctness, not just that methods can be called.
+Never use fake data or take any other form of shortcut. Always implement complete, working solutions. Never write tests that check mocks instead of real implementation behavior. Never use meaningless assertions like `assert True` or only check basic object existence. Never expect deterministic results from random or non-deterministic behavior. Never write placeholder tests with `pass` or incomplete logic. Always ensure tests validate actual functionality and correctness, not just that methods can be called. Placeholder tests MUST be written to fail meaningfully. Tests MUST be written to test real implementation rather than mocked interactions. Tests MUST be simple, straightforward, and self-documenting. Mocks SHOULD be largely unnecessary in well-designed tests. Tests MUST fail and report specific failure reasons when encountering edge cases. Tests MUST fail until implementation is complete, following the red phase of test-driven development.
 
-**Rationale:** Ensures all code and tests are genuine, complete, and validate real behavior rather than artificial constructs.
+**Rationale:** Ensures all code and tests are genuine, complete, and validate real behavior rather than artificial constructs. Promotes test-driven development practices and proper test design principles.
 
 ## Additional Requirements
 All code must run from the python/ directory with relative imports. Use venv for environment management. Comprehensive testing with pytest. Consistent logging via centralized config.
@@ -89,4 +89,4 @@ Run commands from python/ directory. Use venv for dependencies. Test with pytest
 ## Governance
 This constitution supersedes all prior project practices. Amendments require documentation and approval. All changes must comply with principles. Versioning follows semantic rules: MAJOR for breaking/removal, MINOR for new/expanded, PATCH for clarifications.
 
-**Version**: 2.3.0 | **Ratified**: 2025-11-05 | **Last Amended**: 2026-03-29
+**Version**: 2.4.0 | **Ratified**: 2025-11-05 | **Last Amended**: 2026-04-01
