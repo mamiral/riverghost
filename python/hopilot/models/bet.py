@@ -44,8 +44,14 @@ class Bet(BaseModel):
         if not self.player_id:
             raise ValueError("Player ID is required")
 
-        if self.amount <= 0:
-            raise ValueError("Bet amount must be positive")
+        if self.amount < 0:
+            raise ValueError("Bet amount cannot be negative")
+        
+        if self.action_type == "fold" and self.amount != 0:
+            raise ValueError("Fold bets must have amount 0")
+        
+        if self.action_type in ["call", "raise"] and self.amount <= 0:
+            raise ValueError("Call and raise bets must have positive amount")
 
         if self.action_type not in ["fold", "call", "raise"]:
             raise ValueError("Action type must be 'fold', 'call', or 'raise'")

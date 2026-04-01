@@ -50,7 +50,7 @@ class GameState(BaseModel):
 
     def _validate(self) -> None:
         """Validate game state data."""
-        if not self.cell_id:
+        if self.cell_id is None or (self.cell_id != -1 and not self.cell_id):
             raise ValueError("Cell ID is required")
 
         if not self.timestamp:

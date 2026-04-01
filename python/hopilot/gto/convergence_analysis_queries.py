@@ -13,7 +13,7 @@ from datetime import datetime
 from sqlalchemy import text, func, and_, or_, asc, desc, case, cast, Integer
 from sqlalchemy.orm import Session
 
-from hopilot.database import DatabaseConnection
+from hopilot.db import get_session
 from hopilot.models import GameState, MatrixCell, AggregatedMetric, HandMatrix
 from hopilot.performance_monitor import PerformanceMonitor
 from hopilot.gto.query_cache import cached_query
@@ -37,7 +37,6 @@ class ConvergenceAnalysisQueries:
             database_url: Database connection URL
         """
         self.database_url = database_url
-        self.db_connection = DatabaseConnection(database_url)
         self.performance_monitor = PerformanceMonitor()
 
     @cached_query(ttl=600)  # Cache for 10 minutes
@@ -64,7 +63,8 @@ class ConvergenceAnalysisQueries:
             sample_intervals = [100, 250, 500, 1000, 2500, 5000, 10000]
 
         with self.performance_monitor.track_operation("equity_convergence_series"):
-            with self.db_connection.session_scope() as session:
+            session = get_session()
+            try:
                 # Find the MatrixCell
                 matrix_cell = session.query(MatrixCell).filter(
                     and_(
@@ -115,6 +115,8 @@ class ConvergenceAnalysisQueries:
                     'convergence_series': convergence_points,
                     'final_equity': convergence_points[-1]['equity'] if convergence_points else None
                 }
+            finally:
+                session.close()
 
     @cached_query(ttl=600)  # Cache for 10 minutes
     def get_convergence_statistics(

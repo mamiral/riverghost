@@ -1,12 +1,16 @@
 """
-Precompute provider - wrapper around AoFSolverAdapter for CLI precompute runs.
+Precompute provider - wrapper around AllInFoldGTOSolver for CLI precompute runs.
 
 This provider delegates computation to the real GTO solver, implementing the interface
 required by AoFPrecomputeRunner.
 """
 
 from typing import Any, Dict, Optional
-from hopilot.gto.aof_solver_adapter import AoFSolverAdapter
+from hopilot.all_in_fold_gto import AllInFoldGTOSolver
+from hopilot.poker_analyzer import PokerAnalyzer
+from hopilot.database.persistence import DatabasePersistenceStrategy
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, hand_key_from_index
 from hopilot.gto.aof_browser_state import normalize_position_actions
 from hopilot.logging_config import get_logger
@@ -26,14 +30,21 @@ class PrecomputeProvider:
         self.database_url = database_url
         self.logger = get_logger(__name__)
         
-        # Initialize the AoF solver adapter (has evaluate_hand_key method)
-        self._solver = AoFSolverAdapter()
+        # Create database engine and session for genuine data storage
+        engine = create_engine(database_url, echo=False)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        session = SessionLocal()
+        
+        # Initialize the solver with database persistence for genuine storage
+        self._analyzer = PokerAnalyzer()
+        self._solver = AllInFoldGTOSolver(self._analyzer, DatabasePersistenceStrategy(session=session))
+        self._session = session  # Keep reference for cleanup
         
         # Build the 13x13 matrix lookup - this is a list of lists
         # _matrix_keys[row][col] gives the hand key at that position
         self._matrix_keys = build_matrix_keys()
         
-        self.logger.info("PrecomputeProvider initialized with AoFSolverAdapter")
+        self.logger.info("PrecomputeProvider initialized with AllInFoldGTOSolver and database persistence")
     
     def _resolve_num_opponents(self, action: str, position_actions: Dict[str, str]) -> int:
         """Determine number of opponents from position actions."""
@@ -225,3 +236,9 @@ class PrecomputeProvider:
                 "status": "ERROR",
                 "status_message": f"Solver computation failed: {e}",
             }
+
+    def close(self):
+        """Close the database session."""
+        if hasattr(self, '_session') and self._session:
+            self._session.close()
+            self.logger.info("PrecomputeProvider database session closed")

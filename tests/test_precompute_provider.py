@@ -13,7 +13,7 @@ from hopilot.gto.precompute_provider import PrecomputeProvider
 
 @pytest.fixture
 def mock_solver():
-    """Create a mock AoFSolverAdapter for fast tests."""
+    """Create a mock AllInFoldGTOSolver for fast tests."""
     solver = Mock()
     
     def mock_evaluate(hand_key, num_opponents, pot_size, bet_amount, timeout_ms):

@@ -11,13 +11,10 @@ CREATED IN: Phase 4 cleanup (replaces deleted AoFBrowserDataProvider)
 import asyncio
 from typing import Any, Dict, List, Optional
 from hopilot.gto.database_repository import DatabaseRepository
-from hopilot.gto.aof_solver_adapter import AoFSolverAdapter
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 from hopilot.gto.aof_browser_state import POSITIONS, normalize_position_actions, METRICS, build_browser_context
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
 from hopilot.logging_config import get_logger
-
-logger = get_logger(__name__)
 
 STATUS_AVAILABLE = "AVAILABLE"
 STATUS_MISSING = "MISSING"
@@ -33,13 +30,25 @@ class BrowserDatabaseProvider:
     """
 
     def __init__(self, database_url: str):
-        """Initialize with database connection and solver for fallback computation."""
+        """Initialize with database connection only."""
         self.logger = get_logger(__name__)
+        self.database_url = database_url
         self.database_repository = DatabaseRepository(database_url=database_url)
         self._matrix_keys = build_matrix_keys()
-        # Initialize solver adapter for fallback computation when database is empty
-        self._solver = AoFSolverAdapter()
-        self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url} and AoFSolverAdapter")
+        
+        self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url}")
+
+    def _resolve_num_opponents(self, action: str, position_actions: Dict[str, str]) -> int:
+        """Resolve the number of opponents based on action and position actions."""
+        # Count active positions (not folded)
+        active_positions = [pos for pos, act in position_actions.items() if act != "FOLD"]
+        # Subtract 1 for hero
+        return max(0, len(active_positions) - 1)
+
+    def _baseline_equity(self, hand_key: str) -> float:
+        """Get baseline equity for a hand key (simplified)."""
+        # This is a simplified baseline - in a real implementation this would be more sophisticated
+        return 0.5
 
     def _is_no_contest_scenario(self, position: str, position_actions: Dict[str, str], strict_current_action: bool) -> bool:
         """
@@ -281,82 +290,6 @@ class BrowserDatabaseProvider:
             on_cell_complete=on_cell_complete,
         )
 
-    def _compute_matrix_with_solver(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Compute matrix data using the AoF solver as fallback.
-        """
-        cells = []
-        position = context["position"]
-        metric = context["metric"]
-        position_actions = context["position_actions"]
-        pot_size = context["pot_size"]
-        bet_amount = context["bet_amount"]
-        
-        # Get number of opponents
-        num_opponents = self._solver.resolve_num_opponents(
-            context["action"], 
-            position_actions
-        )
-        
-        for row in range(13):
-            for col in range(13):
-                hand_key = self._matrix_keys[row][col]
-                
-                try:
-                    # Use solver to compute value
-                    result = self._solver.evaluate_hand_key(
-                        hand_key=hand_key,
-                        num_opponents=num_opponents,
-                        pot_size=pot_size,
-                        bet_amount=bet_amount,
-                    )
-                    
-                    if result["status"] == "AVAILABLE" and result.get("win_probability") is not None:
-                        # Extract the appropriate value based on metric
-                        if metric == "WIN_LOSE_PROBABILITY":
-                            value = result.get("win_probability", 0.5)
-                        elif metric == "EV":
-                            value = result.get("ev", 0.0)
-                        elif metric == "EQUITY":
-                            value = result.get("equity", 0.5)
-                        elif metric == "EQR":
-                            # EQR (EV Ratio) - for now use equity as fallback since mock doesn't provide it
-                            value = result.get("equity", 0.5)
-                        else:
-                            value = result.get("win_probability", 0.5)  # Default fallback
-                        
-                        status = STATUS_AVAILABLE
-                        display = format_metric_value(metric, value)
-                    elif result["status"] == "TIMEOUT":
-                        value = None
-                        status = "TIMEOUT"
-                        display = "TIMEOUT"
-                    elif result["status"] == "ERROR":
-                        value = None
-                        status = "ERROR"
-                        display = "ERROR"
-                    else:
-                        value = None
-                        status = STATUS_MISSING
-                        display = format_metric_value(metric, value)
-                        
-                except Exception as e:
-                    self.logger.warning(f"Solver failed for hand {hand_key}: {e}")
-                    value = None
-                    status = STATUS_MISSING
-                    display = format_metric_value(metric, value)
-                
-                cells.append({
-                    "row": row,
-                    "col": col,
-                    "hand_key": hand_key,
-                    "value": value,
-                    "status": status,
-                    "display": display,
-                })
-        
-        return cells
-
     def _build_context(
         self,
         position: str,
@@ -427,21 +360,3 @@ class BrowserDatabaseProvider:
             self.logger.error(f"Failed to get convergence data: {e}")
             return []
 
-    def _baseline_equity(self, hand_key: str) -> float:
-        """Return baseline equity for a hand against a random hand.
-        
-        Phase 4: Simplified to return 0.5 (50%) for all hands.
-        In real usage, this would compute actual equity from database or solver.
-        """
-        return 0.5
-
-    def _resolve_num_opponents(self, action: str, position_actions: Dict[str, str]) -> int:
-        """Resolve number of opponents based on position actions.
-        
-        Phase 4: Count ALL_IN actions from opponents.
-        """
-        if action == "FOLD":
-            return 0
-        # Count all opponents with ALL_IN action
-        opponents = sum(1 for pos, act in position_actions.items() if pos != "UTG" and act == "ALL_IN")
-        return max(1, opponents)  # At least 1 opponent

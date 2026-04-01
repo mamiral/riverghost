@@ -84,6 +84,7 @@ class DatabaseConnection:
         # Enable WAL mode for better concurrency
         if database_url.startswith("sqlite"):
             self._enable_wal_mode()
+            self._enable_foreign_keys()
 
         logger.info(f"Database connection initialized: {database_url}")
 
@@ -103,6 +104,21 @@ class DatabaseConnection:
             logger.debug("SQLite WAL mode enabled")
         except Exception as e:
             logger.warning(f"Failed to enable WAL mode: {e}")
+
+    def _enable_foreign_keys(self) -> None:
+        """
+        Enable foreign key constraints for SQLite.
+
+        Foreign key constraints ensure referential integrity
+        in the genuine GameStates-first architecture.
+        """
+        try:
+            with self._engine.connect() as conn:
+                conn.execute(text("PRAGMA foreign_keys = ON;"))
+                conn.commit()
+            logger.debug("SQLite foreign key constraints enabled")
+        except Exception as e:
+            logger.warning(f"Failed to enable foreign keys: {e}")
 
     def get_session(self) -> Session:
         """

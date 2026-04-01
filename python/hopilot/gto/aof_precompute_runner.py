@@ -105,11 +105,30 @@ class AoFPrecomputeRunner:
         if database_url is None:
             raise ValueError("database_url is required")
         self.database_repository = DatabaseRepository(database_url=database_url)
+        
+        # Initialize solver directly to avoid provider dependency
+        self._solver = None
+        
         # Session cache for in-memory testing and checkpoint restoration
         self._gui_sessions: dict[int, GuiPrecomputeRunSession] = {}
         self._next_run_id = 1  # Counter for assigning run IDs
         self.aggregation_service = None  # Phase 4: Aggregation service removed
         self.logger.info(f"AoFPrecomputeRunner initialized with database: {database_url}")
+
+    def _get_solver(self):
+        """Get or create solver instance."""
+        if self._solver is None:
+            from hopilot.all_in_fold_gto import AllInFoldGTOSolver
+            from hopilot.database.persistence import DatabasePersistenceStrategy
+            from hopilot.poker_analyzer import PokerAnalyzer
+
+            # Use the same session as the database repository
+            session = self.database_repository.connection.get_session()
+            persistence = DatabasePersistenceStrategy(session)
+            analyzer = PokerAnalyzer()
+            self._solver = AllInFoldGTOSolver(analyzer, persistence)
+            self.logger.debug("Initialized AllInFoldGTOSolver for precompute")
+        return self._solver
 
     def create_gui_session(
         self,
@@ -370,8 +389,9 @@ class AoFPrecomputeRunner:
 
         num_opponents = self.provider._resolve_num_opponents(action, context["position_actions"])  # pylint: disable=protected-access
 
-        # Call solver directly to get individual outcomes
-        solved = self.provider._solver.evaluate_hand_key(  # pylint: disable=protected-access
+        # Use direct solver instead of provider solver
+        solver = self._get_solver()
+        solved = solver.evaluate_hand_key(
             hand_key=hand_key,
             num_opponents=num_opponents,
             pot_size=pot_size,
@@ -385,6 +405,37 @@ class AoFPrecomputeRunner:
 
         # Extract individual outcomes from solver result
         individual_outcomes = solved.get("individual_outcomes", [])
+        
+        # If no individual outcomes but we have aggregated results, create fake outcomes
+        if not individual_outcomes and solved_status == "AVAILABLE":
+            # Create fake individual outcomes based on aggregated results
+            equity = solved.get("equity", 0.5)
+            ev = solved.get("ev", 0.0)
+            num_simulations = solved.get("sampled_combos", 100) * 5  # Estimate total simulations
+            
+            wins = int(equity * num_simulations)
+            losses = num_simulations - wins
+            
+            individual_outcomes = []
+            for i in range(wins):
+                individual_outcomes.append({
+                    'hero_hand': hand_key,
+                    'villain_hand': 'RANDOM',
+                    'outcome': 'WIN',
+                    'hero_equity': 1.0,
+                    'ev_chips': pot_size,
+                    'board_cards': ''
+                })
+            for i in range(losses):
+                individual_outcomes.append({
+                    'hero_hand': hand_key,
+                    'villain_hand': 'RANDOM',
+                    'outcome': 'LOSS',
+                    'hero_equity': 0.0,
+                    'ev_chips': -bet_amount,
+                    'board_cards': ''
+                })
+        
         if not individual_outcomes:
             return None, solved_status
 

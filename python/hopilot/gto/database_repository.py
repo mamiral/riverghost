@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, select, func, text, or_
 from sqlalchemy.orm import Session, selectinload
 
-from hopilot.database import DatabaseConnection
+import importlib.util
+spec = importlib.util.spec_from_file_location("database_module", "hopilot/database.py")
+database_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(database_module)
+DatabaseConnection = database_module.DatabaseConnection
 from hopilot.logging_config import get_logger
 from hopilot.models import (
     AggregatedMetric,
