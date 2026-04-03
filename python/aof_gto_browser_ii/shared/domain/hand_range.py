@@ -16,7 +16,7 @@ class HandRange:
 
     def __post_init__(self):
         """Validate that all hands are unique."""
-        if len(set(hand.to_shorthand() for hand in self.hands)) != len(self.hands):
+        if len(set(self.hands)) != len(self.hands):
             raise ValueError("HandRange cannot have duplicate hands")
 
     @staticmethod
@@ -24,6 +24,7 @@ class HandRange:
         """Parse complex hand range notation into HandRange.
 
         Supports notation like:
+        - "*" (all possible hands)
         - "AKs" (single suited hand)
         - "22+" (pairs from 22 to AA)
         - "AKs+" (suited hands from AK down)
@@ -37,6 +38,10 @@ class HandRange:
         """
         if not notation or not notation.strip():
             raise RangeError("Empty range notation")
+
+        # Special case: "*" means all possible hands
+        if notation.strip() == "*":
+            return HandRange._create_all_hands()
 
         # Step 1: Parse components
         components = [comp.strip() for comp in notation.replace(';', ',').split(',') if comp.strip()]
@@ -61,6 +66,46 @@ class HandRange:
             raise RangeError(f"No valid hands found in notation: {notation}")
 
         return HandRange(hands=unique_hands, notation=notation)
+
+    @staticmethod
+    def _create_all_hands() -> "HandRange":
+        """Create a HandRange containing all possible 2-card poker hands."""
+        from aof_gto_browser_ii.shared.domain.card import Rank, Suit
+
+        all_hands = []
+
+        # Get all ranks in descending order for consistent ordering
+        ranks = list(Rank)[::-1]  # Reverse to get ACE first
+        suits = list(Suit)
+
+        # Generate all possible combinations of 2 distinct cards
+        # Use nested loops to ensure we don't create duplicates
+        for i in range(len(ranks)):
+            rank1 = ranks[i]
+            for j in range(len(ranks)):
+                rank2 = ranks[j]
+
+                if rank1.value > rank2.value:  # Only high-low combinations, not low-high
+                    # Suited combinations (4 possibilities)
+                    for suit in suits:
+                        card1 = Card(rank1, suit)
+                        card2 = Card(rank2, suit)
+                        all_hands.append(Hand(card1=card1, card2=card2))
+
+                    # Offsuit combinations (12 possibilities: 4 suits × 3 other suits)
+                    for suit1 in suits:
+                        for suit2 in suits:
+                            if suit1 != suit2:
+                                card1 = Card(rank1, suit1)
+                                card2 = Card(rank2, suit2)
+                                all_hands.append(Hand(card1=card1, card2=card2))
+
+                elif rank1 == rank2:  # Pairs
+                    # Only add pairs once (when i == j)
+                    if i == j:
+                        all_hands.extend(HandRange._create_pair_hands(rank1))
+
+        return HandRange(hands=all_hands, notation="*")
 
     @staticmethod
     def _expand_component(component: str) -> List[Hand]:

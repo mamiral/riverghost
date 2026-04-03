@@ -16,6 +16,9 @@ from typing import Generator
 # Add python/ directory to path so hopilot can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
+# Add project root to path so aof_gto_browser_ii can be imported
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import pytest
 from sqlalchemy import event
 from sqlalchemy.orm import Session

@@ -28,10 +28,10 @@
 
 **Duration**: 15-30 minutes
 
-- [ ] T001 Create Python package structure for shared models in `aof_gto_browser_ii/shared/models/` directory
-- [ ] T002 [P] Create `aof_gto_browser_ii/shared/models/__init__.py` with all exports (enums, DTOs)
-- [ ] T003 Create `aof_gto_browser_ii/shared/__init__.py` (parent package init if not exists)
-- [ ] T004 Add type hints and imports at module level in `aof_gto_browser_ii/shared/models/__init__.py`
+- [x] T001 Create Python package structure for shared models in `aof_gto_browser_ii/shared/models/` directory
+- [x] T002 [P] Create `aof_gto_browser_ii/shared/models/__init__.py` with all exports (enums, DTOs)
+- [x] T003 Create `aof_gto_browser_ii/shared/__init__.py` (parent package init if not exists)
+- [x] T004 Add type hints and imports at module level in `aof_gto_browser_ii/shared/models/__init__.py`
 
 **Checkpoint**: Package structure initialized - ready for enum/DTO implementation
 
@@ -47,17 +47,17 @@
 
 ### Implementation for Enumerations
 
-- [ ] T005 [P] Create Position enum in `aof_gto_browser_ii/shared/models/enums.py` with members UTG, BTN, SB, BB (string-inheriting, lowercase values)
-- [ ] T006 [P] Create Action enum in `aof_gto_browser_ii/shared/models/enums.py` with members FOLD, ALL_IN (string-inheriting, lowercase values)
-- [ ] T007 [P] Create MetricType enum in `aof_gto_browser_ii/shared/models/enums.py` with members EQUITY, EV, EQR, WIN_LOSE_PROBABILITY (string-inheriting)
-- [ ] T008 Add docstrings to all enum members explaining their meaning in poker context in `aof_gto_browser_ii/shared/models/enums.py`
+- [x] T005 [P] Create Position enum in `aof_gto_browser_ii/shared/models/enums.py` with members UTG, BTN, SB, BB (string-inheriting, lowercase values)
+- [x] T006 [P] Create Action enum in `aof_gto_browser_ii/shared/models/enums.py` with members FOLD, ALL_IN (string-inheriting, lowercase values)
+- [x] T007 [P] Create MetricType enum in `aof_gto_browser_ii/shared/models/enums.py` with members EQUITY, EV, EQR, WIN_LOSE_PROBABILITY (string-inheriting)
+- [x] T008 Add docstrings to all enum members explaining their meaning in poker context in `aof_gto_browser_ii/shared/models/enums.py`
 
 ### Tests for Enumerations
 
-- [ ] T009 [P] Create enum tests (≥3 independent test methods) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) Position creation by name `Position['BTN']`, (2) creation by value `Position('btn')`, (3) creation by attribute `Position.BTN`, plus invalid value rejection
-- [ ] T010 [P] Test invalid enum values (ValueError raised for "cutoff" instead of Position member) in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T011 [P] Test Action and MetricType enum validation in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T012 [P] Test string conversion of enums (str(Position.BTN) == "btn") in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T009 [P] Create enum tests (≥3 independent test methods) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) Position creation by name `Position['BTN']`, (2) creation by value `Position('btn')`, (3) creation by attribute `Position.BTN`, plus invalid value rejection
+- [x] T010 [P] Test invalid enum values (ValueError raised for "cutoff" instead of Position member) in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T011 [P] Test Action and MetricType enum validation in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T012 [P] Test string conversion of enums (str(Position.BTN) == "btn") in `tests/aof_gto_browser_ii/test_shared_models.py`
 
 **Checkpoint**: All 3 enums defined and tested. Foundation ready for DTOs.
 
@@ -71,53 +71,53 @@
 
 ### PositionContext Implementation
 
-- [ ] T013 [P] Create PositionContext dataclass in `aof_gto_browser_ii/shared/models/input_context.py` with fields: position, num_opponents, heroes_hole_cards, pot_size_bb
-- [ ] T014 Implement PositionContext `__post_init__()` validation for position (must be Position enum) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T015 Implement PositionContext `__post_init__()` validation for num_opponents (must be 1-3) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T016 Implement PositionContext `__post_init__()` validation for pot_size_bb (must be > 0) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T017 Implement PositionContext `__post_init__()` validation for heroes_hole_cards (must be Hand domain model if provided) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T018 Add comprehensive docstring to PositionContext class with FR-006 requirements and field descriptions in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T013 [P] Create PositionContext dataclass in `aof_gto_browser_ii/shared/models/input_context.py` with fields: position, num_opponents, heroes_hole_cards, pot_size_bb
+- [x] T014 Implement PositionContext `__post_init__()` validation for position (must be Position enum) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T015 Implement PositionContext `__post_init__()` validation for num_opponents (must be 1-3) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T016 Implement PositionContext `__post_init__()` validation for pot_size_bb (must be > 0) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T017 Implement PositionContext `__post_init__()` validation for heroes_hole_cards (must be Hand domain model if provided) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T018 Add comprehensive docstring to PositionContext class with FR-006 requirements and field descriptions in `aof_gto_browser_ii/shared/models/input_context.py`
 
 ### ActionContext Implementation
 
-- [ ] T019 [P] Create ActionContext dataclass in `aof_gto_browser_ii/shared/models/input_context.py` with fields: position_context, action
-- [ ] T020 Implement ActionContext `__post_init__()` validation for position_context (must be valid PositionContext) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T021 Implement ActionContext `__post_init__()` validation for action (must be Action enum FOLD or ALL_IN) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T022 Add `is_aggressive` property to ActionContext returning True for ALL_IN, False for FOLD in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T023 Add comprehensive docstring to ActionContext with FR-007 requirements in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T019 [P] Create ActionContext dataclass in `aof_gto_browser_ii/shared/models/input_context.py` with fields: position_context, action
+- [x] T020 Implement ActionContext `__post_init__()` validation for position_context (must be valid PositionContext) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T021 Implement ActionContext `__post_init__()` validation for action (must be Action enum FOLD or ALL_IN) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T022 Add `is_aggressive` property to ActionContext returning True for ALL_IN, False for FOLD in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T023 Add comprehensive docstring to ActionContext with FR-007 requirements in `aof_gto_browser_ii/shared/models/input_context.py`
 
 ### AnalysisRequest Implementation (⛔ CRITICAL/BLOCKER)
 
-- [ ] T024 Create AnalysisRequest dataclass in `aof_gto_browser_ii/shared/models/input_context.py` with fields: position_context, opponent_range, metric_type, precompute, session_id (FR-008: CRITICAL)
-- [ ] T025 Implement AnalysisRequest `__post_init__()` validation for position_context (must be valid PositionContext) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T026 Implement AnalysisRequest `__post_init__()` validation for opponent_range (must be HandRange domain model if provided) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T027 Implement AnalysisRequest `__post_init__()` validation for metric_type (must be valid MetricType enum) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T028 Implement AnalysisRequest `__post_init__()` validation for session_id (must be non-empty string if provided) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T029 Add property `is_heads_up` to AnalysisRequest (returns True if 1 opponent) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T030 Add property `is_partial_request` to AnalysisRequest (True if hero hand specified) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T031 Add property `is_precompute_requested` to AnalysisRequest (True if precompute flag set) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T032 Add property `effective_opponent_range` to AnalysisRequest (returns provided range or all hands if None) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T033 Add method `with_opponent_range(range_shorthand: str)` to AnalysisRequest (returns new request with different range, functional style) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T034 Add method `with_metric_type(metric: MetricType)` to AnalysisRequest (returns new request with different metric) in `aof_gto_browser_ii/shared/models/input_context.py`
-- [ ] T035 Add comprehensive docstring to AnalysisRequest with FR-008 CRITICAL designation, all 5 fields documented, examples, and FR-021 session_id explanation in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T024 Create AnalysisRequest dataclass in `aof_gto_browser_ii/shared/models/input_context.py` with fields: position_context, opponent_range, metric_type, precompute, session_id (FR-008: CRITICAL)
+- [x] T025 Implement AnalysisRequest `__post_init__()` validation for position_context (must be valid PositionContext) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T026 Implement AnalysisRequest `__post_init__()` validation for opponent_range (must be HandRange domain model if provided) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T027 Implement AnalysisRequest `__post_init__()` validation for metric_type (must be valid MetricType enum) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T028 Implement AnalysisRequest `__post_init__()` validation for session_id (must be non-empty string if provided) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T029 Add property `is_heads_up` to AnalysisRequest (returns True if 1 opponent) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T030 Add property `is_partial_request` to AnalysisRequest (True if hero hand specified) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T031 Add property `is_precompute_requested` to AnalysisRequest (True if precompute flag set) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T032 Add property `effective_opponent_range` to AnalysisRequest (returns provided range or all hands if None) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T033 Add method `with_opponent_range(range_shorthand: str)` to AnalysisRequest (returns new request with different range, functional style) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T034 Add method `with_metric_type(metric: MetricType)` to AnalysisRequest (returns new request with different metric) in `aof_gto_browser_ii/shared/models/input_context.py`
+- [x] T035 Add comprehensive docstring to AnalysisRequest with FR-008 CRITICAL designation, all 5 fields documented, examples, and FR-021 session_id explanation in `aof_gto_browser_ii/shared/models/input_context.py`
 
 ### Tests for Input DTOs
 
-- [ ] T036 [P] Create PositionContext tests (≥4 independent assertions) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) valid creation with all fields, (2) immutability enforcement (frozen=True), (3) equality/identity properties, (4) repr for debugging
-- [ ] T037 [P] Test PositionContext validation (≥5 independent error cases) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) invalid position type (string instead of enum), (2) num_opponents < 1, (3) num_opponents > 3, (4) pot_size_bb <= 0, (5) heroes_hole_cards wrong type
-- [ ] T038 [P] Test PositionContext validation with Hand domain model (valid) and invalid types in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T039 [P] Create ActionContext tests (≥3 independent assertions) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) valid creation with PositionContext and Action, (2) position_context validation (must be PositionContext instance), (3) action enum validation (only FOLD/ALL_IN)
-- [ ] T040 [P] Test ActionContext `is_aggressive` property (True for ALL_IN, False for FOLD) in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T041 [P] Create AnalysisRequest tests (30+ test cases covering CRITICAL designation) in `tests/aof_gto_browser_ii/test_shared_models.py`:
+- [x] T036 [P] Create PositionContext tests (≥4 independent assertions) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) valid creation with all fields, (2) immutability enforcement (frozen=True), (3) equality/identity properties, (4) repr for debugging
+- [x] T037 [P] Test PositionContext validation (≥5 independent error cases) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) invalid position type (string instead of enum), (2) num_opponents < 1, (3) num_opponents > 3, (4) pot_size_bb <= 0, (5) heroes_hole_cards wrong type
+- [x] T038 [P] Test PositionContext validation with Hand domain model (valid) and invalid types in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T039 [P] Create ActionContext tests (≥3 independent assertions) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) valid creation with PositionContext and Action, (2) position_context validation (must be PositionContext instance), (3) action enum validation (only FOLD/ALL_IN)
+- [x] T040 [P] Test ActionContext `is_aggressive` property (True for ALL_IN, False for FOLD) in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T041 [P] Create AnalysisRequest tests (30+ test cases covering CRITICAL designation) in `tests/aof_gto_browser_ii/test_shared_models.py`:
   - Valid creation: minimal (position_context only) | full (all fields) | with HandRange
   - Field validation: position_context (must be PositionContext) | opponent_range (HandRange or None) | metric_type (MetricType enum) | precompute (boolean) | session_id (non-empty string or None)
   - Properties: is_heads_up (1 opponent = True) | is_partial_request (hero hand specified) | is_precompute_requested (precompute flag) | effective_opponent_range (provided or all hands)
   - Functional methods: with_opponent_range() creates new instance | with_metric_type() creates new instance | chaining works
   - Edge cases: None vs empty string handling | complex range formats | session_id for request correlation
-- [ ] T042 [P] Test AnalysisRequest properties (`is_heads_up`, `is_partial_request`, `is_precompute_requested`, `effective_opponent_range`) in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T043 [P] Test AnalysisRequest functional methods (`with_opponent_range`, `with_metric_type`) return new instances with correct fields in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T044 Test AnalysisRequest immutability: verify frozen=True prevents mutation attempts in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T045 Test AnalysisRequest session_id tracking for request tracing/logging context in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T042 [P] Test AnalysisRequest properties (`is_heads_up`, `is_partial_request`, `is_precompute_requested`, `effective_opponent_range`) in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T043 [P] Test AnalysisRequest functional methods (`with_opponent_range`, `with_metric_type`) return new instances with correct fields in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T044 Test AnalysisRequest immutability: verify frozen=True prevents mutation attempts in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T045 Test AnalysisRequest session_id tracking for request tracing/logging context in `tests/aof_gto_browser_ii/test_shared_models.py`
 
 **Checkpoint**: AnalysisRequest (CRITICAL) fully implemented and tested. Phase 2 backend services can now proceed.
 
@@ -140,45 +140,45 @@
 
 ### MatrixPayload Implementation
 
-- [ ] T052 [P] Create MatrixPayload dataclass in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: cells (Dict[str, HandEvaluation]), query_context, opponent_range, metric_type, average_equity, average_equity_pairs, average_equity_suited, average_equity_unsuited, median_equity, all_computed, total_simulations, computed_at
-- [ ] T053 Create static method `MatrixPayload._generate_all_hand_keys()` returning set of all 169 poker hand keys (13 pairs + 78 suited + 78 unsuited per FR-021) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T054 Implement MatrixPayload `__post_init__()` validation for cells: must have exactly 169 keys, all must be in canonical hand key format (FR-021) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T055 Implement MatrixPayload `__post_init__()` validation for query_context (must be valid PositionContext), opponent_range (if provided, must be HandRange), metric_type (must be valid MetricType) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T056 Implement MatrixPayload `__post_init__()` validation for statistics: average_equity, median_equity (0.0-1.0) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T057 Add method `MatrixPayload.get_hand(hand_key: str)` to retrieve specific hand evaluation, raises KeyError if not found in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T058 Add method `MatrixPayload.get_hands_by_type(hand_type: str)` returning filtered dict by 'pairs', 'suited', or 'unsuited' in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T059 Add docstring to MatrixPayload with FR-010 requirements and hand key format explanation in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T052 [P] Create MatrixPayload dataclass in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: cells (Dict[str, HandEvaluation]), query_context, opponent_range, metric_type, average_equity, average_equity_pairs, average_equity_suited, average_equity_unsuited, median_equity, all_computed, total_simulations, computed_at
+- [x] T053 Create static method `MatrixPayload._generate_all_hand_keys()` returning set of all 169 poker hand keys (13 pairs + 78 suited + 78 unsuited per FR-021) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T054 Implement MatrixPayload `__post_init__()` validation for cells: must have exactly 169 keys, all must be in canonical hand key format (FR-021) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T055 Implement MatrixPayload `__post_init__()` validation for query_context (must be valid PositionContext), opponent_range (if provided, must be HandRange), metric_type (must be valid MetricType) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T056 Implement MatrixPayload `__post_init__()` validation for statistics: average_equity, median_equity (0.0-1.0) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T057 Add method `MatrixPayload.get_hand(hand_key: str)` to retrieve specific hand evaluation, raises KeyError if not found in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T058 Add method `MatrixPayload.get_hands_by_type(hand_type: str)` returning filtered dict by 'pairs', 'suited', or 'unsuited' in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T059 Add docstring to MatrixPayload with FR-010 requirements and hand key format explanation in `aof_gto_browser_ii/shared/models/output_payload.py`
 
 ### CellDisplay Implementation
 
-- [ ] T060 [P] Create CellDisplay dataclass in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: hand_key, metric_value, display_text, background_color, text_color, border_color, is_computed, confidence, show_border, highlight_level, is_hovering, is_selected, opacity, tooltip_text, secondary_text
-- [ ] T061 Implement CellDisplay `__post_init__()` validation for hand_key (must be valid hand from FR-021) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T062 Implement CellDisplay `__post_init__()` validation for all color tuples (background_color, text_color, border_color): must be RGB with components 0-255 in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T063 Implement CellDisplay `__post_init__()` validation for confidence (0.0-1.0), opacity (0.0-1.0), highlight_level (0-3) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T064 Add docstring to CellDisplay with FR-011 requirements and rendering hints explanation in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T060 [P] Create CellDisplay dataclass in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: hand_key, metric_value, display_text, background_color, text_color, border_color, is_computed, confidence, show_border, highlight_level, is_hovering, is_selected, opacity, tooltip_text, secondary_text
+- [x] T061 Implement CellDisplay `__post_init__()` validation for hand_key (must be valid hand from FR-021) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T062 Implement CellDisplay `__post_init__()` validation for all color tuples (background_color, text_color, border_color): must be RGB with components 0-255 in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T063 Implement CellDisplay `__post_init__()` validation for confidence (0.0-1.0), opacity (0.0-1.0), highlight_level (0-3) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T064 Add docstring to CellDisplay with FR-011 requirements and rendering hints explanation in `aof_gto_browser_ii/shared/models/output_payload.py`
 
 ### PrecomputeProgress Implementation
 
-- [ ] T065 [P] Create PrecomputeProgress dataclass in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: session_id, total_hands, hands_completed, percent_complete, estimated_seconds_remaining, is_complete
-- [ ] T066 Implement PrecomputeProgress `__post_ini(MINIMAL 6-field MVP) in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: session_id, total_hands, hands_completed, percent_complete (FRACTIONAL: 0.0-1.0), estimated_seconds_remaining, is_complete
-- [ ] T066 Implement PrecomputeProgress `__post_init__()` validation for session_id (non-empty string) and total_hands (should be 169) in `aof_gto_browser_ii/shared/models/output_payload.py` (NOTE: Rich helper methods like progress_bar_string deferred to Phase 2+)
-- [ ] T067 Implement PrecomputeProgress `__post_init__()` validation for percent_complete (FRACTIONAL 0.0-1.0, NOT percentage 0-10f percent_complete=1.0) in `aof_gto_browser_ii/shared/models/output_payload.py`
-- [ ] T069 Add docstring to PrecomputeProgress with FR-012 requirements in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T065 [P] Create PrecomputeProgress dataclass in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: session_id, total_hands, hands_completed, percent_complete, estimated_seconds_remaining, is_complete
+- [x] T066 Implement PrecomputeProgress `__post_ini(MINIMAL 6-field MVP) in `aof_gto_browser_ii/shared/models/output_payload.py` with fields: session_id, total_hands, hands_completed, percent_complete (FRACTIONAL: 0.0-1.0), estimated_seconds_remaining, is_complete
+- [x] T066 Implement PrecomputeProgress `__post_init__()` validation for session_id (non-empty string) and total_hands (should be 169) in `aof_gto_browser_ii/shared/models/output_payload.py` (NOTE: Rich helper methods like progress_bar_string deferred to Phase 2+)
+- [x] T067 Implement PrecomputeProgress `__post_init__()` validation for percent_complete (FRACTIONAL 0.0-1.0, NOT percentage 0-10f percent_complete=1.0) in `aof_gto_browser_ii/shared/models/output_payload.py`
+- [x] T069 Add docstring to PrecomputeProgress with FR-012 requirements in `aof_gto_browser_ii/shared/models/output_payload.py`
 
 ### Tests for Output DTOs
 
-- [ ] T070 [P] Create HandEvaluation tests in `tests/aof_gto_browser_ii/test_shared_models.py`: valid creation, hand_key validation (all 169 keys), equity validation (0-1)
-- [ ] T071 [P] Test HandEvaluation probability validation in `tests/aof_gto_browser_ii/test_shared_models.py`: all 0-1, sum to 1.0 (±0.01 tolerance)
-- [ ] T072 [P] Test HandEvaluation num_simulations validation: must be > 0 if is_computed=True in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T073 [P] Create MatrixPayload tests in `tests/aof_gto_browser_ii/test_shared_models.py`: valid creation with 169 hands, exact hand key set validation
-- [ ] T074 [P] Test MatrixPayload validation: rejects < 169 hands, rejects invalid hand keys, rejects duplicate keys in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T075 [P] Test MatrixPayload methods: `get_hand()` returns correct evaluation, raises KeyError for missing hand in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T076 [P] Test MatrixPayload filtering: `get_hands_by_type('pairs')` returns 13, `get_hands_by_type('suited')` returns 78, `get_hands_by_type('unsuited')` returns 78 in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T077 [P] Create CellDisplay tests in `tests/aof_gto_browser_ii/test_shared_models.py`: valid creation with all color/confidence/opacity values
-- [ ] T078 [P] Test CellDisplay color validation in `tests/aof_gto_browser_ii/test_shared_models.py`: rejects RGB components > 255, < 0; rejects non-tuple colors
-- [ ] T079 [P] Test CellDisplay numeric validation: confidence (0-1), opacity (0-1), highlight_level (0-3) in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T080 [P] Create PrecomputeProgress tests (≥4 independent test methods) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) valid creation with 6 required fields, (2) session_id required and non-empty, (3) immutability (frozen=True), (4) field validation
-- [ ] T081 [P] Test PrecomputeProgress validation (≥5 independent error cases) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) percent_complete FRACTIONAL 0.0-1.0 (not 0-100), (2) hands_completed <= total_hands, (3) is_complete flag consistency (True iff percent_complete >= 1.0), (4) estimated_seconds_remaining >= 0, (5) session_id non-empty string
+- [x] T070 [P] Create HandEvaluation tests in `tests/aof_gto_browser_ii/test_shared_models.py`: valid creation, hand_key validation (all 169 keys), equity validation (0-1)
+- [x] T071 [P] Test HandEvaluation probability validation in `tests/aof_gto_browser_ii/test_shared_models.py`: all 0-1, sum to 1.0 (±0.01 tolerance)
+- [x] T072 [P] Test HandEvaluation num_simulations validation: must be > 0 if is_computed=True in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T073 [P] Create MatrixPayload tests in `tests/aof_gto_browser_ii/test_shared_models.py`: valid creation with 169 hands, exact hand key set validation
+- [x] T074 [P] Test MatrixPayload validation: rejects < 169 hands, rejects invalid hand keys, rejects duplicate keys in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T075 [P] Test MatrixPayload methods: `get_hand()` returns correct evaluation, raises KeyError for missing hand in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T076 [P] Test MatrixPayload filtering: `get_hands_by_type('pairs')` returns 13, `get_hands_by_type('suited')` returns 78, `get_hands_by_type('unsuited')` returns 78 in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T077 [P] Create CellDisplay tests in `tests/aof_gto_browser_ii/test_shared_models.py`: valid creation with all color/confidence/opacity values
+- [x] T078 [P] Test CellDisplay color validation in `tests/aof_gto_browser_ii/test_shared_models.py`: rejects RGB components > 255, < 0; rejects non-tuple colors
+- [x] T079 [P] Test CellDisplay numeric validation: confidence (0-1), opacity (0-1), highlight_level (0-3) in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T080 [P] Create PrecomputeProgress tests (≥4 independent test methods) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) valid creation with 6 required fields, (2) session_id required and non-empty, (3) immutability (frozen=True), (4) field validation
+- [x] T081 [P] Test PrecomputeProgress validation (≥5 independent error cases) in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) percent_complete FRACTIONAL 0.0-1.0 (not 0-100), (2) hands_completed <= total_hands, (3) is_complete flag consistency (True iff percent_complete >= 1.0), (4) estimated_seconds_remaining >= 0, (5) session_id non-empty string
 
 **Checkpoint**: All output DTOs fully implemented and tested.
 
@@ -192,24 +192,24 @@
 
 ### Cross-DTO Integration Tests
 
-- [ ] T082 [P] Test AnalysisRequest → PositionContext → ActionContext integration: verify nested validation works correctly in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T083 [P] Test AnalysisRequest → MatrixPayload workflow: verify request context matches payload context in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T084 [P] Test MatrixPayload → CellDisplay transformation: verify all 169 hands can be converted to display cells in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T085 [P] Test PrecomputeProgress session tracking: verify session_id from AnalysisRequest matches progress updates in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T082 [P] Test AnalysisRequest → PositionContext → ActionContext integration: verify nested validation works correctly in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T083 [P] Test AnalysisRequest → MatrixPayload workflow: verify request context matches payload context in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T084 [P] Test MatrixPayload → CellDisplay transformation: verify all 169 hands can be converted to display cells in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T085 [P] Test PrecomputeProgress session tracking: verify session_id from AnalysisRequest matches progress updates in `tests/aof_gto_browser_ii/test_shared_models.py`
 
 ### Edge Case & Boundary Testing
 
-- [ ] T086 [P] Test hand key format validation (FR-021): all 169 keys correctly identified, invalid formats rejected in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T087 [P] Test immutability across all DTOs: verify frozen=True prevents any attribute modification in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T088 [P] Test type coercion and rejection: strings passed where enums required, wrong domain models, etc. in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T089 [P] Test boundary numeric values: 0.0, 1.0, -0.1, 1.01 for probabilities and confidence in `tests/aof_gto_browser_ii/test_shared_models.py`
-- [ ] T090 [P] Test empty/None handling across optional fields in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T086 [P] Test hand key format validation (FR-021): all 169 keys correctly identified, invalid formats rejected in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T087 [P] Test immutability across all DTOs: verify frozen=True prevents any attribute modification in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T088 [P] Test type coercion and rejection: strings passed where enums required, wrong domain models, etc. in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T089 [P] Test boundary numeric values: 0.0, 1.0, -0.1, 1.01 for probabilities and confidence in `tests/aof_gto_browser_ii/test_shared_models.py`
+- [x] T090 [P] Test empty/None handling across optional fields in `tests/aof_gto_browser_ii/test_shared_models.py`
 
 ### Coverage Validation
 
-- [ ] T091 Run pytest with coverage reports: `pytest tests/aof_gto_browser_ii/test_shared_models.py --cov=aof_gto_browser_ii.shared.models --cov-report=html --cov-report=term-missing`
-- [ ] T092 Verify code coverage ≥95% for all classes/methods in `aof_gto_browser_ii/shared/models/`
-- [ ] T093 Add any missing edge case tests to achieve ≥95% coverage in `tests/aof_gto_browser_ii/test_shared_models.py`. Ensure coverage includes:
+- [x] T091 Run pytest with coverage reports: `pytest tests/aof_gto_browser_ii/test_shared_models.py --cov=aof_gto_browser_ii.shared.models --cov-report=html --cov-report=term-missing`
+- [x] T092 Verify code coverage ≥95% for all classes/methods in `aof_gto_browser_ii/shared/models/`
+- [x] T093 Add any missing edge case tests to achieve ≥95% coverage in `tests/aof_gto_browser_ii/test_shared_models.py`. Ensure coverage includes:
   - All ValueError paths in `__post_init__()` for every DTO
   - Boundary values: 0, 1, -0.1, 1.01 for fractional fields (percent_complete, confidence, opacity, equity)
   - Type rejection: strings for enums, wrong domain models, tuples instead of lists
@@ -220,8 +220,8 @@
 
 ### Final Verification
 
-- [ ] T105 Test JSON serialization round-trip of all DTOs in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) all DTOs serialize via json.dumps() for primitive fields, (2) enums serialize as strings, (3) Hand/HandRange/Board domain models properly encoded, (4) deserialization produces matching API contract structure, (5) no data loss in round-trip
-- [ ] T106 Verify import constraints (FR-017, FR-018, FR-019) before final submission: Run static analysis to confirm `aof_gto_browser_ii.shared.models` imports ONLY stdlib (dataclasses, typing, enum) or Phase 1.1 domain models. No imports from GUI, database, service, or external packages.
+- [x] T105 Test JSON serialization round-trip of all DTOs in `tests/aof_gto_browser_ii/test_shared_models.py`: (1) all DTOs serialize via json.dumps() for primitive fields, (2) enums serialize as strings, (3) Hand/HandRange/Board domain models properly encoded, (4) deserialization produces matching API contract structure, (5) no data loss in round-trip
+- [x] T106 Verify import constraints (FR-017, FR-018, FR-019) before final submission: Run static analysis to confirm `aof_gto_browser_ii.shared.models` imports ONLY stdlib (dataclasses, typing, enum) or Phase 1.1 domain models. No imports from GUI, database, service, or external packages.
 
 **Checkpoint**: Final validation complete. All 106 tasks total complete. Project ready for Phase 2 backend services.
 
@@ -268,23 +268,23 @@
 
 ### Documentation & Docstrings
 
-- [ ] T094 Add comprehensive module-level docstring to `aof_gto_browser_ii/shared/models/__init__.py` explaining purpose and exports
-- [ ] T095 Ensure all docstrings include examples where appropriate (AnalysisRequest, MatrixPayload particularly) in all files
-- [ ] T096 Add FR requirements callouts in docstrings where domain-critical (FR-008 for AnalysisRequest, FR-021 for hand keys, etc.) in all model files
-- [ ] T097 Verify all validation error messages include actual vs expected values (FR-016) in all `__post_init__()` methods
+- [x] T094 Add comprehensive module-level docstring to `aof_gto_browser_ii/shared/models/__init__.py` explaining purpose and exports
+- [x] T095 Ensure all docstrings include examples where appropriate (AnalysisRequest, MatrixPayload particularly) in all files
+- [x] T096 Add FR requirements callouts in docstrings where domain-critical (FR-008 for AnalysisRequest, FR-021 for hand keys, etc.) in all model files
+- [x] T097 Verify all validation error messages include actual vs expected values (FR-016) in all `__post_init__()` methods
 
 ### Validation & Consistency
 
-- [ ] T098 Cross-check all dataclass decorators: verify all have `frozen=True` in `aof_gto_browser_ii/shared/models/enums.py`, `input_context.py`, `output_payload.py`
-- [ ] T099 Verify all enum values are lowercase strings (except when inherited as str) in `enums.py`
-- [ ] T100 Final import validation: ensure no circular imports, all Phase 1.1 domain models properly imported in all files
-- [ ] T101 Test module imports: `from aof_gto_browser_ii.shared.models import *` should provide all 10 DTOs + 3 enums in Python REPL
+- [x] T098 Cross-check all dataclass decorators: verify all have `frozen=True` in `aof_gto_browser_ii/shared/models/enums.py`, `input_context.py`, `output_payload.py`
+- [x] T099 Verify all enum values are lowercase strings (except when inherited as str) in `enums.py`
+- [x] T100 Final import validation: ensure no circular imports, all Phase 1.1 domain models properly imported in all files
+- [x] T101 Test module imports: `from aof_gto_browser_ii.shared.models import *` should provide all 10 DTOs + 3 enums in Python REPL
 
 ### Final Verification
 
-- [ ] T102 Run full test suite: `pytest tests/aof_gto_browser_ii/test_shared_models.py -v` all tests pass
-- [ ] T103 Run type checking if available (mypy/pyright): no type errors in models or tests
-- [ ] T104 Verify no warnings in test output (coverage, deprecation, etc.)
+- [x] T102 Run full test suite: `pytest tests/aof_gto_browser_ii/test_shared_models.py -v` all tests pass
+- [x] T103 Run type checking if available (mypy/pyright): no type errors in models or tests
+- [x] T104 Verify no warnings in test output (coverage, deprecation, etc.)
 
 **Checkpoint**: Phase 1.2 complete. All artifacts ready for Phase 2 backend service implementation.
 
