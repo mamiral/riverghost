@@ -74,6 +74,8 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m hopilot.aof_gto_
 - SQLite databases (for test data persistence) (001-test-suite-cleanup)
 - Python 3.11+ + None (standard library only; PokerKit optional for Phase 2) (001-aof-phase1-foundation)
 - N/A (in-memory only) (001-aof-phase1-foundation)
+- Python 3.11+ + stdlib only (`dataclasses`, `typing`, `enum`; Phase 1.1 domain models imported at module level) (001-shared-dtos)
+- N/A (DTOs are in-memory; persistence handled by Phase 1.3+ database layer) (001-shared-dtos)
 
 ## Operational Notes
 - Keep standalone AoF browser decoupled from simulator flow.
