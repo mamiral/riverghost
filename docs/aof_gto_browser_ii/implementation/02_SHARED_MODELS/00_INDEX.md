@@ -56,6 +56,7 @@ These models describe **what** to analyze.
 |-------|---------|-----------|
 | [PositionContext](01_DTO_PositionContext.md) | Specify a poker position to analyze | User selects position/action |
 | [ActionContext](02_DTO_ActionContext.md) | Specify an action at a position | (Optional) For multi-action scenarios |
+| [AnalysisRequest](02b_DTO_AnalysisRequest.md) | **[CRITICAL]** Combine position context + analysis parameters | Complete analysis request sent to backend |
 
 ### 📤 **Output Models** (Backend → Frontend)
 These models describe **analysis results**.
@@ -138,6 +139,7 @@ Which DTOs interact with which?
 graph TB
     PC["PositionContext"]
     AC["ActionContext"]
+    AR["AnalysisRequest"] 
     BS["BoardState"]
     HE["HandEvaluation"]
     MP["MatrixPayload"]
@@ -147,6 +149,9 @@ graph TB
     
     PC -->|defines| HE
     AC -->|refines| PC
+    AR -->|contains| PC
+    AR -->|returns| MP
+    AR -->|returns| PP
     BS -->|part of| PC
     HE -->|aggregated in| MP
     CD -->|contains| MP
@@ -157,6 +162,7 @@ graph TB
     
     style PC fill:#e3f2fd
     style AC fill:#e3f2fd
+    style AR fill:#ffccbc
     style BS fill:#e3f2fd
     style HE fill:#f3e5f5
     style MP fill:#f3e5f5
