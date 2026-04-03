@@ -72,6 +72,8 @@ c:/Users/U446541/sandbox/riverghost/.venv/Scripts/python.exe -m hopilot.aof_gto_
 - SQLAlchemy-managed normalized database (PostgreSQL, SQLite, or configured backend) (001-cache-removal)
 - Python 3.x + pytest, unittest.mock (001-test-suite-cleanup)
 - SQLite databases (for test data persistence) (001-test-suite-cleanup)
+- Python 3.11+ + None (standard library only; PokerKit optional for Phase 2) (001-aof-phase1-foundation)
+- N/A (in-memory only) (001-aof-phase1-foundation)
 
 ## Operational Notes
 - Keep standalone AoF browser decoupled from simulator flow.
