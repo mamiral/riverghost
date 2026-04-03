@@ -46,8 +46,10 @@ The documents are ordered by implementation sequence, not by folder organization
 4. **Analysis & Solver Services**
    - AnalysisService (facade)
    - PrecomputeService (orchestration)
-   - Solver integration
+   - **CardAdapter** (solver library bridge)
+   - EquityCalculator (PokerKit integration)
    - Uses: Shared models, Repository
+   - See: [07_POKERKIT_INTEGRATION_PHASE2.md](07_POKERKIT_INTEGRATION_PHASE2.md) for solver details
 
 ### Phase 3: Frontend Layer (Week 4-5)
 **Goal**: GUI and state management

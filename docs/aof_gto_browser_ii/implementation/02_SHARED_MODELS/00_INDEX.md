@@ -16,9 +16,9 @@ This folder (02_SHARED_MODELS) contains detailed specifications for each **Data 
 
 ---
 
-## 🔗 Domain Models → DTOs Relationship
+## 🔗 Domain Models → DTOs → Solver Integration Relationship
 
-**Goal**: Type safety from API boundary through business logic.
+**Goal**: Type safety from API boundary through business logic to solver libraries.
 
 ```
 HTTP Request (JSON strings)
@@ -28,15 +28,20 @@ Domain Models (Card, Hand, HandRange)
 DTO (PositionContext with Hand)
     ↓ [PASS TO BUSINESS LOGIC]
 Business Logic (fully typed)
-    ↓ [RETURN DTO WITH DOMAIN MODELS]
+    ↓ [CONVERT VIA CardAdapter]
+PokerKit/Solver Objects (PokerKit.Card, etc.)
+    ↓ [EQUITY COMPUTATION]
 DTO (MatrixPayload with HandRange)
     ↓ [SERIALIZE AT BOUNDARY]
 HTTP Response (JSON strings)
 ```
 
+**Solver Bridge**: [CardAdapter](../07_POKERKIT_INTEGRATION_PHASE2.md#4-phase-2-integration-strategy) is the bridge between domain models and PokerKit library objects.
+
 **Key Files**:
 - **[../01_DOMAIN_MODELS/00_INDEX.md](../01_DOMAIN_MODELS/00_INDEX.md)** - Domain model architecture
 - **[../04_INTEGRATION_DTOs_and_DomainModels.md](../04_INTEGRATION_DTOs_and_DomainModels.md)** - How boundaries work
+- **[../07_POKERKIT_INTEGRATION_PHASE2.md](../07_POKERKIT_INTEGRATION_PHASE2.md)** - CardAdapter and solver integration
 - **[01_DTO_PositionContext.md](01_DTO_PositionContext.md)** - Input DTO using Hand
 - **[05_DTO_MatrixPayload.md](05_DTO_MatrixPayload.md)** - Output DTO using HandRange
 

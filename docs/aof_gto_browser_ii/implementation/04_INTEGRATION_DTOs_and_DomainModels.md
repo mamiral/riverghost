@@ -622,6 +622,81 @@ def analyze():
 
 ---
 
+## Third Boundary: Domain Models ↔ Solver Libraries (Phase 2)
+
+In Phase 2, when integrating PokerKit for real equity calculation, another boundary appears:
+
+```
+DTO with Domain Models (Hand, HandRange)
+    ↓ [CONVERT VIA CardAdapter]
+PokerKit Objects (PokerKit.Card, etc.)
+    ↓ [EQUITY COMPUTATION]
+Equity Results
+    ↓ [BUILD EquityResult DTO]
+DTO with Domain Models (HandEvaluation)
+```
+
+### CardAdapter Bridge Pattern
+
+The **CardAdapter** (see [07_POKERKIT_INTEGRATION_PHASE2.md](07_POKERKIT_INTEGRATION_PHASE2.md)) handles conversion between domain models and solver library objects:
+
+```python
+from shared.adapters.card_adapter import CardAdapter
+from shared.domain import Hand, Card
+from pokerkit.utilities import Card as PokerkitCard
+
+# Domain model remains pure
+hand = Hand.from_strings("As", "Kh")
+
+# When calling PokerKit solver, convert via CardAdapter
+pk_hand = CardAdapter.to_pokerkit_hand_objects(hand)
+# Returns: (PokerkitCard('A', 's'), PokerkitCard('K', 'h'))
+
+# Use with PokerKit
+equity = compute_equity_via_pokerkit(pk_hand, ...)
+
+# Result back to domain DTO
+equity_result = HandEvaluation(
+    hand=hand,  # Original domain Hand
+    equity=equity,
+    win_prob=...,
+    # ...
+)
+```
+
+**Benefits**:
+- Domain models remain **completely independent** of PokerKit
+- Solver conversion logic **localized** in CardAdapter
+- Easy to swap solvers (treys, pypokerengine) via new adapter methods
+- Phase 1.1 (domain models) completely decoupled from Phase 2 (solver integration)
+
+### Example: Full Equity Calculation Flow
+
+```python
+# Phase 1.1: Domain models (no dependencies)
+hand = Hand.from_strings("As", "Kh")
+board = Board.from_strings(["Ac", "Jd", "4s"])
+opponent_range = HandRange.from_shorthand("22+,AKs+")
+
+# Phase 2: EquityCalculator (uses CardAdapter + PokerKit)
+calculator = EquityCalculator()
+
+equity_result = calculator.calculate(
+    hand=hand,
+    board=board,
+    opponent_range=opponent_range,
+    num_simulations=10000
+)
+
+# Result is HandEvaluation DTO with domain models
+# equity_result.hand is Hand (not PokerkitCard)
+# equity_result.equity is float
+```
+
+**Separation of concerns**: Domain → DTOs → Solver is clean and testable.
+
+---
+
 ## Testing Integration
 
 ### Test 1: Boundary Conversion Succeeds
