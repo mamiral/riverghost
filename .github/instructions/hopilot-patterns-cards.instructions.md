@@ -11,6 +11,7 @@ applyTo: ["**/card*.py", "**/poker_analyzer.py"]
   - Ranks: 2-9, T (10), J, Q, K, A
   - Suits: s (spades), h (hearts), d (diamonds), c (clubs)
 - Example: `"Ts"` = Ten of spades, `"Ac"` = Ace of clubs
+- Real usage: [PokerAnalyzer](python/hopilot/poker_analyzer.py#L55) uses this format in Monte Carlo simulations
 
 ## Board Positions
 - Use semantic position names for consistency:

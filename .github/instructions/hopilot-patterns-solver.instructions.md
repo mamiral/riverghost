@@ -5,7 +5,10 @@ applyTo: "**/poker_analyzer.py", "**/hand*.py"
 
 # HoPilot Solver Patterns
 
-## Hand Evaluation
+## Imports
+- Import `random` at module level: `import random`
+- Don't import inside loops—it's inefficient
+- Use `PokerkitDeck.STANDARD` to access full deck
 - Use PokerKit library (`StandardHighHand`) for robust hand evaluation
 - Always validate hole cards (must be exactly 2) before evaluation
 - Board cards can vary (0-5), validate count before processing
@@ -26,14 +29,15 @@ applyTo: "**/poker_analyzer.py", "**/hand*.py"
 - Return dictionary always includes:
   ```python
   {
-    'win_probability': float,
-    'tie_probability': float,
-    'loss_probability': float,
-    'valid_simulations': int,      # Count of successful simulations
-    'wins': int,
-    'ties': int
+    'win_probability': float,      # Wins / valid_simulations
+    'tie_probability': float,      # Ties / valid_simulations
+    'loss_probability': float,     # 1 - win - tie
+    'valid_simulations': int,      # Count of successful simulations (crucial!)
+    'wins': int,                   # Raw count
+    'ties': int                    # Raw count
   }
   ```
+- See [PokerAnalyzer._run_monte_carlo_simulation](python/hopilot/poker_analyzer.py#L55) for implementation reference
 
 ## Known Cards & Deck Management
 - Track known cards (hero, board, fixed opponents) to avoid duplicates in deck

@@ -27,6 +27,7 @@ applyTo: "**/orm_models.py", "**/database.py", "**/models.py"
   # Child side
   parent = relationship("Parent", back_populates="children")
   ```
+- Real example: [Simulation model](prototyping/aof_orm_models.py#L60) with HandMatrix children
 
 ## Enums & Constrained Types
 - Define enum classes for fixed value sets:
@@ -58,6 +59,14 @@ applyTo: "**/orm_models.py", "**/database.py", "**/models.py"
       return f"{rank1}{rank2}{suffix}"
   ```
 - Properties don't require database lookups; compute from existing fields
+
+## Debugging & Representation
+- Implement `__repr__()` for readable debugging output:
+  ```python
+  def __repr__(self):
+      return f"<Simulation(id={self.id}, name='{self.name}', games={self.total_games})>"
+  ```
+- Helps with log output and REPL debugging
 
 ## Unique Constraints
 - Single column: `Column(String, unique=True)`

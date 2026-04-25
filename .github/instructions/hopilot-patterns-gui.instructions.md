@@ -13,9 +13,11 @@ applyTo: "gui_components/**"
 
 ## Event Handling
 - Implement `handle_event()` to process input events
-- Return action string from `handle_event()` to signal parent
-- Return `None` if event not handled (passes to parent)
+- Return `True` if event was consumed, `False` if not handled (passes to parent)
 - Keep event handling logic simple—delegate complex logic to parent loop
+- Example: CardPicker.handle_event() checks mouse clicks, returns True if card clicked
+
+## Drawing & Rendering
 
 ## Drawing & Rendering
 - Implement `draw(surface)` to render component to pygame surface
@@ -39,14 +41,17 @@ applyTo: "gui_components/**"
 ```python
 # Typical component usage in main loop
 for event in pygame.event.get():
-    action = component.handle_event(event)
-    if action:
-        handle_action(action)
+    if component.handle_event(event):
+        # Event was consumed by component
+        continue
+    # Handle event in main loop if component didn't consume it
 
 component.update(dt)
 component.draw(surface)
 pygame.display.flip()
 ```
+
+Real example: [CardPicker.handle_event()](python/hopilot/gui_components/card_picker.py#L99) returns True when card clicked
 
 ## Modal Overlays
 - Card picker and dialogs are modal overlays
