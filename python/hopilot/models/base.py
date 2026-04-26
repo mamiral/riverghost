@@ -10,7 +10,6 @@ from typing import Any, Dict
 
 from sqlalchemy import Column, DateTime, Integer, MetaData
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.sql import func
 
 from hopilot.logging_config import get_logger
 
@@ -38,7 +37,6 @@ class BaseModel(Base):
 
     Provides:
     - Auto-incrementing primary key
-    - Automatic timestamps (created_at, updated_at)
     - Serialization methods
     - Validation hooks
     """
@@ -46,8 +44,6 @@ class BaseModel(Base):
     __abstract__ = True
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
     def __init__(self, **kwargs):
         """Initialize model with validation."""
