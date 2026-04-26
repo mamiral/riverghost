@@ -31,14 +31,31 @@ def main() -> int:
     runner = AoFPrecomputeRunner(provider=provider, database_url=args.database_url)
     
     # Run precompute with database persistence
-    run_id = runner.run(
+    runner.run(
         profile=PrecomputeProfile(),
         run_id=args.resume_run_id,
-        max_scenarios=args.max_scenarios
+        max_scenarios=args.max_scenarios,
     )
-    
+    run_id = runner.last_job_session_id
+
     logger.info(f"Precompute run finished. run_id={run_id} - Data persisted to normalized database")
     print(f"Precompute run finished. run_id={run_id}")
+
+    if run_id is not None:
+        try:
+            mappings = runner.get_job_scenario_mappings(run_id)
+            if mappings:
+                print("Scenario mappings:")
+                for mapping in mappings:
+                    print(
+                        f"  [{mapping['scenario_index']}] {mapping['scenario_key']} "
+                        f"status={mapping['status']} simulation_id={mapping['simulation_id']} "
+                        f"matrix_id={mapping['matrix_id']} "
+                        f"failure_boundary={mapping['failure_boundary']} "
+                        f"failure_reason={mapping['failure_reason']}"
+                    )
+        except Exception as exc:
+            logger.warning("Unable to print scenario mappings for run_id=%s: %s", run_id, exc)
     return 0
 
 

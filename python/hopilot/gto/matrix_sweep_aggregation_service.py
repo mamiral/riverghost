@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards, hand_key_from_index, iter_canonical_matrix_cells
-from hopilot.gto.matrix_sweep_contract import mark_aggregation_complete, normalize_scenario_contract
+from hopilot.gto.matrix_sweep_contract import mark_aggregation_complete, normalize_scenario_contract, RUN_STATUS_AGGREGATED
 from hopilot.logging_config import get_logger
 from hopilot.models import AggregatedMetric, MatrixCell
 
@@ -108,7 +108,7 @@ class MatrixSweepAggregationService:
             "matrix_cells_written": 169,
             "aggregated_metrics_written": 169,
             "unmapped_hero_records": unmapped_hero_records,
-            "status": "completed",
+            "status": RUN_STATUS_AGGREGATED,
         }
 
     def rerun_aggregation(self, simulation_id):

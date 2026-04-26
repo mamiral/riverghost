@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any, Mapping
 
 
@@ -13,6 +14,54 @@ RUN_STATUS_CREATED = "created"
 RUN_STATUS_RAW_COMPLETE = "raw_sweep_complete"
 RUN_STATUS_AGGREGATED = "aggregated"
 RUN_STATUS_FAILED = "failed"
+
+
+class MatrixSweepPhase(str, Enum):
+    ORCHESTRATION = "orchestration"
+    SOLVER_WRITE = "solver_write"
+    AGGREGATION = "aggregation"
+    FINALIZING = "finalizing"
+
+
+class FailureBoundary(str, Enum):
+    ORCHESTRATION = "orchestration"
+    SOLVER_WRITE = "solver_write"
+    AGGREGATION = "aggregation"
+
+PHASE_ORCHESTRATION = MatrixSweepPhase.ORCHESTRATION.value
+PHASE_SOLVER_WRITE = MatrixSweepPhase.SOLVER_WRITE.value
+PHASE_AGGREGATION = MatrixSweepPhase.AGGREGATION.value
+PHASE_FINALIZING = MatrixSweepPhase.FINALIZING.value
+
+FAILURE_BOUNDARY_ORCHESTRATION = FailureBoundary.ORCHESTRATION.value
+FAILURE_BOUNDARY_SOLVER_WRITE = FailureBoundary.SOLVER_WRITE.value
+FAILURE_BOUNDARY_AGGREGATION = FailureBoundary.AGGREGATION.value
+
+REQUIRED_SWEEP_RESULT_FIELDS = (
+    "simulation_id",
+    "matrix_id",
+    "status",
+)
+
+
+def validate_sweep_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(result, Mapping):
+        raise MatrixSweepContractError("Sweep result must be a mapping")
+
+    missing_fields = [field for field in REQUIRED_SWEEP_RESULT_FIELDS if field not in result]
+    if missing_fields:
+        raise MatrixSweepContractError(
+            f"Sweep result is missing required fields: {', '.join(missing_fields)}"
+        )
+
+    if not isinstance(result["simulation_id"], int) or result["simulation_id"] < 1:
+        raise MatrixSweepContractError("simulation_id must be an integer >= 1")
+    if not isinstance(result["matrix_id"], int) or result["matrix_id"] < 1:
+        raise MatrixSweepContractError("matrix_id must be an integer >= 1")
+    if not isinstance(result["status"], str) or not result["status"].strip():
+        raise MatrixSweepContractError("status must be a non-empty string")
+
+    return dict(result)
 
 REQUIRED_SCENARIO_FIELDS = (
     "selected_position",

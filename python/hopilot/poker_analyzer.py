@@ -221,7 +221,7 @@ class PokerAnalyzer:
         Returns:
             dict with win/tie/loss probabilities.
         """
-        self.logger.info(f"Calculating odds with random opponents: hero={hero_hole_cards}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
+        self.logger.debug(f"Calculating odds with random opponents: hero={hero_hole_cards}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
         
         # Check for duplicates in input
         all_input_cards = hero_hole_cards + board_cards
@@ -252,7 +252,7 @@ class PokerAnalyzer:
         )
         
         if result:
-            self.logger.info(f"Odds result: {result}")
+            self.logger.debug(f"Odds result: {result}")
         return result
 
     def calculate_odds(
@@ -274,7 +274,7 @@ class PokerAnalyzer:
         Returns:
             dict with win/tie/loss probabilities.
         """
-        self.logger.info(f"Calculating odds against specific opponents: hero={hero_hole_cards}, villains={villain_hole_cards}, board={board_cards}, sims={num_simulations}")
+        self.logger.debug(f"Calculating odds against specific opponents: hero={hero_hole_cards}, villains={villain_hole_cards}, board={board_cards}, sims={num_simulations}")
         
         # Check for duplicates in input
         all_input_cards = hero_hole_cards + board_cards
@@ -315,7 +315,7 @@ class PokerAnalyzer:
         )
         
         if result:
-            self.logger.info(f"Specific odds result: {result}")
+            self.logger.debug(f"Specific odds result: {result}")
         return result
 
     def calculate_odds_range(
@@ -337,7 +337,7 @@ class PokerAnalyzer:
         Returns:
             dict with win/tie/loss probabilities averaged over the range.
         """
-        self.logger.info(f"Calculating odds for range: {hero_range}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
+        self.logger.debug(f"Calculating odds for range: {hero_range}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
         
         # Expand range to all possible hands
         hero_hands = expand_range_to_hands(hero_range)
@@ -408,7 +408,7 @@ class PokerAnalyzer:
             'range_size': len(hero_hands)
         }
         
-        self.logger.info(f"Range odds result: {result}")
+        self.logger.debug(f"Range odds result: {result}")
         return result
 
     def simulate_individual_outcomes(
@@ -436,7 +436,7 @@ class PokerAnalyzer:
             - ev_chips: EV in chips (pot_size for win, -bet_amount for loss, 0 for tie)
             - board_cards: Final board cards used in simulation
         """
-        self.logger.info(f"Simulating individual outcomes: hero={hero_hole_cards}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
+        self.logger.debug(f"Simulating individual outcomes: hero={hero_hole_cards}, board={board_cards}, opponents={num_opponents}, sims={num_simulations}")
 
         # Check for duplicates in input
         all_input_cards = hero_hole_cards + board_cards
@@ -536,7 +536,7 @@ class PokerAnalyzer:
             self.logger.error("No valid simulations completed")
             return None
 
-        self.logger.info(f"Generated {len(outcomes)} individual simulation outcomes")
+        self.logger.debug(f"Generated {len(outcomes)} individual simulation outcomes")
         return outcomes
 
     def evaluate_hand(self, hole_cards: List[str], board_cards: List[str]) -> Optional[int]:
@@ -658,7 +658,7 @@ class PokerAnalyzer:
         Returns:
             dict with 'win_probability', 'tie_probability', 'loss_probability'
         """
-        self.logger.info(f"Calculating odds: hero={hero_hole_cards}, opponents={len(opponent_hole_cards_list)}, board={board_cards}, sims={num_simulations}")
+        self.logger.debug(f"Calculating odds: hero={hero_hole_cards}, opponents={len(opponent_hole_cards_list)}, board={board_cards}, sims={num_simulations}")
         
         # Check for duplicates in input
         all_input_cards = hero_hole_cards + [c for opp in opponent_hole_cards_list for c in opp] + board_cards
@@ -700,7 +700,7 @@ class PokerAnalyzer:
         )
         
         if result:
-            self.logger.info(f"Odds calculation result: {result}")
+            self.logger.debug(f"Odds calculation result: {result}")
         return result
 
     def calculate_pot_odds(
@@ -741,7 +741,7 @@ class PokerAnalyzer:
             'odds_percentage': odds_percentage
         }
         
-        self.logger.info(f"Pot odds: {result}")
+        self.logger.debug(f"Pot odds: {result}")
         return result
 
     def calculate_ev_index(
@@ -786,7 +786,7 @@ class PokerAnalyzer:
             'break_even_percentage': break_even_percentage
         }
         
-        self.logger.info(f"EV calculation: {result}")
+        self.logger.debug(f"EV calculation: {result}")
         return result
 
     def card_name_to_pokerkit(self, card_name: str) -> Optional[PokerkitCard]:

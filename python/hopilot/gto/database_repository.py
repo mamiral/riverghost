@@ -23,7 +23,9 @@ from hopilot.models import (
     Player,
     Bet,
     BoardCard,
-    Jackpot
+    Jackpot,
+    PrecomputeJobSession,
+    ScenarioRunLink,
 )
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType, ConvergencePoint, JackpotStats
 from hopilot.gto.aggregation_engine import AggregationEngine
@@ -1066,6 +1068,124 @@ class DatabaseRepository:
                 simulation.parameters = dict(parameters)
             if end_timestamp is not None:
                 simulation.end_timestamp = end_timestamp
+
+    def create_precompute_job_session(
+        self,
+        *,
+        scenario_fingerprint: str,
+        requested_scenarios: int,
+    ) -> int:
+        """Create a durable precompute job session for UI-driven run tracing."""
+        with self.connection.session_scope() as session:
+            job_session = PrecomputeJobSession(
+                scenario_fingerprint=scenario_fingerprint,
+                run_state="RUNNING",
+                requested_scenarios=requested_scenarios,
+                completed_scenarios=0,
+                failed_scenarios=0,
+                started_at=datetime.now(timezone.utc),
+                elapsed_active_ms=0,
+            )
+            session.add(job_session)
+            session.flush()
+            return job_session.id
+
+    def update_precompute_job_session(
+        self,
+        job_session_id: int,
+        *,
+        run_state: Optional[str] = None,
+        completed_scenarios: Optional[int] = None,
+        failed_scenarios: Optional[int] = None,
+        finished_at: Optional[datetime] = None,
+        elapsed_active_ms: Optional[int] = None,
+    ) -> None:
+        """Update an existing precompute job session record."""
+        with self.connection.session_scope() as session:
+            job_session = session.query(PrecomputeJobSession).filter(PrecomputeJobSession.id == job_session_id).first()
+            if job_session is None:
+                raise DataIntegrityError(f"Precompute job session {job_session_id} does not exist")
+            if run_state is not None:
+                job_session.run_state = run_state
+            if completed_scenarios is not None:
+                job_session.completed_scenarios = completed_scenarios
+            if failed_scenarios is not None:
+                job_session.failed_scenarios = failed_scenarios
+            if finished_at is not None:
+                job_session.finished_at = finished_at
+            if elapsed_active_ms is not None:
+                job_session.elapsed_active_ms = elapsed_active_ms
+
+    def get_precompute_job_session(self, job_session_id: int) -> Optional[PrecomputeJobSession]:
+        """Return a durable precompute job session record."""
+        with self.connection.session_scope() as session:
+            return session.query(PrecomputeJobSession).filter(PrecomputeJobSession.id == job_session_id).first()
+
+    def get_scenario_run_link(self, scenario_link_id: int) -> Optional[ScenarioRunLink]:
+        """Return a durable scenario run link record."""
+        with self.connection.session_scope() as session:
+            return session.query(ScenarioRunLink).filter(ScenarioRunLink.id == scenario_link_id).first()
+
+    def get_scenario_run_links_for_job(self, job_session_id: int) -> list[ScenarioRunLink]:
+        """Return scenario run links for a precompute job session."""
+        with self.connection.session_scope() as session:
+            return (
+                session.query(ScenarioRunLink)
+                .filter(ScenarioRunLink.job_session_id == job_session_id)
+                .order_by(ScenarioRunLink.scenario_index)
+                .all()
+            )
+
+    def create_scenario_run_link(
+        self,
+        *,
+        job_session_id: int,
+        scenario_index: int,
+        scenario_key: str,
+        scenario_contract: Dict[str, Any],
+        status: str = "PENDING",
+    ) -> int:
+        """Create a durable scenario linkage record for a precompute job."""
+        with self.connection.session_scope() as session:
+            link = ScenarioRunLink(
+                job_session_id=job_session_id,
+                scenario_index=scenario_index,
+                scenario_key=scenario_key,
+                scenario_contract=dict(scenario_contract),
+                status=status,
+            )
+            session.add(link)
+            session.flush()
+            return link.id
+
+    def update_scenario_run_link(
+        self,
+        scenario_link_id: int,
+        *,
+        status: Optional[str] = None,
+        simulation_id: Optional[int] = None,
+        matrix_id: Optional[int] = None,
+        failure_boundary: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        scenario_contract: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Update a scenario run link with outcome and diagnostics."""
+        with self.connection.session_scope() as session:
+            link = session.query(ScenarioRunLink).filter(ScenarioRunLink.id == scenario_link_id).first()
+            if link is None:
+                raise DataIntegrityError(f"Scenario run link {scenario_link_id} does not exist")
+            if status is not None:
+                link.status = status
+            if simulation_id is not None:
+                link.simulation_id = simulation_id
+            if matrix_id is not None:
+                link.matrix_id = matrix_id
+            if failure_boundary is not None:
+                link.failure_boundary = failure_boundary
+            if failure_reason is not None:
+                link.failure_reason = failure_reason
+            if scenario_contract is not None:
+                link.scenario_contract = dict(scenario_contract)
 
     def get_simulation_record(self, simulation_id: int) -> Optional[Simulation]:
         """Return one simulation ORM object with its hand matrix eagerly loaded."""

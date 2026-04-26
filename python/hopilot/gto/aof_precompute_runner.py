@@ -10,8 +10,10 @@ from typing import Any
 
 from hopilot.gto.aof_hand_matrix import format_metric_value
 from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.matrix_sweep_contract import MatrixSweepContractError
 from hopilot.logging_config import get_logger
 from hopilot.performance_monitor import performance_monitor
+from hopilot.poker_analyzer import PokerAnalyzer
 
 # Phase 4: Status constants (previously from deleted provider)
 STATUS_ERROR = "ERROR"
@@ -23,6 +25,7 @@ class PrecomputeProfile:
     positions: tuple[str, ...] = ("UTG", "BTN", "SB", "BB")
     metrics: tuple[str, ...] = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR")
     strict_modes: tuple[bool, ...] = (False, True)
+    simulations_per_cell: int = 1000
 
 
 class GuiRunState(str, Enum):
@@ -32,13 +35,25 @@ class GuiRunState(str, Enum):
     STOPPING = "STOPPING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
+class RunnerPhase(str, Enum):
+    ORCHESTRATION = "orchestration"
+    SOLVER_WRITE = "solver_write"
+    AGGREGATION = "aggregation"
+    FINALIZING = "finalizing"
+
+
+class MatrixSweepAggregationError(Exception):
+    """Raised when matrix sweep aggregation fails."""
 
 
 _GUI_TRANSITIONS: dict[GuiRunState, set[GuiRunState]] = {
     GuiRunState.IDLE: {GuiRunState.RUNNING},
     GuiRunState.RUNNING: {GuiRunState.PAUSED, GuiRunState.STOPPING, GuiRunState.COMPLETED, GuiRunState.FAILED},
     GuiRunState.PAUSED: {GuiRunState.RUNNING, GuiRunState.IDLE, GuiRunState.STOPPING, GuiRunState.COMPLETED, GuiRunState.FAILED},
-    GuiRunState.STOPPING: {GuiRunState.COMPLETED, GuiRunState.FAILED},
+    GuiRunState.STOPPING: {GuiRunState.COMPLETED, GuiRunState.FAILED, GuiRunState.CANCELED},
     GuiRunState.COMPLETED: {GuiRunState.IDLE, GuiRunState.RUNNING},
     GuiRunState.FAILED: {GuiRunState.IDLE, GuiRunState.RUNNING},
 }
@@ -85,6 +100,8 @@ class RunnerTelemetrySnapshot:
     total_cells: int
     current_cell_index: int | None
     current_cell_label: str | None
+    active_scenario_key: str | None
+    phase: RunnerPhase
     elapsed_seconds: float
     eta_seconds: float | None
     failure_count: int
@@ -112,6 +129,7 @@ class AoFPrecomputeRunner:
         # Session cache for in-memory testing and checkpoint restoration
         self._gui_sessions: dict[int, GuiPrecomputeRunSession] = {}
         self._next_run_id = 1  # Counter for assigning run IDs
+        self.last_job_session_id: int | None = None
         self.aggregation_service = None  # Phase 4: Aggregation service removed
         self.logger.info(f"AoFPrecomputeRunner initialized with database: {database_url}")
 
@@ -253,8 +271,18 @@ class AoFPrecomputeRunner:
         }
         return json.dumps(payload, sort_keys=True)
 
-    def get_progress_snapshot(self, session: GuiPrecomputeRunSession, *, current_cell_label: str | None = None) -> dict[str, Any]:
-        telemetry = self.build_runner_telemetry(session, current_cell_label=current_cell_label)
+    @staticmethod
+    def build_job_fingerprint(profile: PrecomputeProfile) -> str:
+        payload = {
+            "positions": list(profile.positions),
+            "metrics": list(profile.metrics),
+            "strict_modes": list(profile.strict_modes),
+            "simulations_per_cell": int(profile.simulations_per_cell),
+        }
+        return json.dumps(payload, sort_keys=True)
+
+    def get_progress_snapshot(self, session: GuiPrecomputeRunSession, *, current_cell_label: str | None = None, active_scenario_key: str | None = None, phase: RunnerPhase = RunnerPhase.ORCHESTRATION) -> dict[str, Any]:
+        telemetry = self.build_runner_telemetry(session, current_cell_label=current_cell_label, active_scenario_key=active_scenario_key, phase=phase)
         current_cell = None
         if telemetry.current_cell_index is not None:
             current_cell = {"index": telemetry.current_cell_index, "hand_key": telemetry.current_cell_label}
@@ -263,10 +291,75 @@ class AoFPrecomputeRunner:
             "completed_cells": telemetry.completed_cells,
             "total_cells": telemetry.total_cells,
             "current_cell": current_cell,
+            "active_scenario_key": telemetry.active_scenario_key,
+            "phase": telemetry.phase.value,
             "elapsed_seconds": telemetry.elapsed_seconds,
             "eta_seconds": telemetry.eta_seconds,
             "failure_count": telemetry.failure_count,
         }
+
+    def get_job_progress(self, job_session_id: int) -> dict[str, Any]:
+        session = self.database_repository.get_precompute_job_session(job_session_id)
+        if session is None:
+            raise ValueError(f"Precompute job session {job_session_id} does not exist")
+
+        links = self.database_repository.get_scenario_run_links_for_job(job_session_id)
+        active_link = next((link for link in links if link.status == "RUNNING"), None)
+        active_scenario_key = active_link.scenario_key if active_link is not None else None
+        phase = RunnerPhase.ORCHESTRATION
+        if active_link is not None and active_link.status == "RUNNING":
+            phase = RunnerPhase.SOLVER_WRITE
+
+        elapsed_seconds = 0.0
+        if session.elapsed_active_ms is not None:
+            elapsed_seconds = session.elapsed_active_ms / 1000.0
+
+        eta_seconds = None
+        processed = session.completed_scenarios + session.failed_scenarios
+        if session.started_at and processed > 0:
+            started_at = session.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=UTC)
+            elapsed_seconds = (datetime.now(UTC) - started_at).total_seconds()
+            if processed > 0:
+                remaining = max(0, session.requested_scenarios - processed)
+                eta_seconds = (elapsed_seconds / processed) * remaining
+
+        return {
+            "run_state": session.run_state,
+            "completed_scenarios": session.completed_scenarios,
+            "total_scenarios": session.requested_scenarios,
+            "active_scenario_key": active_scenario_key,
+            "phase": phase.value,
+            "elapsed_seconds": elapsed_seconds,
+            "eta_seconds": eta_seconds,
+            "failure_count": session.failed_scenarios,
+        }
+
+    def get_job_scenario_mappings(self, job_session_id: int) -> list[dict[str, Any]]:
+        links = self.database_repository.get_scenario_run_links_for_job(job_session_id)
+        return [
+            {
+                "scenario_index": link.scenario_index,
+                "scenario_key": link.scenario_key,
+                "status": link.status,
+                "simulation_id": link.simulation_id,
+                "matrix_id": link.matrix_id,
+                "failure_boundary": link.failure_boundary,
+                "failure_reason": link.failure_reason,
+            }
+            for link in links
+        ]
+
+    def request_job_cancellation(self, job_session_id: int) -> None:
+        self.database_repository.update_precompute_job_session(
+            job_session_id,
+            run_state="STOPPING",
+        )
+
+    def _is_job_cancel_requested(self, job_session_id: int) -> bool:
+        session = self.database_repository.get_precompute_job_session(job_session_id)
+        return session is not None and session.run_state == "STOPPING"
 
     def run_gui_cell(
         self,
@@ -861,6 +954,8 @@ class AoFPrecomputeRunner:
         session: GuiPrecomputeRunSession,
         *,
         current_cell_label: str | None = None,
+        active_scenario_key: str | None = None,
+        phase: RunnerPhase = RunnerPhase.ORCHESTRATION,
         now_utc: datetime | None = None,
         now_perf: float | None = None,
     ) -> RunnerTelemetrySnapshot:
@@ -886,6 +981,8 @@ class AoFPrecomputeRunner:
             total_cells=int(session.total_cells),
             current_cell_index=session.current_cell_index,
             current_cell_label=current_cell_label,
+            active_scenario_key=active_scenario_key,
+            phase=phase,
             elapsed_seconds=elapsed_seconds,
             eta_seconds=eta,
             failure_count=int(session.failed_cells),
@@ -998,6 +1095,70 @@ class AoFPrecomputeRunner:
                         )
         return scenarios
 
+    def _build_matrix_sweep_contract(
+        self,
+        *,
+        context: dict[str, Any],
+        profile: PrecomputeProfile,
+        job_session_id: int | None = None,
+        scenario_key: str | None = None,
+    ) -> dict[str, Any]:
+        position_actions = dict(context.get("position_actions", {}))
+        active_players = [
+            pos for pos, action in position_actions.items() if action == "ALL_IN"
+        ]
+        if not active_players and context.get("position"):
+            active_players = [context["position"]]
+
+        sims_per_combo = int(profile.simulations_per_cell)
+        contract = {
+            "selected_position": str(context["position"]),
+            "hero_action": str(context["action"]),
+            "position_actions": position_actions,
+            "active_players": active_players,
+            "num_opponents": max(1, len(active_players) - 1),
+            "pot_size": float(context.get("pot_size", 0.0)),
+            "bet_amount": float(context.get("bet_amount", 0.0)),
+            "sims_per_combo": sims_per_combo,
+            "num_simulations": sims_per_combo,
+            "matrix_size": "13x13",
+            "game_type": str(context.get("game_type", "nlhe")),
+            "run_kind": "matrix_sweep",
+        }
+        if job_session_id is not None:
+            contract["precompute_job_session_id"] = job_session_id
+        if scenario_key is not None:
+            contract["scenario_key"] = scenario_key
+        return contract
+
+    def _execute_matrix_sweep(self, scenario_contract: dict[str, Any]) -> dict[str, Any]:
+        from hopilot.database.persistence import DatabasePersistenceStrategy
+        from hopilot.gto.matrix_sweep_service import MatrixSweepService
+
+        service = MatrixSweepService(
+            self.database_repository,
+            PokerAnalyzer(),
+            DatabasePersistenceStrategy,
+        )
+        try:
+            sweep_result = service.run_sweep(scenario_contract)
+        except Exception as error:
+            if isinstance(error, MatrixSweepAggregationError):
+                raise
+            raise
+
+        return {
+            "simulation_id": sweep_result["simulation_id"],
+            "matrix_id": sweep_result["matrix_id"],
+            "raw_game_states_written": sweep_result["raw_game_states_written"],
+            "raw_players_written": sweep_result["raw_players_written"],
+            "matrix_cells_written": sweep_result["matrix_cells_written"],
+            "aggregated_metrics_written": sweep_result["aggregated_metrics_written"],
+            "failed_combinations": sweep_result["failed_combinations"],
+            "unmapped_hero_records": sweep_result["unmapped_hero_records"],
+            "status": sweep_result["status"],
+        }
+
     def run(
         self,
         profile: PrecomputeProfile | None = None,
@@ -1010,43 +1171,141 @@ class AoFPrecomputeRunner:
         if max_scenarios is not None:
             scenarios = scenarios[: int(max_scenarios)]
 
+        if run_id is not None:
+            self.logger.warning("Resume semantics for run_id are not supported in this migration path; starting a new job")
+            run_id = None
+
+        job_session_id = self.database_repository.create_precompute_job_session(
+            scenario_fingerprint=self.build_job_fingerprint(profile),
+            requested_scenarios=len(scenarios),
+        )
+
         completed = 0
         failed = 0
-        
-        self.logger.info(f"Starting precompute run with {len(scenarios)} scenarios")
-        
+        self.last_job_session_id = job_session_id
+        self.logger.info(f"Starting precompute run job_id={job_session_id} with {len(scenarios)} scenarios")
+
         for idx, scenario in enumerate(scenarios):
+            if self._is_job_cancel_requested(job_session_id):
+                self.logger.info("Cancellation requested for job_id=%s, stopping dispatch of new scenarios", job_session_id)
+                break
+
+            scenario_key = scenario["scenario_key"]
+            scenario_link_id = self.database_repository.create_scenario_run_link(
+                job_session_id=job_session_id,
+                scenario_index=idx,
+                scenario_key=scenario_key,
+                scenario_contract={},
+                status="PENDING",
+            )
             try:
-                scenario_key = scenario["scenario_key"]
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    status="RUNNING",
+                )
+
                 context = self.provider._build_context(  # pylint: disable=protected-access
                     position=scenario["position"],
                     metric=scenario["metric"],
                     position_actions=scenario["position_actions"],
                     strict_current_action=scenario["strict_current_action"],
                 )
-                
-                # Get solver results
-                payload = self.provider.get_matrix_payload(
-                    position=scenario["position"],
-                    metric=scenario["metric"],
-                    position_actions=scenario["position_actions"],
-                    strict_current_action=scenario["strict_current_action"],
+                contract = self._build_matrix_sweep_contract(
+                    context=context,
+                    profile=profile,
+                    job_session_id=job_session_id,
+                    scenario_key=scenario_key,
                 )
-                
-                # Check for errors/timeouts
-                statuses = {cell.get("status") for cell in payload.get("cells", [])}
-                if "TIMEOUT" in statuses or "ERROR" in statuses:
-                    failed += 1
-                    self.logger.warning(f"Scenario {scenario_key} failed with status: {statuses}")
-                else:
-                    # Store results in normalized database
-                    self._persist_scenario_results(scenario_key, payload)
-                    completed += 1
-                    
-            except Exception as exc:  # pragma: no cover
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    scenario_contract=contract,
+                )
+            except Exception as exc:
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    status="FAILED",
+                    failure_boundary="orchestration",
+                    failure_reason=str(exc),
+                )
                 failed += 1
-                self.logger.error(f"Error processing scenario {idx}: {exc}")
+                self.database_repository.update_precompute_job_session(
+                    job_session_id,
+                    completed_scenarios=completed,
+                    failed_scenarios=failed,
+                )
+                self.logger.error("Scenario %s failed during orchestration: %s", scenario_key, exc)
+                continue
 
-        status = "FAILED" if failed > 0 else "COMPLETED"
-        self.logger.info(f"Precompute run complete: completed={completed}, failed={failed}, status={status}")
+            try:
+                sweep_result = self._execute_matrix_sweep(contract)
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    status="COMPLETED",
+                    simulation_id=sweep_result["simulation_id"],
+                    matrix_id=sweep_result["matrix_id"],
+                )
+                completed += 1
+            except MatrixSweepContractError as exc:
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    status="FAILED",
+                    failure_boundary="orchestration",
+                    failure_reason=str(exc),
+                )
+                failed += 1
+                self.logger.error("Scenario %s failed during orchestration: %s", scenario_key, exc)
+            except MatrixSweepAggregationError as exc:
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    status="FAILED",
+                    failure_boundary="aggregation",
+                    failure_reason=str(exc),
+                )
+                failed += 1
+                self.logger.error("Scenario %s failed during aggregation: %s", scenario_key, exc)
+            except Exception as exc:
+                self.database_repository.update_scenario_run_link(
+                    scenario_link_id,
+                    status="FAILED",
+                    failure_boundary="solver_write",
+                    failure_reason=str(exc),
+                )
+                failed += 1
+                self.logger.error("Scenario %s failed during sweep execution: %s", scenario_key, exc)
+            finally:
+                self.database_repository.update_precompute_job_session(
+                    job_session_id,
+                    completed_scenarios=completed,
+                    failed_scenarios=failed,
+                )
+
+        job_session = self.database_repository.get_precompute_job_session(job_session_id)
+        if job_session and job_session.run_state == "STOPPING":
+            final_state = "CANCELED"
+        else:
+            final_state = "FAILED" if failed > 0 else "COMPLETED"
+
+        self.database_repository.update_precompute_job_session(
+            job_session_id,
+            run_state=final_state,
+            completed_scenarios=completed,
+            failed_scenarios=failed,
+            finished_at=datetime.now(UTC),
+        )
+
+        self.logger.info(
+            "Precompute run complete job_id=%s completed=%s failed=%s final_state=%s",
+            job_session_id,
+            completed,
+            failed,
+            final_state,
+        )
         return 0
+
+    def run_precompute(
+        self,
+        profile: PrecomputeProfile | None = None,
+        *,
+        max_scenarios: int | None = None,
+    ) -> int:
+        return self.run(profile=profile, max_scenarios=max_scenarios)

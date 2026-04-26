@@ -14,6 +14,8 @@ from .hand_matrix import HandMatrix
 from .jackpot import Jackpot
 from .matrix_cell import MatrixCell
 from .player import Player
+from .precompute_job_session import PrecomputeJobSession
+from .scenario_run_link import ScenarioRunLink
 from .simulation import Simulation
 
 __all__ = [
@@ -28,4 +30,6 @@ __all__ = [
     "BoardCard",
     "Jackpot",
     "AggregatedMetric",
+    "PrecomputeJobSession",
+    "ScenarioRunLink",
 ]
