@@ -1,4 +1,6 @@
 import os
+import random
+from datetime import datetime
 from typing import List, Dict, Optional, Any
 
 from pokerkit.hands import StandardHighHand
@@ -52,13 +54,38 @@ class PokerAnalyzer:
             self.logger.error(f"Failed to evaluate hand: {e}")
             return None
 
+    def _map_hand_class(self, hand: StandardHighHand) -> str:
+        """Map PokerKit hand label to persisted hand class enum value."""
+        label = str(hand.entry.label).lower()
+
+        if "royal flush" in label:
+            return "royal_flush"
+        if "straight flush" in label:
+            return "straight_flush"
+        if "four of a kind" in label:
+            return "four_of_a_kind"
+        if "full house" in label:
+            return "full_house"
+        if "flush" in label:
+            return "flush"
+        if "straight" in label:
+            return "straight"
+        if "three of a kind" in label:
+            return "three_of_a_kind"
+        if "two pair" in label:
+            return "two_pair"
+        if "pair" in label:
+            return "pair"
+        return "high_card"
+
     def _run_monte_carlo_simulation(
         self,
         hero_hole: List[PokerkitCard],
         board: List[PokerkitCard],
         num_simulations: int,
         opponent_holes: Optional[List[List[PokerkitCard]]] = None,
-        num_random_opponents: int = 0
+        num_random_opponents: int = 0,
+        persistence=None
     ) -> Optional[Dict[str, float]]:
         """
         Core Monte Carlo simulation method.
@@ -85,7 +112,6 @@ class PokerAnalyzer:
         for _ in range(num_simulations):
             # Create fresh deck for each simulation
             deck_cards = [c for c in PokerkitDeck.STANDARD if c not in known_cards]
-            import random
             random.shuffle(deck_cards)
             
             # Generate opponents if needed
@@ -124,6 +150,34 @@ class PokerAnalyzer:
                     wins += 1
                 elif hero_ties_all:
                     ties += 1
+
+                if persistence is not None:
+                    iteration_outcome = 'WIN' if hero_better_than_all else ('TIE' if hero_ties_all else 'LOSS')
+                    board_str = [self.pokerkit_to_card_name(c) for c in full_board]
+                    gs_id = persistence.store_game_state(
+                        timestamp=datetime.utcnow().isoformat(),
+                        round_name='preflop',
+                        pot_size=0.0,
+                        board_cards=board_str,
+                        outcome=iteration_outcome
+                    )
+                    hero_cards_str = [self.pokerkit_to_card_name(c) for c in hero_hole]
+                    hero_hand_class = self._map_hand_class(hero_hand)
+                    persistence.store_player(
+                        gs_id, 'hero', hero_cards_str, 100.0, is_hero=True,
+                        hand_class=hero_hand_class,
+                        final_strength=hero_score
+                    )
+                    for i, (opp_h, opp_hand, opp_score) in enumerate(zip(current_opponent_holes, opp_hands, opp_scores)):
+                        opp_str = [self.pokerkit_to_card_name(c) for c in opp_h]
+                        opp_hand_class = self._map_hand_class(opp_hand)
+                        persistence.store_player(
+                            gs_id, f'opp_{i}', opp_str, 100.0, is_hero=False,
+                            hand_class=opp_hand_class,
+                            final_strength=opp_score
+                        )
+                    persistence.commit_transaction()
+
             except Exception as e:
                 self.logger.warning(f"Simulation iteration failed: {type(e).__name__}: {e}")
                 continue
@@ -148,11 +202,12 @@ class PokerAnalyzer:
         return result
 
     def calculate_odds_random_opponents(
-        self, 
-        hero_hole_cards: List[str], 
-        board_cards: List[str], 
-        num_opponents: int, 
-        num_simulations: int = 10000
+        self,
+        hero_hole_cards: List[str],
+        board_cards: List[str],
+        num_opponents: int,
+        num_simulations: int = 10000,
+        persistence=None
     ) -> Optional[Dict[str, float]]:
         """
         Calculate odds against random opponent hands.
@@ -192,7 +247,8 @@ class PokerAnalyzer:
             board=board,
             num_simulations=num_simulations,
             opponent_holes=None,
-            num_random_opponents=num_opponents
+            num_random_opponents=num_opponents,
+            persistence=persistence
         )
         
         if result:

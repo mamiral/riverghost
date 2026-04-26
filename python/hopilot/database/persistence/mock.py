@@ -6,7 +6,6 @@ enabling unit tests to verify that the solver calls the correct persistence meth
 """
 
 from typing import List, Dict, Any, Optional
-from unittest.mock import MagicMock
 from hopilot.logging_config import get_logger
 from .base import GameStatePersistence
 
@@ -43,15 +42,12 @@ class MockPersistenceStrategy(GameStatePersistence):
         self._next_board_id = 1
         self._next_jackpot_id = 1
 
-    def store_game_state(self, simulation_id: int, matrix_cell_id: int,
-                        timestamp: str, round_name: str, pot_size: float,
+    def store_game_state(self, timestamp: str, round_name: str, pot_size: float,
                         board_cards: List[str], outcome: str) -> int:
         """
         Record game state storage call.
         """
         call_record = {
-            'simulation_id': simulation_id,
-            'matrix_cell_id': matrix_cell_id,
             'timestamp': timestamp,
             'round_name': round_name,
             'pot_size': pot_size,
@@ -63,7 +59,7 @@ class MockPersistenceStrategy(GameStatePersistence):
         game_state_id = self._next_game_state_id
         self._next_game_state_id += 1
 
-        self.logger.debug(f"Mock stored game state {game_state_id} for cell {matrix_cell_id}")
+        self.logger.debug(f"Mock stored game state {game_state_id}")
         return game_state_id
 
     def update_game_state_outcome(self, game_state_id: int, outcome: str) -> None:
@@ -82,7 +78,8 @@ class MockPersistenceStrategy(GameStatePersistence):
 
     def store_player(self, game_state_id: int, position: str,
                     hole_cards: List[str], stack_size: float,
-                    is_hero: bool) -> int:
+                    is_hero: bool, hand_class: Optional[str] = None,
+                    final_strength: Optional[int] = None) -> int:
         """
         Record player storage call.
         """
@@ -91,7 +88,9 @@ class MockPersistenceStrategy(GameStatePersistence):
             'position': position,
             'hole_cards': hole_cards,
             'stack_size': stack_size,
-            'is_hero': is_hero
+            'is_hero': is_hero,
+            'hand_class': hand_class,
+            'final_strength': final_strength
         }
         self.store_player_calls.append(call_record)
 

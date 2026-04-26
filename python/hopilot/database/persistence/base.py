@@ -25,20 +25,17 @@ class GameStatePersistence(ABC):
         self.logger = get_logger(self.__class__.__name__)
 
     @abstractmethod
-    def store_game_state(self, simulation_id: int, matrix_cell_id: int,
-                        timestamp: str, round_name: str, pot_size: float,
+    def store_game_state(self, timestamp: str, round_name: str, pot_size: float,
                         board_cards: List[str], outcome: str) -> int:
         """
         Store a game state and return its ID.
 
         Args:
-            simulation_id: ID of the parent simulation
-            matrix_cell_id: ID of the matrix cell this game state belongs to
             timestamp: ISO format timestamp
-            round_name: Game round (preflop, flop, turn, river)
+            round_name: Game round (always 'preflop' for all-in-or-fold)
             pot_size: Total pot size
-            board_cards: List of board card strings
-            outcome: Game outcome description
+            board_cards: List of board card strings (5 cards)
+            outcome: Game outcome (WIN, TIE, LOSS from hero's perspective)
 
         Returns:
             The ID of the stored game state
@@ -59,16 +56,19 @@ class GameStatePersistence(ABC):
     @abstractmethod
     def store_player(self, game_state_id: int, position: str,
                     hole_cards: List[str], stack_size: float,
-                    is_hero: bool) -> int:
+                    is_hero: bool, hand_class: Optional[str] = None,
+                    final_strength: Optional[int] = None) -> int:
         """
         Store a player in a game state and return its ID.
 
         Args:
             game_state_id: ID of the parent game state
-            position: Player position (0-5)
+            position: Player position string (e.g. 'hero', 'opp_0')
             hole_cards: List of hole card strings
             stack_size: Player's chip stack
             is_hero: Whether this is the hero player
+            hand_class: Hand classification (e.g. "pair", "straight_flush")
+            final_strength: PokerKit strength integer (lower = stronger hand)
 
         Returns:
             The ID of the stored player

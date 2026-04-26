@@ -45,8 +45,7 @@ class InMemoryPersistenceStrategy(GameStatePersistence):
         self._transaction_buffer = []
         self._in_transaction = False
 
-    def store_game_state(self, simulation_id: int, matrix_cell_id: int,
-                        timestamp: str, round_name: str, pot_size: float,
+    def store_game_state(self, timestamp: str, round_name: str, pot_size: float,
                         board_cards: List[str], outcome: str) -> int:
         """
         Store a game state in memory.
@@ -56,8 +55,6 @@ class InMemoryPersistenceStrategy(GameStatePersistence):
 
         game_state = {
             'id': game_state_id,
-            'simulation_id': simulation_id,
-            'matrix_cell_id': matrix_cell_id,
             'timestamp': timestamp,
             'round': round_name,
             'pot_size': pot_size,
@@ -70,7 +67,7 @@ class InMemoryPersistenceStrategy(GameStatePersistence):
         if self._in_transaction:
             self._transaction_buffer.append(('game_state', game_state_id))
 
-        self.logger.debug(f"In-memory stored game state {game_state_id} for cell {matrix_cell_id}")
+        self.logger.debug(f"In-memory stored game state {game_state_id}")
         return game_state_id
 
     def update_game_state_outcome(self, game_state_id: int, outcome: str) -> None:
@@ -85,7 +82,8 @@ class InMemoryPersistenceStrategy(GameStatePersistence):
 
     def store_player(self, game_state_id: int, position: str,
                     hole_cards: List[str], stack_size: float,
-                    is_hero: bool) -> int:
+                    is_hero: bool, hand_class: Optional[str] = None,
+                    final_strength: Optional[int] = None) -> int:
         """
         Store a player in memory.
         """
@@ -98,7 +96,9 @@ class InMemoryPersistenceStrategy(GameStatePersistence):
             'position': position,
             'hole_cards': hole_cards,
             'stack_size': stack_size,
-            'is_hero': is_hero
+            'is_hero': is_hero,
+            'hand_class': hand_class,
+            'final_strength': final_strength
         }
 
         self.players[player_id] = player

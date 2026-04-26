@@ -10,9 +10,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from hopilot.logging_config import get_logger
 from .base import GameStatePersistence
-from hopilot.models import (
-    GameState, Player, Bet, BoardCard, Jackpot
-)
+from hopilot.models import GameState, Player
+from hopilot.models.player import HandClass
 from hopilot.db import get_session
 
 logger = get_logger(__name__)
@@ -44,38 +43,26 @@ class DatabasePersistenceStrategy(GameStatePersistence):
             self._session = get_session()
         return self._session
 
-    def store_game_state(self, simulation_id: int, matrix_cell_id: int,
-                        timestamp: str, round_name: str, pot_size: float,
+    def store_game_state(self, timestamp: str, round_name: str, pot_size: float,
                         board_cards: List[str], outcome: str) -> int:
         """
         Store a game state in the database.
         """
         session = self._get_session()
 
-        # Create board cards (always create a record, use placeholders if no cards)
-        board = BoardCard(
-            flop1=board_cards[0] if len(board_cards) > 0 else '??',
-            flop2=board_cards[1] if len(board_cards) > 1 else '??',
-            flop3=board_cards[2] if len(board_cards) > 2 else '??',
-            turn=board_cards[3] if len(board_cards) > 3 else '??',
-            river=board_cards[4] if len(board_cards) > 4 else '??'
-        )
-        session.add(board)
-        session.flush()  # Get board ID
-
-        # Create game state
+        # Create game state with board cards as comma-separated string
+        board_cards_str = ','.join(board_cards) if board_cards else ''
         game_state = GameState(
-            cell_id=matrix_cell_id,
             timestamp=datetime.fromisoformat(timestamp),
             round=round_name,
             pot_size=pot_size,
-            board_cards_id=board.id,
+            board_cards_str=board_cards_str,
             outcome=outcome
         )
         session.add(game_state)
         session.flush()  # Get game state ID
 
-        self.logger.debug(f"Stored game state {game_state.id} for cell {matrix_cell_id}")
+        self.logger.debug(f"Stored game state {game_state.id}")
         return game_state.id
 
     def update_game_state_outcome(self, game_state_id: int, outcome: str) -> None:
@@ -93,18 +80,25 @@ class DatabasePersistenceStrategy(GameStatePersistence):
 
     def store_player(self, game_state_id: int, position: str,
                     hole_cards: List[str], stack_size: float,
-                    is_hero: bool) -> int:
+                    is_hero: bool, hand_class: Optional[str] = None,
+                    final_strength: Optional[int] = None) -> int:
         """
         Store a player in the database.
         """
         session = self._get_session()
+
+        hand_class_enum = None
+        if hand_class is not None:
+            hand_class_enum = HandClass(hand_class)
 
         player = Player(
             game_state_id=game_state_id,
             position=position,
             hole_cards=''.join(hole_cards),
             stack_size=stack_size,
-            is_hero=is_hero
+            is_hero=is_hero,
+            hand_class=hand_class_enum,
+            final_strength=final_strength
         )
         session.add(player)
         session.flush()

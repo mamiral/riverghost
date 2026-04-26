@@ -29,8 +29,9 @@ class MatrixCell(BaseModel):
     hand_combination = Column(String(50), nullable=False)
 
     # Relationships
-    # Note: hand_matrix relationship removed - defined on HandMatrix side to avoid conflicts
-    game_states = relationship("GameState", cascade="all, delete-orphan", overlaps="matrix_cell")
+    # Note: game_states relationship removed - GameState has no cell_id (GameStates-first architecture)
+    # Cell identity is resolved in post-processing by reading GameState rows and grouping by hand matchup
+    # aggregated_metric relationship still exists for storing aggregated results
     aggregated_metric = relationship("AggregatedMetric", uselist=False, cascade="all, delete-orphan")
 
     # Constraints
@@ -71,48 +72,11 @@ class MatrixCell(BaseModel):
         """Get villain's hand from combination."""
         return self.hand_combination.split(' vs ')[1].strip()
 
-    @property
-    def total_simulations(self) -> int:
-        """Get total number of simulations run for this cell."""
-        return len(self.game_states)
-
-    @property
-    def convergence_data(self) -> List[Dict[str, Any]]:
-        """
-        Get convergence data for analysis.
-
-        Returns:
-            List of timestamped equity points
-        """
-        return [
-            {
-                "timestamp": gs.timestamp.isoformat(),
-                "equity": gs.equity if hasattr(gs, 'equity') else None
-            }
-            for gs in sorted(self.game_states, key=lambda x: x.timestamp)
-        ]
-
-    def get_game_states(self, limit: int = None) -> List:
-        """
-        Get game states for this cell.
-
-        Args:
-            limit: Maximum number of states to return
-
-        Returns:
-            List of GameState instances
-        """
-        states = sorted(self.game_states, key=lambda x: x.timestamp)
-        if limit:
-            return states[:limit]
-        return states
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with computed fields."""
         result = super().to_dict()
         result["hero_hand"] = self.hero_hand
         result["villain_hand"] = self.villain_hand
-        result["total_simulations"] = self.total_simulations
         return result
 
     def __repr__(self) -> str:

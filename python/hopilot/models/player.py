@@ -4,13 +4,28 @@ Player model for poker analysis database.
 Represents player information and hole cards for each game state.
 """
 
+import enum
 from decimal import Decimal
 from typing import Any, Dict
 
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Column, Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import relationship
 
 from hopilot.models.base import BaseModel
+
+
+class HandClass(str, enum.Enum):
+    """Standard poker hand classifications, weakest to strongest."""
+    HIGH_CARD = "high_card"
+    PAIR = "pair"
+    TWO_PAIR = "two_pair"
+    THREE_OF_A_KIND = "three_of_a_kind"
+    STRAIGHT = "straight"
+    FLUSH = "flush"
+    FULL_HOUSE = "full_house"
+    FOUR_OF_A_KIND = "four_of_a_kind"
+    STRAIGHT_FLUSH = "straight_flush"
+    ROYAL_FLUSH = "royal_flush"
 
 
 class Player(BaseModel):
@@ -28,6 +43,10 @@ class Player(BaseModel):
     hole_cards = Column(String(10), nullable=False)
     stack_size = Column(Numeric(10, 2), nullable=False)
     is_hero = Column(Boolean, default=False, nullable=False)
+    
+    # Hand resolution (final hand classification)
+    hand_class = Column(Enum(HandClass), nullable=True)  # type-safe classification
+    final_strength = Column(Integer, nullable=True)  # PokerKit strength (lower is better)
 
     # Relationships
     # Note: backref removed to avoid conflict with GameState.players
@@ -56,6 +75,13 @@ class Player(BaseModel):
         # Validate hole cards format (basic check)
         if not self._is_valid_hole_cards(self.hole_cards):
             raise ValueError(f"Invalid hole cards format: {self.hole_cards}")
+        
+        # Hand resolution fields are optional (populated during simulation)
+        if self.hand_class is not None and not isinstance(self.hand_class, HandClass):
+            raise ValueError(f"hand_class must be a HandClass enum value, got: {self.hand_class!r}")
+
+        if self.final_strength is not None and not isinstance(self.final_strength, int):
+            raise ValueError("final_strength must be an integer or None")
 
     @staticmethod
     def _is_valid_hole_cards(cards: str) -> bool:
