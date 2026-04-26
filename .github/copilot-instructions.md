@@ -124,3 +124,43 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - All tests must pass with REAL implementation
 - If tests pass only because they check mocks, they don't count
 - Code with TODOs is not done—period
+
+---
+
+# Architecture Constraints
+
+**System-wide decisions that apply to every component, discussion, and design choice.**
+
+## GameStates-First: Solver Writes Raw Data Only
+
+The database is **GameStates-first**. The solver's only job is to write raw simulation data. Aggregation is a separate post-processing phase.
+
+- **Solver writes**: one `GameState` row per simulation iteration — player hole cards, board cards, bets, hand resolution (`hand_rank`, `hand_class`, `final_strength`), outcome
+- **Solver does NOT**: compute equity, win rate, EV, or any aggregated metric
+- **Post-processing reads**: `GameState` rows from DB, groups by hand matchup, derives `MatrixCell` and `AggregatedMetric` records
+
+**Violations to reject outright:**
+- Adding `equity = wins / total` anywhere in the solver
+- Returning aggregated dicts from simulation loops
+- Creating `MatrixCell` records during solver runs
+
+## GameState Has No Cell Reference at Write Time
+
+`GameState.cell_id` does not exist. The solver does not know which matrix cell it is computing.
+
+- Cell identity is resolved in post-processing by inspecting `Player.hole_cards` from stored `GameState` records
+- Never add `cell_id`, `matrix_id`, or any matrix FK to `GameState`
+
+## Persistence Uses Strategy Pattern
+
+The solver receives a `GameStatePersistence` strategy via constructor injection. It never instantiates storage directly.
+
+- `DatabasePersistenceStrategy` — production (SQLAlchemy)
+- `MockPersistenceStrategy` — unit tests
+- `InMemoryPersistenceStrategy` — development/prototyping
+
+Concrete strategies live in `python/hopilot/database/persistence/`. The abstract interface is `GameStatePersistence` in `base.py`. Do not bypass the strategy interface with direct DB calls inside the solver.
+
+## Prototyping Folder Is Design Validation, Not Production Code
+
+Scripts in `prototyping/` exist to validate schema design and ORM patterns. They use test data, not real solver output. Do not import from `prototyping/` in production code. The canonical ORM models live in `python/hopilot/models/`.

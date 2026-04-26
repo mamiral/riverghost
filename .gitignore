@@ -253,7 +253,6 @@ Downloads/
 
 #pokerkit/
 #.github/
-.github/copilot-instructions.md
 .github/agents/speckit.analyze.agent.md
 .github/agents/speckit.checklist.agent.md
 .github/agents/speckit.clarify.agent.md

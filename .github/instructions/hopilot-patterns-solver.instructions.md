@@ -55,3 +55,9 @@ applyTo: "**/poker_analyzer.py", "**/hand*.py"
 - Monitor convergence metrics: standard deviation of probabilities across batch runs
 - Document convergence thresholds in configuration
 - Track valid_simulations count to assess sample adequacy
+
+## Solver Output
+
+The solver writes raw `GameState` records via `GameStatePersistence` — one record per simulation iteration. It never computes aggregated metrics. See the **Architecture Constraints** section in `copilot-instructions.md` for the full constraint and rationale.
+
+Schema reference: [GameState](python/hopilot/models/game_state.py), [Player](python/hopilot/models/player.py) (includes `hand_rank`, `hand_class`, `final_strength`).
