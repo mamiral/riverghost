@@ -97,8 +97,6 @@ class TestDatabaseRemediation:
 
         # Store a game state
         game_state_id = db_persistence.store_game_state(
-            simulation_id=1,
-            matrix_cell_id=1,
             timestamp='2024-01-01T00:00:00',
             round_name='preflop',
             pot_size=20.0,

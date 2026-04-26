@@ -13,11 +13,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text, func, case, and_, or_
 from sqlalchemy.orm import Session
 
-import importlib.util
-spec = importlib.util.spec_from_file_location("database_module", "hopilot/database.py")
-database_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(database_module)
-DatabaseConnection = database_module.DatabaseConnection
+from hopilot.database import DatabaseConnection
 from hopilot.models import GameState, MatrixCell, AggregatedMetric, Simulation, HandMatrix, Jackpot
 from hopilot.performance_monitor import PerformanceMonitor
 

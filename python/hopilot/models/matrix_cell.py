@@ -1,11 +1,7 @@
-"""
-MatrixCell model for poker analysis database.
+"""MatrixCell model for poker analysis database."""
 
-Represents individual cells in the hand matrix containing
-specific hand matchups and their simulation results.
-"""
-
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional, cast
 
 from sqlalchemy import Column, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
@@ -38,6 +34,7 @@ class MatrixCell(BaseModel):
     __table_args__ = (
         UniqueConstraint('matrix_id', 'row_index', 'col_index', name='uq_matrix_cells_matrix_id_row_col'),
         Index('ix_matrix_cells_matrix_id_row_col', 'matrix_id', 'row_index', 'col_index'),
+        {'sqlite_autoincrement': True},
     )
 
     def __init__(self, **kwargs):
@@ -46,30 +43,49 @@ class MatrixCell(BaseModel):
 
     def _validate(self) -> None:
         """Validate matrix cell data."""
-        if not self.matrix_id:
+        matrix_id = cast(Optional[int], self.matrix_id)
+        row_index = cast(Optional[int], self.row_index)
+        col_index = cast(Optional[int], self.col_index)
+        hand_combination = cast(Optional[str], self.hand_combination)
+
+        if matrix_id is None:
             raise ValueError("Matrix ID is required")
 
-        if not (0 <= self.row_index <= 12):
+        if row_index is None or not 0 <= row_index <= 12:
             raise ValueError("Row index must be between 0 and 12")
 
-        if not (0 <= self.col_index <= 12):
+        if col_index is None or not 0 <= col_index <= 12:
             raise ValueError("Column index must be between 0 and 12")
 
-        if not self.hand_combination or not self.hand_combination.strip():
+        if not isinstance(hand_combination, str) or not hand_combination.strip():
             raise ValueError("Hand combination cannot be empty")
 
-        # Validate hand combination format (basic check)
-        if 'vs' not in self.hand_combination:
-            raise ValueError("Hand combination must contain 'vs' separator")
+        if not self._is_valid_hand_combination(hand_combination.strip()):
+            raise ValueError("Hand combination must be a canonical cell label or a 'hero vs villain' string")
+
+    @staticmethod
+    def _is_valid_hand_combination(value: str) -> bool:
+        if " vs " in value:
+            hero_hand, villain_hand = value.split(" vs ", 1)
+            return bool(hero_hand.strip() and villain_hand.strip())
+
+        if re.fullmatch(r"([AKQJT98765432])\1", value):
+            return True
+
+        return re.fullmatch(r"[AKQJT98765432]{2}[so]", value) is not None
 
     @property
     def hero_hand(self) -> str:
         """Get hero's hand from combination."""
-        return self.hand_combination.split(' vs ')[0].strip()
+        if ' vs ' in self.hand_combination:
+            return self.hand_combination.split(' vs ')[0].strip()
+        return self.hand_combination.strip()
 
     @property
-    def villain_hand(self) -> str:
+    def villain_hand(self) -> Optional[str]:
         """Get villain's hand from combination."""
+        if ' vs ' not in self.hand_combination:
+            return None
         return self.hand_combination.split(' vs ')[1].strip()
 
     def to_dict(self) -> Dict[str, Any]:

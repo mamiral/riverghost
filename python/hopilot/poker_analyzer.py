@@ -1,6 +1,6 @@
 import os
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any
 
 from pokerkit.hands import StandardHighHand
@@ -155,7 +155,7 @@ class PokerAnalyzer:
                     iteration_outcome = 'WIN' if hero_better_than_all else ('TIE' if hero_ties_all else 'LOSS')
                     board_str = [self.pokerkit_to_card_name(c) for c in full_board]
                     gs_id = persistence.store_game_state(
-                        timestamp=datetime.utcnow().isoformat(),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
                         round_name='preflop',
                         pot_size=0.0,
                         board_cards=board_str,

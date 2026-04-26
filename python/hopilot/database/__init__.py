@@ -1,6 +1,29 @@
-"""
-Database models and persistence layer for poker analysis.
+"""Database package exports for the shared SQLAlchemy connection layer."""
 
-This package provides SQLAlchemy models and persistence strategies
-for storing poker simulation data in the genuine GameStates-first architecture.
-"""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+
+_DATABASE_MODULE_PATH = Path(__file__).resolve().parent.parent / "database.py"
+_SPEC = importlib.util.spec_from_file_location("hopilot._database_module", _DATABASE_MODULE_PATH)
+if _SPEC is None or _SPEC.loader is None:
+	raise ImportError(f"Unable to load database module from {_DATABASE_MODULE_PATH}")
+
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+
+ConnectionError = _MODULE.ConnectionError
+DataValidationError = _MODULE.DataValidationError
+DatabaseConnection = _MODULE.DatabaseConnection
+DatabaseError = _MODULE.DatabaseError
+IntegrityError = _MODULE.IntegrityError
+
+__all__ = [
+	"ConnectionError",
+	"DataValidationError",
+	"DatabaseConnection",
+	"DatabaseError",
+	"IntegrityError",
+]

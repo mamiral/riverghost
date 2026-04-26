@@ -12,11 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, select, func, text, or_
 from sqlalchemy.orm import Session, selectinload
 
-import importlib.util
-spec = importlib.util.spec_from_file_location("database_module", "hopilot/database.py")
-database_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(database_module)
-DatabaseConnection = database_module.DatabaseConnection
+from hopilot.database import DatabaseConnection
 from hopilot.logging_config import get_logger
 from hopilot.models import (
     AggregatedMetric,
@@ -31,6 +27,7 @@ from hopilot.models import (
 )
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType, ConvergencePoint, JackpotStats
 from hopilot.gto.aggregation_engine import AggregationEngine
+from hopilot.gto.matrix_sweep_contract import normalize_scenario_contract
 
 logger = get_logger(__name__)
 
@@ -1033,6 +1030,182 @@ class DatabaseRepository:
             session.add(matrix)
             session.commit()
             return matrix.id
+
+    def create_matrix_sweep_simulation(
+        self,
+        parameters: Dict[str, Any],
+        *,
+        name: Optional[str] = None,
+        start_timestamp: Optional[datetime] = None,
+    ) -> int:
+        """Create one simulation row for a matrix-sweep run."""
+        with self.connection.session_scope() as session:
+            simulation = Simulation(
+                name=name or f"matrix_sweep_{datetime.now(timezone.utc).isoformat()}",
+                parameters=dict(parameters),
+                start_timestamp=start_timestamp or datetime.now(timezone.utc),
+            )
+            session.add(simulation)
+            session.flush()
+            return simulation.id
+
+    def update_matrix_sweep_simulation(
+        self,
+        simulation_id: int,
+        *,
+        parameters: Optional[Dict[str, Any]] = None,
+        end_timestamp: Optional[datetime] = None,
+    ) -> None:
+        """Update persisted matrix-sweep metadata for an existing simulation."""
+        with self.connection.session_scope() as session:
+            simulation = session.query(Simulation).filter(Simulation.id == simulation_id).first()
+            if simulation is None:
+                raise DataIntegrityError(f"Simulation with ID {simulation_id} does not exist")
+
+            if parameters is not None:
+                simulation.parameters = dict(parameters)
+            if end_timestamp is not None:
+                simulation.end_timestamp = end_timestamp
+
+    def get_simulation_record(self, simulation_id: int) -> Optional[Simulation]:
+        """Return one simulation ORM object with its hand matrix eagerly loaded."""
+        with self.connection.session_scope() as session:
+            simulation = (
+                session.query(Simulation)
+                .options(
+                    selectinload(Simulation.hand_matrix).selectinload(HandMatrix.matrix_cells)
+                )
+                .filter(Simulation.id == simulation_id)
+                .first()
+            )
+            return simulation
+
+    def get_or_create_hand_matrix_for_simulation(
+        self,
+        simulation_id: int,
+        *,
+        matrix_size: str = "13x13",
+    ) -> int:
+        """Return the hand matrix ID for a simulation, creating it when missing."""
+        with self.connection.session_scope() as session:
+            matrix = session.query(HandMatrix).filter(HandMatrix.simulation_id == simulation_id).first()
+            if matrix is None:
+                matrix = HandMatrix(simulation_id=simulation_id, matrix_size=matrix_size)
+                session.add(matrix)
+                session.flush()
+            return matrix.id
+
+    def get_hand_matrix_by_simulation(self, simulation_id: int) -> Optional[HandMatrix]:
+        """Return the hand matrix for a simulation with cells and metrics loaded."""
+        with self.connection.session_scope() as session:
+            matrix = (
+                session.query(HandMatrix)
+                .options(selectinload(HandMatrix.matrix_cells).selectinload(MatrixCell.aggregated_metric))
+                .filter(HandMatrix.simulation_id == simulation_id)
+                .first()
+            )
+            return matrix
+
+    def get_latest_game_state_id(self) -> int:
+        """Return the latest raw game-state ID, or 0 when no rows exist."""
+        with self.connection.session_scope() as session:
+            latest_id = session.query(func.max(GameState.id)).scalar()
+            return int(latest_id or 0)
+
+    def get_run_game_states(self, raw_game_state_id_start: int, raw_game_state_id_end: int) -> List[GameState]:
+        """Return raw game states and players inside one persisted run boundary."""
+        with self.connection.session_scope() as session:
+            return (
+                session.query(GameState)
+                .options(selectinload(GameState.players))
+                .filter(GameState.id >= raw_game_state_id_start, GameState.id <= raw_game_state_id_end)
+                .order_by(GameState.id.asc())
+                .all()
+            )
+
+    def get_run_raw_counts(self, raw_game_state_id_start: int, raw_game_state_id_end: int) -> Dict[str, int]:
+        """Return raw row counts for one run boundary."""
+        with self.connection.session_scope() as session:
+            raw_game_states = session.query(func.count(GameState.id)).filter(
+                GameState.id >= raw_game_state_id_start,
+                GameState.id <= raw_game_state_id_end,
+            ).scalar()
+            raw_players = session.query(func.count(Player.id)).join(GameState).filter(
+                GameState.id >= raw_game_state_id_start,
+                GameState.id <= raw_game_state_id_end,
+            ).scalar()
+            return {
+                "raw_game_states": int(raw_game_states or 0),
+                "raw_players": int(raw_players or 0),
+            }
+
+    def delete_matrix_summaries(self, matrix_id: int) -> None:
+        """Delete only summary rows for one hand matrix, preserving raw rows."""
+        with self.connection.session_scope() as session:
+            cells = session.query(MatrixCell).filter(MatrixCell.matrix_id == matrix_id).all()
+            for cell in cells:
+                session.delete(cell)
+
+    def find_matrix_sweep_run_by_contract(self, scenario_contract: Dict[str, Any]) -> Optional[Simulation]:
+        """Find one persisted matrix-sweep run by its canonical scenario contract."""
+        normalized_contract = normalize_scenario_contract(scenario_contract)
+        contract_keys = [
+            "selected_position",
+            "hero_action",
+            "position_actions",
+            "active_players",
+            "num_opponents",
+            "pot_size",
+            "bet_amount",
+            "sims_per_combo",
+            "matrix_size",
+            "game_type",
+            "run_kind",
+        ]
+
+        with self.connection.session_scope() as session:
+            candidates = session.query(Simulation).filter(
+                Simulation.parameters["run_kind"].as_string() == normalized_contract["run_kind"]
+            ).order_by(Simulation.start_timestamp.desc()).all()
+
+            for candidate in candidates:
+                parameters = normalize_scenario_contract(candidate.parameters)
+                if all(parameters.get(key) == normalized_contract.get(key) for key in contract_keys):
+                    return candidate
+            return None
+
+    def get_matrix_sweep_summary(self, simulation_id: int) -> Optional[Dict[str, Any]]:
+        """Return one run-scoped projection of simulation, matrix, cells, and metrics."""
+        with self.connection.session_scope() as session:
+            simulation = session.query(Simulation).filter(Simulation.id == simulation_id).first()
+            if simulation is None:
+                return None
+
+            matrix = (
+                session.query(HandMatrix)
+                .options(selectinload(HandMatrix.matrix_cells).selectinload(MatrixCell.aggregated_metric))
+                .filter(HandMatrix.simulation_id == simulation_id)
+                .first()
+            )
+
+            if matrix is None:
+                return {
+                    "simulation": simulation,
+                    "hand_matrix": None,
+                    "matrix_cells": [],
+                    "aggregated_metrics": [],
+                }
+
+            matrix_cells = sorted(matrix.matrix_cells, key=lambda cell: (cell.row_index, cell.col_index))
+            aggregated_metrics = [
+                cell.aggregated_metric for cell in matrix_cells if cell.aggregated_metric is not None
+            ]
+            return {
+                "simulation": simulation,
+                "hand_matrix": matrix,
+                "matrix_cells": matrix_cells,
+                "aggregated_metrics": aggregated_metrics,
+            }
 
     def upsert_matrix_cell(self, matrix_id: int, row_idx: int, col_idx: int, hand_key: str, metrics: Dict[str, float], status: str) -> int:
         """

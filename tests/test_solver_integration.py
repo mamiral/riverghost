@@ -77,8 +77,6 @@ class TestSolverPersistenceIntegration:
         """Test that mock persistence strategy implements the interface."""
         # Test game state storage
         game_state_id = mock_persistence.store_game_state(
-            simulation_id=1,
-            matrix_cell_id=1,
             timestamp='2024-01-01T00:00:00',
             round_name='preflop',
             pot_size=20.0,
@@ -118,7 +116,7 @@ class TestSolverPersistenceIntegration:
         mock_persistence.reset()
 
         # Make some calls
-        mock_persistence.store_game_state(1, 1, '2024-01-01T00:00:00', 'preflop', 20.0, [], 'win')
+        mock_persistence.store_game_state('2024-01-01T00:00:00', 'preflop', 20.0, [], 'win')
         mock_persistence.store_player(1, 0, ['As', 'Kh'], 100.0, True)
         mock_persistence.commit_transaction()
 
@@ -129,8 +127,6 @@ class TestSolverPersistenceIntegration:
 
         # Verify call details
         game_state_call = mock_persistence.store_game_state_calls[0]
-        assert game_state_call['simulation_id'] == 1
-        assert game_state_call['matrix_cell_id'] == 1
         assert game_state_call['pot_size'] == 20.0
 
         player_call = mock_persistence.store_player_calls[0]

@@ -22,6 +22,7 @@ class AggregatedMetric(BaseModel):
     """
 
     __tablename__ = "aggregated_metrics"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     cell_id = Column(Integer, ForeignKey("matrix_cells.id"), unique=True, nullable=False)
     equity = Column(Numeric(5, 4), nullable=True)  # Standard win probability (0.0000-1.0000)
@@ -128,8 +129,8 @@ class AggregatedMetric(BaseModel):
             self.convergence_status = simulations_data['convergence_status']
 
         # Update timestamp
-        from datetime import datetime
-        self.last_updated = datetime.utcnow().isoformat()
+        from datetime import UTC, datetime
+        self.last_updated = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with computed fields."""

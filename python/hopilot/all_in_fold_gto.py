@@ -662,6 +662,11 @@ class AllInFoldGTOSolver:
         This replaces the AoFSolverAdapter functionality by directly using
         AllInFoldGTOSolver with combo expansion.
         """
+        if matrix_cell_id and matrix_cell_id > 0:
+            raise ValueError(
+                "matrix_cell_id-coupled sweep execution is not supported here; use MatrixSweepService"
+            )
+
         if not hand_key:
             return {"status": "MISSING", "reason": "NO_HAND_KEY", "value": None}
 

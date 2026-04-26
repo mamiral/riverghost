@@ -130,6 +130,19 @@ class AoFPrecomputeRunner:
             self.logger.debug("Initialized AllInFoldGTOSolver for precompute")
         return self._solver
 
+    def run_matrix_sweep(self, scenario_contract: dict[str, Any]) -> dict[str, Any]:
+        """Execute one production matrix sweep through the dedicated sweep service."""
+        from hopilot.database.persistence import DatabasePersistenceStrategy
+        from hopilot.gto.matrix_sweep_service import MatrixSweepService
+        from hopilot.poker_analyzer import PokerAnalyzer
+
+        service = MatrixSweepService(
+            self.database_repository,
+            PokerAnalyzer(),
+            DatabasePersistenceStrategy,
+        )
+        return service.run_sweep(scenario_contract)
+
     def create_gui_session(
         self,
         *,

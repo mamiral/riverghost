@@ -178,7 +178,7 @@ class MetricsCalculator:
             cell: MatrixCell instance to update
         """
         from hopilot.models import AggregatedMetric
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         # Calculate metrics
         equity = self.calculate_cell_equity(cell)
@@ -201,7 +201,7 @@ class MetricsCalculator:
             )
 
         metric.convergence_status = self.assess_convergence(cell)
-        metric.last_updated = datetime.utcnow().isoformat()
+        metric.last_updated = datetime.now(UTC).isoformat()
 
         # Save to database
         from hopilot.database import get_database_connection

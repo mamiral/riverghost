@@ -72,6 +72,13 @@ class BrowserDatabaseProvider:
         other_active = [pos for pos in active_positions if pos != position]
         return len(other_active) == 0
 
+    def get_matrix_sweep_run_summary(self, scenario_contract: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return one run-scoped matrix sweep summary for a persisted scenario contract."""
+        simulation = self.database_repository.find_matrix_sweep_run_by_contract(scenario_contract)
+        if simulation is None:
+            return None
+        return self.database_repository.get_matrix_sweep_summary(simulation.id)
+
     def get_matrix_payload(
         self,
         position: str,

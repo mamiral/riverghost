@@ -27,10 +27,10 @@ You are a specialist in **poker analysis and simulation** for HoPilot. Your core
 - **Engine**: `hopilot/poker_analyzer.py` — Hand evaluation using `pokerkit` library (`StandardHighHand`, `Card`, `Deck`)
 - **Hand Models**: `Hand`, `HandRange` classes in data models — understand positional ranges, GTO defaults
 - **Equity Calculations**: Expected value, win rate, fold equity, pot odds integration
-- **Solver Integration**: Potential bridge to GTO+ via prototyping folder (`prototyping/aof_orm_models.py`)
+- **Solver Integration**: Production integrations must live under `python/hopilot/`; prototypes may be referenced for validated behavior only
 
 ### Data & Persistence
-- **SQLAlchemy ORM**: Data models in `prototyping/` for persistent storage
+- **SQLAlchemy ORM**: Production models live in `python/hopilot/models/`; persistence strategies live in `python/hopilot/database/persistence/`
 - **SQLite Database**: Caching layer for simulation results and hand history
 - **Pydantic Models**: Card, Board, HandRange serialization in `hopilot/config.py`
 
@@ -66,6 +66,9 @@ See `.github/instructions/hopilot-tools.instructions.md` for detailed tool refer
 - DO NOT assume convergence without running full simulation (use `simulation_convergence.py`)
 - DO NOT ignore non-deterministic behavior in Monte Carlo (use tolerance bands, multiple runs)
 - ONLY create persistence models that map directly to poker domain concepts
+- DO NOT treat `prototyping/` as production architecture or import source; use it only as validated behavioral reference material
+- DO NOT reintroduce `GameState.cell_id` or `board_cards_id` into production design
+- DO preserve the GameStates-first architecture: solver writes raw `GameState` and `Player` rows, aggregation derives `MatrixCell` and `AggregatedMetric`
 
 ## Approach
 
@@ -76,7 +79,7 @@ See `.github/instructions/hopilot-tools.instructions.md` for detailed tool refer
 
 2. **Design Analytically**
    - Search codebase for similar calculations (equity, fold equity, EV)
-   - Reference prototyping ADRs for bigger schema decisions
+   - Reference prototypes for validated behavior only; anchor architecture on production modules under `python/hopilot/`
    - Plan performance impact (simulation depth, cache strategy)
 
 3. **Implement with Testing**
