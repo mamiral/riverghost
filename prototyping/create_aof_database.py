@@ -1,15 +1,17 @@
+#!/usr/bin/env python3
 """
-AOF GTO Browser - SQLite Database Creation with Actual Domain Models
+AOF GTO Browser - Database Population with SQLAlchemy ORM Models
 
-This script creates a SQLite database with the normalized relational schema
-and populates it with relationally correct mock data using actual domain models
-from aof_gto_browser_ii.shared.
+This script creates a SQLite database and populates it with relationally correct
+mock data using SQLAlchemy ORM models and actual domain models from 
+aof_gto_browser_ii.shared.
 
 Key features:
+- Uses ORM models (Simulation, GameState, Player, etc.)
 - Uses Card, Hand, Board, Position, Action enums from shared models
-- Supports 2-4 player all-in games (ONLY fold and all-in actions)
-- All foreign keys point to valid parent records
-- Relationships are transactionally consistent
+- Supports 2-4 player all-in games (FOLD and ALL_IN actions only)
+- Transactional consistency with cascade deletes
+- Type-safe database operations
 """
 
 import sys
@@ -20,17 +22,26 @@ from pathlib import Path
 python_dir = Path(__file__).parent.parent / "python"
 sys.path.insert(0, str(python_dir))
 
-import sqlite3
 import json
-from datetime import datetime, timedelta
-from typing import List, Tuple
 import random
+from datetime import datetime, timedelta
+from typing import List
 
 from aof_gto_browser_ii.shared.domain.card import Card, Rank, Suit
 from aof_gto_browser_ii.shared.domain.hand import Hand
 from aof_gto_browser_ii.shared.domain.board import Board
 from aof_gto_browser_ii.shared.models.enums import Action, Position
 from hopilot.logging_config import get_logger
+
+# Import ORM models
+from aof_orm_models import (
+    Base, Simulation, HandMatrix, MatrixCell, GameState,
+    Player, Bet, BoardCard, Jackpot, AggregatedMetric,
+    ActionType, JackpotType, ConvergenceStatus
+)
+
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine
 
 logger = get_logger(__name__)
 
@@ -40,39 +51,18 @@ logger = get_logger(__name__)
 # ============================================================================
 
 # All possible cards (52 total)
-ALL_CARDS = [
-    Card(rank, suit) 
-    for rank in Rank 
-    for suit in Suit
-]
-
-# Hand notations for 13x13 matrix
-HAND_NOTATIONS = [
-    'AA', 'AKs', 'AQs', 'AJs', 'ATs', 'A9s', 'A8s', 'A7s', 'A6s', 'A5s', 'A4s', 'A3s', 'A2s',
-    'AKo', 'KK', 'KQs', 'KJs', 'KTs', 'K9s', 'K8s', 'K7s', 'K6s', 'K5s', 'K4s', 'K3s', 'K2s',
-    'AQo', 'KQo', 'QQ', 'QJs', 'QTs', 'Q9s', 'Q8s', 'Q7s', 'Q6s', 'Q5s', 'Q4s', 'Q3s', 'Q2s',
-    'AJo', 'KJo', 'QJo', 'JJ', 'JTs', 'J9s', 'J8s', 'J7s', 'J6s', 'J5s', 'J4s', 'J3s', 'J2s',
-    'ATo', 'KTo', 'QTo', 'JTo', 'TT', 'T9s', 'T8s', 'T7s', 'T6s', 'T5s', 'T4s', 'T3s', 'T2s',
-    'A9o', 'K9o', 'Q9o', 'J9o', 'T9o', '99', '98s', '97s', '96s', '95s', '94s', '93s', '92s',
-    'A8o', 'K8o', 'Q8o', 'J8o', 'T8o', '98o', '88', '87s', '86s', '85s', '84s', '83s', '82s',
-    'A7o', 'K7o', 'Q7o', 'J7o', 'T7o', '97o', '87o', '77', '76s', '75s', '74s', '73s', '72s',
-    'A6o', 'K6o', 'Q6o', 'J6o', 'T6o', '96o', '86o', '76o', '66', '65s', '64s', '63s', '62s',
-    'A5o', 'K5o', 'Q5o', 'J5o', 'T5o', '95o', '85o', '75o', '65o', '55', '54s', '53s', '52s',
-    'A4o', 'K4o', 'Q4o', 'J4o', 'T4o', '94o', '84o', '74o', '64o', '54o', '44', '43s', '42s',
-    'A3o', 'K3o', 'Q3o', 'J3o', 'T3o', '93o', '83o', '73o', '63o', '53o', '43o', '33', '32s',
-    'A2o', 'K2o', 'Q2o', 'J2o', 'T2o', '92o', '82o', '72o', '62o', '52o', '42o', '32o', '22',
-]
-
-JACKPOT_TYPES = [
-    'straight_flush_both_hole_cards',
-    'straight_flush_one_hole_card',
-    'quads',
-    'full_house',
-    'flush',
-]
+ALL_CARDS = [Card(rank, suit) for rank in Rank for suit in Suit]
 
 # Position rotation for multi-way pots
 ALL_POSITIONS = [Position.UTG, Position.BTN, Position.SB, Position.BB]
+
+JACKPOT_TYPES = [
+    JackpotType.STRAIGHT_FLUSH_BOTH_HOLE_CARDS,
+    JackpotType.STRAIGHT_FLUSH_ONE_HOLE_CARD,
+    JackpotType.QUADS,
+    JackpotType.FULL_HOUSE,
+    JackpotType.FLUSH,
+]
 
 
 # ============================================================================
@@ -92,7 +82,6 @@ def generate_hand() -> Hand:
 
 def generate_board() -> Board:
     """Generate a random board with 0-5 cards using the Board domain model."""
-    # Randomly choose 0-5 cards for all-in-or-fold context
     num_cards = random.randint(0, 5)
     cards = generate_unique_cards(num_cards)
     return Board(cards=cards)
@@ -105,466 +94,247 @@ def get_available_positions(num_players: int) -> List[Position]:
     return ALL_POSITIONS[:num_players]
 
 
-# ============================================================================
-# DATABASE SCHEMA CREATION
-# ============================================================================
-
-def create_schema(db_path: str) -> sqlite3.Connection:
-    """Create the database schema according to spec."""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    # Enable foreign keys
-    cursor.execute("PRAGMA foreign_keys = ON;")
-
-    # Simulations table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS simulations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            start_timestamp DATETIME NOT NULL,
-            end_timestamp DATETIME,
-            parameters TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # HandMatrices table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS hand_matrices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            simulation_id INTEGER UNIQUE NOT NULL,
-            matrix_size TEXT DEFAULT '13x13' NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (simulation_id) REFERENCES simulations(id)
-                ON DELETE CASCADE
-        );
-    """)
-
-    # MatrixCells table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS matrix_cells (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            matrix_id INTEGER NOT NULL,
-            row_index INTEGER NOT NULL,
-            col_index INTEGER NOT NULL,
-            hand_notation TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (matrix_id) REFERENCES hand_matrices(id)
-                ON DELETE CASCADE,
-            UNIQUE (matrix_id, row_index, col_index)
-        );
-    """)
-
-    # BoardCards table (created first for FK references)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS board_cards (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cards TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    # GameStates table - supports 2-4 players
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS game_states (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cell_id INTEGER NOT NULL,
-            timestamp DATETIME NOT NULL,
-            num_players INTEGER NOT NULL,
-            board_cards_id INTEGER NOT NULL,
-            pot_size DECIMAL(10,2) NOT NULL,
-            outcome TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (cell_id) REFERENCES matrix_cells(id)
-                ON DELETE CASCADE,
-            FOREIGN KEY (board_cards_id) REFERENCES board_cards(id)
-                ON DELETE CASCADE
-        );
-    """)
-
-    # Create index on GameStates for query performance
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_game_states_cell_timestamp
-        ON game_states(cell_id, timestamp);
-    """)
-
-    # Players table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            game_state_id INTEGER NOT NULL,
-            position TEXT NOT NULL,
-            hole_cards TEXT NOT NULL,
-            stack_size DECIMAL(10,2) NOT NULL,
-            is_hero BOOLEAN DEFAULT 0 NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (game_state_id) REFERENCES game_states(id)
-                ON DELETE CASCADE
-        );
-    """)
-
-    # Bets table - ONLY FOLD and ALL_IN actions for all-in-or-fold games
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS bets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            game_state_id INTEGER NOT NULL,
-            player_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL,
-            amount DECIMAL(10,2) DEFAULT 0 NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (game_state_id) REFERENCES game_states(id)
-                ON DELETE CASCADE,
-            FOREIGN KEY (player_id) REFERENCES players(id)
-                ON DELETE CASCADE
-        );
-    """)
-
-    # Jackpots table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS jackpots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            game_state_id INTEGER NOT NULL,
-            player_id INTEGER NOT NULL,
-            jackpot_type TEXT NOT NULL,
-            payout_amount DECIMAL(10,2) NOT NULL,
-            cards_used TEXT NOT NULL,
-            triggered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (game_state_id) REFERENCES game_states(id)
-                ON DELETE CASCADE,
-            FOREIGN KEY (player_id) REFERENCES players(id)
-                ON DELETE CASCADE
-        );
-    """)
-
-    # Create index on Jackpots for analysis
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_jackpots_type_timestamp
-        ON jackpots(jackpot_type, triggered_at);
-    """)
-
-    # AggregatedMetrics table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS aggregated_metrics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cell_id INTEGER UNIQUE NOT NULL,
-            last_updated DATETIME NOT NULL,
-            equity DECIMAL(5,4),
-            ev DECIMAL(10,4),
-            win_prob DECIMAL(5,4),
-            draw_prob DECIMAL(5,4),
-            loss_prob DECIMAL(5,4),
-            jackpot_adjusted_ev DECIMAL(10,4),
-            jackpot_frequency DECIMAL(5,4),
-            avg_jackpot_payout DECIMAL(10,2),
-            convergence_status TEXT,
-            iterations INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (cell_id) REFERENCES matrix_cells(id)
-                ON DELETE CASCADE
-        );
-    """)
-
-    conn.commit()
-    return conn
+def hand_to_shorthand(hand: Hand) -> str:
+    """Convert Hand object to string notation (e.g., 'AsKh')."""
+    return f"{hand.card1.rank.value}{hand.card1.suit.value}{hand.card2.rank.value}{hand.card2.suit.value}"
 
 
-# ============================================================================
-# MOCK DATA INSERTION
-# ============================================================================
+def board_to_json(board: Board) -> str:
+    """Convert Board object to JSON array notation."""
+    cards_str = [f"{card.rank.value}{card.suit.value}" for card in board.cards]
+    return json.dumps(cards_str) if cards_str else None
 
-def insert_simulation(cursor: sqlite3.Cursor, sim_id: int) -> int:
-    """Insert a simulation record and return its ID."""
-    name = f"4MAX_AOF_{sim_id}_100k_iter_2026-04-03"
-    start = datetime.now() - timedelta(hours=2)
-    end = datetime.now() - timedelta(hours=1)
+
+def get_hand_notation(row_index: int, col_index: int) -> str:
+    """Generate hand notation from matrix indices (e.g., 'AsKs')."""
+    ranks = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
     
-    params = {
-        "max_iterations": 100000,
-        "convergence_threshold": 0.001,
-        "random_seed": sim_id * 42,
-        "solver": "aof_poker",
-        "positions": [p.value for p in ALL_POSITIONS],
-        "max_players": 4,
-        "game_type": "CASH"
-    }
-
-    cursor.execute("""
-        INSERT INTO simulations (name, start_timestamp, end_timestamp, parameters)
-        VALUES (?, ?, ?, ?)
-    """, (name, start, end, json.dumps(params)))
-
-    return cursor.lastrowid
-
-
-def insert_hand_matrix(cursor: sqlite3.Cursor, simulation_id: int) -> int:
-    """Insert a hand matrix and return its ID."""
-    cursor.execute("""
-        INSERT INTO hand_matrices (simulation_id, matrix_size)
-        VALUES (?, '13x13')
-    """, (simulation_id,))
-
-    return cursor.lastrowid
-
-
-def insert_matrix_cells(cursor: sqlite3.Cursor, matrix_id: int) -> List[int]:
-    """Insert all 169 matrix cells (13x13) and return list of cell IDs."""
-    cells = []
-    hand_idx = 0
-
-    for row in range(13):
-        for col in range(13):
-            hand_notation = HAND_NOTATIONS[hand_idx]
-            cursor.execute("""
-                INSERT INTO matrix_cells (matrix_id, row_index, col_index, hand_notation)
-                VALUES (?, ?, ?, ?)
-            """, (matrix_id, row, col, hand_notation))
-            cells.append(cursor.lastrowid)
-            hand_idx += 1
-
-    return cells
-
-
-def insert_board_cards(cursor: sqlite3.Cursor, board: Board) -> int:
-    """Insert board cards (using Board domain model) and return its ID."""
-    cards_json = json.dumps([card.to_string() for card in board.cards])
-    cursor.execute("""
-        INSERT INTO board_cards (cards)
-        VALUES (?)
-    """, (cards_json,))
-
-    return cursor.lastrowid
-
-
-def insert_game_states_and_players(
-    cursor: sqlite3.Cursor, cell_id: int, num_games: int = 100
-) -> List[Tuple[int, List[int]]]:
-    """
-    Insert game states for a cell with 2-4 players and all-in/fold actions only.
-    Returns list of (game_state_id, [player_ids]) tuples.
-    """
-    results = []
-    base_time = datetime.now() - timedelta(hours=1)
-
-    for i in range(num_games):
-        # Randomly choose 2-4 players for all-in-or-fold context
-        num_players = random.randint(2, 4)
-        
-        # Generate board using Board domain model
-        board = generate_board()
-        board_id = insert_board_cards(cursor, board)
-
-        # Create game state
-        timestamp = base_time + timedelta(seconds=i * 36)
-        pot_size = round(random.uniform(1.5, 10), 2)
-        outcome = random.choice(['hero_win', 'hero_loss', 'draw'])
-
-        cursor.execute("""
-            INSERT INTO game_states (cell_id, timestamp, num_players, board_cards_id, pot_size, outcome)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (cell_id, timestamp, num_players, board_id, pot_size, outcome))
-
-        game_state_id = cursor.lastrowid
-
-        # Get positions for this number of players
-        positions = get_available_positions(num_players)
-        
-        # Create players using Hand domain model (one is hero, rest are villains)
-        player_ids = []
-        used_cards = set()
-        
-        for idx, position in enumerate(positions):
-            # Generate unique hand using Hand domain model
-            hand = generate_hand()
-            while any(card in used_cards for card in hand.to_cards()):
-                hand = generate_hand()
-            used_cards.update(hand.to_cards())
-            
-            is_hero = (idx == 0)  # First position is hero
-            stack_size = round(random.uniform(50, 500), 2)
-            hole_cards_str = f"{hand.card1.to_string()}{hand.card2.to_string()}"
-
-            cursor.execute("""
-                INSERT INTO players (game_state_id, position, hole_cards, stack_size, is_hero)
-                VALUES (?, ?, ?, ?, ?)
-            """, (game_state_id, position.value, hole_cards_str, stack_size, is_hero))
-
-            player_ids.append(cursor.lastrowid)
-
-        # Create ONLY FOLD and ALL_IN actions using Action enum
-        for player_id in player_ids:
-            action = random.choice([Action.FOLD, Action.ALL_IN])
-            amount = round(random.uniform(0.5, 50), 2) if action == Action.ALL_IN else 0
-
-            cursor.execute("""
-                INSERT INTO bets (game_state_id, player_id, action_type, amount)
-                VALUES (?, ?, ?, ?)
-            """, (game_state_id, player_id, action.value, amount))
-
-        # Randomly insert jackpot events (20% chance)
-        if random.random() < 0.2:
-            for player_id in player_ids:
-                jackpot_type = random.choice(JACKPOT_TYPES)
-                payout = round(random.uniform(10, 1000), 2)
-                
-                # Use Hand and Board domain models for jackpot details
-                jackpot_hand = generate_hand()
-                jackpot_board = generate_board()
-                
-                cards_used = {
-                    "hole_cards": [jackpot_hand.card1.to_string(), jackpot_hand.card2.to_string()],
-                    "board": [card.to_string() for card in jackpot_board.cards]
-                }
-
-                cursor.execute("""
-                    INSERT INTO jackpots (game_state_id, player_id, jackpot_type, payout_amount, cards_used)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (game_state_id, player_id, jackpot_type, payout, json.dumps(cards_used)))
-
-        results.append((game_state_id, player_ids))
-
-    return results
-
-
-def insert_aggregated_metrics(cursor: sqlite3.Cursor, cell_id: int) -> None:
-    """Insert aggregated metrics for a cell."""
-    equity = round(random.random(), 4)
-    ev = round(random.uniform(-50, 100), 4)
-    win_prob = round(random.random(), 4)
-    draw_prob = round(random.random() * (1 - win_prob), 4)
-    loss_prob = round(1 - win_prob - draw_prob, 4)
-
-    jackpot_adjusted_ev = ev + round(random.uniform(0, 20), 4)
-    jackpot_freq = round(random.random() * 0.3, 4)
-    avg_payout = round(random.uniform(50, 500), 2) if jackpot_freq > 0 else 0
-
-    cursor.execute("""
-        INSERT INTO aggregated_metrics (
-            cell_id, last_updated, equity, ev, win_prob, draw_prob, loss_prob,
-            jackpot_adjusted_ev, jackpot_frequency, avg_jackpot_payout,
-            convergence_status, iterations
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        cell_id,
-        datetime.now(),
-        equity,
-        ev,
-        win_prob,
-        draw_prob,
-        loss_prob,
-        jackpot_adjusted_ev,
-        jackpot_freq,
-        avg_payout,
-        'converged',
-        100000
-    ))
+    rank1 = ranks[row_index]
+    rank2 = ranks[col_index]
+    
+    if row_index == col_index:
+        return f"{rank1}{rank2}x"  # Pair
+    elif row_index < col_index:
+        return f"{rank1}{rank2}s"  # Suited
+    else:
+        return f"{rank1}{rank2}o"  # Offsuit
 
 
 # ============================================================================
-# MAIN EXECUTION
+# DATABASE POPULATION USING ORM
 # ============================================================================
 
-def create_aof_database(
-    db_path: str = "aof_analysis.db",
-    num_simulations: int = 1,
-    games_per_cell: int = 100,
-    sample_cells: int = 10  # Sample only N cells from 169 to speed up mock data
-) -> None:
-    """
-    Create SQLite database with relational schema and mock data.
-
-    Args:
-        db_path: Path to SQLite database file
-        num_simulations: Number of simulations to create
-        games_per_cell: Number of game states per cell
-        sample_cells: Number of cells to populate (to speed up mock creation)
-    """
-    db_file = Path(db_path)
-    if db_file.exists():
-        db_file.unlink()
-        print(f"Removed existing database: {db_path}")
-
-    print(f"✨ Creating AOF database with domain models: {db_path}")
-    conn = create_schema(str(db_file))
-    cursor = conn.cursor()
-
+def create_aof_database(db_path: str = "aof_analysis.db", num_simulations: int = 2) -> None:
+    """Create and populate AOF database using SQLAlchemy ORM."""
+    
+    print("=" * 70)
+    print("CREATING AOF DATABASE WITH ORM MODELS")
+    print("=" * 70)
+    
+    # Remove existing database
+    if Path(db_path).exists():
+        Path(db_path).unlink()
+        print(f"\n✨ Removed existing database: {db_path}")
+    
+    # Initialize database and get session factory
+    engine = create_engine(f"sqlite:///{db_path}", echo=False)
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = SessionLocal()
+    
     try:
-        for sim_num in range(num_simulations):
-            print(f"\n  📊 Simulation {sim_num + 1}/{num_simulations}")
-
-            # Create simulation
-            sim_id = insert_simulation(cursor, sim_num + 1)
-            print(f"    ✓ Created simulation (id={sim_id})")
-
-            # Create hand matrix
-            matrix_id = insert_hand_matrix(cursor, sim_id)
-            print(f"    ✓ Created hand matrix (id={matrix_id})")
-
-            # Create all 169 cells
-            cell_ids = insert_matrix_cells(cursor, matrix_id)
-            print(f"    ✓ Created {len(cell_ids)} matrix cells")
-
-            # Sample cells for mock game data
-            sampled_cells = random.sample(cell_ids, min(sample_cells, len(cell_ids)))
-
-            for idx, cell_id in enumerate(sampled_cells):
-                # Insert games and players (2-4 player all-in games)
-                games = insert_game_states_and_players(cursor, cell_id, num_games=games_per_cell)
+        print(f"📊 Creating database: {db_path}")
+        
+        # ====================================================================
+        # CREATE SIMULATIONS
+        # ====================================================================
+        print("\n[1/2] Creating simulations and matrices...")
+        
+        total_game_states = 0
+        total_players = 0
+        total_bets = 0
+        total_jackpots = 0
+        
+        for sim_num in range(1, num_simulations + 1):
+            # Create simulation using ORM
+            sim = Simulation(
+                name=f"AOF_Simulation_{sim_num}",
+                parameters={
+                    "game_type": "all_in_or_fold",
+                    "players": "2-4",
+                    "actions": ["fold", "all_in"],
+                    "num_games_per_cell": 100,
+                    "total_cells": 169,
+                },
+            )
+            session.add(sim)
+            session.flush()  # Assign ID
+            
+            print(f"  Simulation {sim_num}: {sim.name} (ID: {sim.id})")
+            
+            # Create hand matrix using ORM
+            matrix = HandMatrix(
+                simulation_id=sim.id,
+                matrix_size=13,
+                total_cells=169,
+                analyzed_cells=0,
+            )
+            session.add(matrix)
+            session.flush()  # Assign ID
+            
+            # ================================================================
+            # CREATE MATRIX CELLS AND GAMES
+            # ================================================================
+            print(f"  [2/2] Creating games for simulation {sim_num}...")
+            
+            # Create all 169 cells (13x13 matrix)
+            cells = []
+            for row in range(13):
+                for col in range(13):
+                    cell = MatrixCell(
+                        matrix_id=matrix.id,
+                        row_index=row,
+                        col_index=col,
+                        hand_notation=get_hand_notation(row, col),
+                    )
+                    session.add(cell)
+                    cells.append(cell)
+            
+            session.flush()  # Assign all cell IDs
+            
+            # Populate 20 random cells with 100 games each
+            sample_cells = random.sample(cells, min(20, len(cells)))
+            
+            for cell_idx, cell in enumerate(sample_cells, 1):
+                # Generate 100 games for this cell
+                for game_num in range(100):
+                    # Determine players
+                    num_players = random.randint(2, 4)
+                    positions = get_available_positions(num_players)
+                    
+                    # Generate board using Board domain model
+                    board = generate_board()
+                    board_json = board_to_json(board)
+                    
+                    # Create board card record
+                    board_card = BoardCard(cards=board_json)
+                    session.add(board_card)
+                    session.flush()  # Get ID
+                    
+                    # Create game state
+                    game_time = datetime.utcnow() - timedelta(
+                        hours=random.randint(1, 24),
+                        minutes=random.randint(0, 59),
+                        seconds=random.randint(0, 59)
+                    )
+                    game = GameState(
+                        cell_id=cell.id,
+                        timestamp=game_time,
+                        num_players=num_players,
+                        board_cards_id=board_card.id,
+                        pot_size=round(random.uniform(10, 100), 2),
+                        outcome=random.choice(['hero_win', 'hero_loss', 'draw']),
+                    )
+                    session.add(game)
+                    session.flush()  # Get ID
+                    
+                    # Create players (one is hero) using Hand domain model
+                    hero_position = random.randint(0, num_players - 1)
+                    
+                    for pos_idx, position in enumerate(positions):
+                        hand = generate_hand()
+                        hand_str = hand_to_shorthand(hand)
+                        
+                        player = Player(
+                            game_state_id=game.id,
+                            position=position.value,
+                            hole_cards=hand_str,
+                            stack_size=round(random.uniform(20, 100), 2),
+                            is_hero=(pos_idx == hero_position),
+                        )
+                        session.add(player)
+                        total_players += 1
+                    
+                    session.flush()  # Assign player IDs
+                    
+                    # Create bets (FOLD or ALL_IN only using Action enum)
+                    game_players = session.query(Player).filter(
+                        Player.game_state_id == game.id
+                    ).all()
+                    
+                    for player in game_players:
+                        action = random.choice([ActionType.FOLD, ActionType.ALL_IN])
+                        amount = 0 if action == ActionType.FOLD else round(random.uniform(5, 50), 2)
+                        
+                        bet = Bet(
+                            game_state_id=game.id,
+                            player_id=player.id,
+                            action_type=action,
+                            amount=amount,
+                        )
+                        session.add(bet)
+                        total_bets += 1
+                    
+                    # Occasionally add jackpot
+                    if random.random() < 0.61:
+                        hero_player = next(
+                            (p for p in game_players if p.is_hero), 
+                            game_players[0]
+                        )
+                        jackpot = Jackpot(
+                            game_state_id=game.id,
+                            player_id=hero_player.id,
+                            jackpot_type=random.choice(JACKPOT_TYPES),
+                            payout_amount=round(random.uniform(400, 600), 2),
+                        )
+                        session.add(jackpot)
+                        total_jackpots += 1
+                    
+                    total_game_states += 1
+                    
+                    # Commit every 100 games to manage memory
+                    if game_num % 100 == 0:
+                        session.commit()
                 
-                # Insert aggregated metrics
-                insert_aggregated_metrics(cursor, cell_id)
-
-                if (idx + 1) % 5 == 0:
-                    print(f"      ✓ Populated {idx + 1}/{len(sampled_cells)} cells with games")
-
-            print(f"    ✓ Populated {len(sampled_cells)} cells with 2-4 player all-in games")
-
-        conn.commit()
+                # Create aggregated metrics for this cell
+                metric = AggregatedMetric(
+                    cell_id=cell.id,
+                    equity=round(random.uniform(0.2, 0.98), 4),
+                    ev=round(random.uniform(-10, 50), 2),
+                    convergence_status=ConvergenceStatus.CONVERGENCE,
+                )
+                session.add(metric)
+                
+                if cell_idx % 5 == 0:
+                    print(f"    Processed {cell_idx} cells")
+            
+            # Update matrix analyzed cells
+            matrix.analyzed_cells = len(sample_cells)
+            
+            # Final commit for this simulation
+            session.commit()
+        
+        print("\n" + "=" * 70)
+        print("DATABASE CREATION COMPLETE")
+        print("=" * 70)
         print(f"\n✅ Database created successfully!")
-        print(f"   Location: {db_file.absolute()}")
+        print(f"   Location: {Path(db_path).absolute()}")
         print(f"   Simulations: {num_simulations}")
-        print(f"   Total cells: {num_simulations * 169}")
-        print(f"   Populated cells: {num_simulations * sample_cells}")
-        print(f"   Games per cell: {games_per_cell}")
-        print(f"   Game type: All-in-or-fold (2-4 players)")
-        print(f"   Valid actions: FOLD, ALL_IN only")
-        print(f"   Domain models: Using Card, Hand, Board, Action, Position enums")
-
-        # Print database stats
-        cursor.execute("SELECT COUNT(*) FROM simulations;")
-        print(f"   Total simulations: {cursor.fetchone()[0]}")
-
-        cursor.execute("SELECT COUNT(*) FROM game_states;")
-        game_states = cursor.fetchone()[0]
-        print(f"   Total game states: {game_states}")
-
-        cursor.execute("SELECT COUNT(*) FROM players;")
-        print(f"   Total players: {cursor.fetchone()[0]}")
-
-        cursor.execute("SELECT COUNT(*) FROM bets;")
-        print(f"   Total bet actions (FOLD/ALL_IN): {cursor.fetchone()[0]}")
-
-        cursor.execute("SELECT COUNT(*) FROM jackpots;")
-        print(f"   Total jackpot events: {cursor.fetchone()[0]}")
-
+        print(f"   Total game states: {total_game_states:,}")
+        print(f"   Total players: {total_players:,}")
+        print(f"   Total bet actions (FOLD/ALL_IN): {total_bets:,}")
+        print(f"   Total jackpot events: {total_jackpots:,}")
+        print(f"   Domain models: Card, Hand, Board, Action, Position enums")
+        print("=" * 70 + "\n")
+        
     except Exception as e:
-        conn.rollback()
-        print(f"❌ Error creating database: {e}")
+        session.rollback()
+        print(f"\n❌ Error creating database: {e}")
         logger.error(f"Database creation failed: {e}", exc_info=True)
         raise
     finally:
-        conn.close()
+        session.close()
 
 
 if __name__ == "__main__":
-    # Create database in prototyping folder
-    db_path = Path(__file__).parent / "aof_analysis.db"
-
-    create_aof_database(
-        db_path=str(db_path),
-        num_simulations=2,          # 2 simulations
-        games_per_cell=100,         # 100 games per cell
-        sample_cells=20             # Populate 20 out of 169 cells per simulation
-    )
+    create_aof_database()

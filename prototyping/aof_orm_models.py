@@ -113,6 +113,7 @@ class MatrixCell(Base):
     matrix_id = Column(Integer, ForeignKey('hand_matrices.id'), nullable=False)
     row_index = Column(Integer, nullable=False)  # 0-12
     col_index = Column(Integer, nullable=False)  # 0-12
+    hand_notation = Column(String(10))  # e.g., 'AsKs', 'KhKh', '3x3'
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Composite unique constraint enforced at database level
@@ -137,8 +138,10 @@ class MatrixCell(Base):
     @property
     def hand_name(self) -> str:
         """Convert row/col indices to standard hand name (e.g., 'As2s', '3x3')."""
+        if self.hand_notation:
+            return self.hand_notation
+        
         ranks = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
-        suits = ['s', 'h', 'd', 'c']
         
         rank1 = ranks[self.row_index]
         rank2 = ranks[self.col_index]
