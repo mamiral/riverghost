@@ -53,6 +53,53 @@ def test_find_run_by_contract_returns_only_selected_run_summary() -> None:
         fixture.cleanup()
 
 
+def test_find_run_by_contract_prefers_newest_completed_run() -> None:
+    fixture = create_matrix_sweep_db_fixture(use_temp=True)
+    try:
+        repository = DatabaseRepository(fixture.database_url)
+        service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
+
+        contract = build_matrix_sweep_contract(
+            selected_position="UTG",
+            position_actions={"UTG": "all_in", "BB": "call"},
+            active_players=["UTG", "BB"],
+        )
+
+        first_run = service.run_sweep(contract)
+        second_run = service.run_sweep(contract)
+
+        selected = service.find_run_by_contract(contract)
+
+        assert selected.id == second_run["simulation_id"]
+        assert selected.id != first_run["simulation_id"]
+    finally:
+        fixture.cleanup()
+
+
+def test_find_run_by_contract_prefers_higher_id_on_tie() -> None:
+    fixture = create_matrix_sweep_db_fixture(use_temp=True)
+    try:
+        repository = DatabaseRepository(fixture.database_url)
+        service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
+
+        contract = build_matrix_sweep_contract(
+            selected_position="UTG",
+            position_actions={"UTG": "all_in", "BB": "call"},
+            active_players=["UTG", "BB"],
+        )
+
+        # Simulate two runs with the same end timestamp
+        result1 = service.run_sweep(contract)
+        result2 = service.run_sweep(contract)
+
+        chosen = service.find_run_by_contract(contract)
+
+        assert chosen.id == result2["simulation_id"], "Should prefer latest inserted run on tie"
+        assert chosen.id != result1["simulation_id"]
+    finally:
+        fixture.cleanup()
+
+
 def test_completed_run_persists_required_contract_fields() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:

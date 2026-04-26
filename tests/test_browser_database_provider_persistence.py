@@ -83,7 +83,11 @@ class TestDatabasePersistence:
             
             sim = Simulation(
                 name="test_upsert",
-                parameters="num_simulations=120,matrix_size=13x13,game_type=cash",
+                parameters={
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                },
                 start_timestamp=datetime.now(timezone.utc)
             )
             session.add(sim)
@@ -146,7 +150,11 @@ class TestDatabasePersistence:
             
             sim = Simulation(
                 name="test_sim_precompute",
-                parameters="num_simulations=120,matrix_size=13x13,game_type=cash",
+                parameters={
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                },
                 start_timestamp=datetime.now(timezone.utc)
             )
             session.add(sim)
@@ -206,12 +214,54 @@ class TestDatabasePersistence:
 class TestDatabaseLoading:
     """Test that database queries return correct data."""
 
-    def test_get_strategy_matrix_returns_empty_dict(self, provider):
-        """BREAK POINT #2: get_strategy_matrix in database_repository.py just returns {}"""
+    def test_get_strategy_matrix_returns_matrix_data(self, provider):
+        """Verify get_strategy_matrix returns persisted matrix data from the database."""
         from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
         import asyncio
         
-        # This test documents the break point: the query is empty
+        # Seed test data so get_strategy_matrix has a matching scenario to query.
+        from datetime import datetime, timezone
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+        from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+        with provider.database_repository.connection.session_scope() as session:
+            sim = Simulation(
+                name="test_strategy_matrix",
+                parameters={
+                    "position": "UTG",
+                    "action": "FOLD",
+                    "metric": "EQUITY",
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                },
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.flush()
+            matrix = HandMatrix(simulation_id=sim.id, matrix_size="13x13")
+            session.add(matrix)
+            session.flush()
+            keys = build_matrix_keys()
+            for row in range(13):
+                for col in range(13):
+                    cell = MatrixCell(
+                        matrix_id=matrix.id,
+                        row_index=row,
+                        col_index=col,
+                        hand_combination=keys[row][col]
+                    )
+                    session.add(cell)
+                    session.flush()
+                    session.add(AggregatedMetric(
+                        cell_id=cell.id,
+                        equity=0.55,
+                        convergence_status="AVAILABLE",
+                        last_updated=datetime.now(timezone.utc)
+                    ))
+            session.commit()
+
         position = PositionContext.from_id("UTG")
         action = ActionContext.from_id("FOLD")
         metric_type = MetricType.from_id("EQUITY")
@@ -229,19 +279,253 @@ class TestDatabaseLoading:
         sample_hand_key = next(iter(result.keys()))
         sample_equity = result[sample_hand_key]
         assert isinstance(sample_hand_key, str), "Hand key should be a string"
-        assert isinstance(sample_equity, (int, float)), "Equity value should be numeric"
-        assert 0.0 <= sample_equity <= 1.0, "Equity should be between 0 and 1"
+        assert isinstance(sample_equity, dict), "Equity result should be a metric dictionary"
+        assert metric_type.id in sample_equity, f"Result should contain metric key {metric_type.id}"
+        assert isinstance(sample_equity[metric_type.id], (int, float)), "Equity value should be numeric"
+        assert 0.0 <= sample_equity[metric_type.id] <= 1.0, "Equity should be between 0 and 1"
+
+    def test_get_matrix_payload_warm_read_is_sub_250ms(self, provider):
+        """Validate warm browser read latency stays below 250ms."""
+        import time
+
+        # Seed a valid matrix scenario for the provider
+        from datetime import datetime, timezone
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+        from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+        keys = build_matrix_keys()
+        with provider.database_repository.connection.session_scope() as session:
+            sim = Simulation(
+                name="warm_read_latency",
+                parameters={
+                    "selected_position": "UTG",
+                    "hero_action": "FOLD",
+                    "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                    "active_players": 1,
+                    "num_opponents": 1,
+                    "pot_size": 20.0,
+                    "bet_amount": 10.0,
+                    "sims_per_combo": 120,
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                    "run_kind": "matrix_sweep"
+                },
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.flush()
+            matrix = HandMatrix(simulation_id=sim.id, matrix_size="13x13")
+            session.add(matrix)
+            session.flush()
+
+            for row in range(13):
+                for col in range(13):
+                    cell = MatrixCell(matrix_id=matrix.id, row_index=row, col_index=col, hand_combination=keys[row][col])
+                    session.add(cell)
+                    session.flush()
+                    session.add(AggregatedMetric(cell_id=cell.id, equity=0.55, ev=0.75, convergence_status="AVAILABLE", last_updated=datetime.now(timezone.utc)))
+
+            session.commit()
+
+        # Warm the cache with one read
+        provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+        )
+
+        start = time.perf_counter()
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+        )
+        duration = time.perf_counter() - start
+
+        assert payload["status"] == "AVAILABLE"
+        assert duration < 0.25, f"Warm read should complete under 250ms, got {duration:.3f}s"
+
+    def test_find_matrix_sweep_run_by_contract_prefers_latest_completed_run(self, provider):
+        """Verify current historical run selection prefers latest completion timestamp."""
+        from datetime import datetime, timedelta, timezone
+
+        with provider.database_repository.connection.session_scope() as session:
+            from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+            base_params = {
+                "selected_position": "UTG",
+                "hero_action": "FOLD",
+                "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                "active_players": 1,
+                "num_opponents": 1,
+                "pot_size": 20.0,
+                "bet_amount": 10.0,
+                "sims_per_combo": 120,
+                "num_simulations": 120,
+                "matrix_size": "13x13",
+                "game_type": "cash",
+                "run_kind": "matrix_sweep"
+            }
+
+            older = Simulation(
+                name="older_test_run",
+                parameters=base_params,
+                start_timestamp=datetime.now(timezone.utc) - timedelta(minutes=10),
+                end_timestamp=datetime.now(timezone.utc) - timedelta(minutes=5)
+            )
+            session.add(older)
+            session.flush()
+            older_matrix = HandMatrix(simulation_id=older.id, matrix_size="13x13")
+            session.add(older_matrix)
+            session.flush()
+            older_cell = MatrixCell(matrix_id=older_matrix.id, row_index=0, col_index=0, hand_combination="AA")
+            session.add(older_cell)
+            session.flush()
+            session.add(AggregatedMetric(cell_id=older_cell.id, ev=0.5, convergence_status="AVAILABLE", last_updated=datetime.now(timezone.utc)))
+
+            newer = Simulation(
+                name="newer_test_run",
+                parameters=base_params,
+                start_timestamp=datetime.now(timezone.utc) - timedelta(minutes=2),
+                end_timestamp=datetime.now(timezone.utc) - timedelta(minutes=1)
+            )
+            session.add(newer)
+            session.flush()
+            newer_matrix = HandMatrix(simulation_id=newer.id, matrix_size="13x13")
+            session.add(newer_matrix)
+            session.flush()
+            newer_cell = MatrixCell(matrix_id=newer_matrix.id, row_index=0, col_index=0, hand_combination="AA")
+            session.add(newer_cell)
+            session.flush()
+            session.add(AggregatedMetric(cell_id=newer_cell.id, ev=0.75, convergence_status="AVAILABLE", last_updated=datetime.now(timezone.utc)))
+
+            session.commit()
+
+        contract = base_params.copy()
+        chosen = provider.database_repository.find_matrix_sweep_run_by_contract(contract)
+        assert chosen is not None, "Expected a matching run"
+        assert chosen.id == newer.id, "Should choose the run with later end_timestamp"
+
+    def test_get_matrix_payload_returns_missing_for_simulation_without_hand_matrix(self, provider):
+        """Verify a matching run without a HandMatrix is treated as an explicit missing scenario."""
+        from datetime import datetime, timezone
+        from hopilot.models import Simulation
+
+        with provider.database_repository.connection.session_scope() as session:
+            sim = Simulation(
+                name="missing_hand_matrix",
+                parameters={
+                    "selected_position": "UTG",
+                    "hero_action": "FOLD",
+                    "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                    "active_players": 1,
+                    "num_opponents": 1,
+                    "pot_size": 20.0,
+                    "bet_amount": 10.0,
+                    "sims_per_combo": 120,
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                    "run_kind": "matrix_sweep"
+                },
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.commit()
+
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+        )
+
+        assert payload["status"] == "MISSING"
+        assert len(payload["cells"]) == 169
+        assert all(cell["status"] == "MISSING" for cell in payload["cells"])
+
+    def test_get_matrix_payload_substitutes_zero_for_missing_metric_rows(self, provider):
+        """Verify a missing AggregatedMetric row substitutes 0 and still returns available status."""
+        from datetime import datetime, timezone
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+        from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+        keys = build_matrix_keys()
+        with provider.database_repository.connection.session_scope() as session:
+            sim = Simulation(
+                name="missing_metric_row",
+                parameters={
+                    "selected_position": "UTG",
+                    "hero_action": "FOLD",
+                    "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                    "active_players": 1,
+                    "num_opponents": 1,
+                    "pot_size": 20.0,
+                    "bet_amount": 10.0,
+                    "sims_per_combo": 120,
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                    "run_kind": "matrix_sweep"
+                },
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.flush()
+            matrix = HandMatrix(simulation_id=sim.id, matrix_size="13x13")
+            session.add(matrix)
+            session.flush()
+
+            for row in range(13):
+                for col in range(13):
+                    hand_key = keys[row][col]
+                    cell = MatrixCell(matrix_id=matrix.id, row_index=row, col_index=col, hand_combination=hand_key)
+                    session.add(cell)
+                    session.flush()
+                    if row != 0 or col != 0:
+                        metric = AggregatedMetric(
+                            cell_id=cell.id,
+                            equity=0.55,
+                            ev=0.75,
+                            convergence_status="AVAILABLE",
+                            last_updated=datetime.now(timezone.utc)
+                        )
+                        session.add(metric)
+
+            session.commit()
+
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+        )
+
+        missing_cell = next(cell for cell in payload["cells"] if cell["hand_key"] == "AA")
+        assert missing_cell["value"] == 0.0
+        assert payload["status"] == "AVAILABLE"
 
     def test_database_has_data_but_query_returns_nothing(self, provider):
         """Verify the disconnect: data IS in database, but query returns nothing."""
         # Insert some test data
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+
         with provider.database_repository.connection.session_scope() as session:
             from datetime import datetime, timezone
             from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
             
             sim = Simulation(
                 name="test_query_disconnect",
-                parameters='{"position": "UTG", "action": "FOLD", "metric": "EQUITY", "num_simulations": 120, "matrix_size": "13x13", "game_type": "cash"}',
+                parameters={
+                    "position": "UTG",
+                    "action": "FOLD",
+                    "metric": "EQUITY",
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                },
                 start_timestamp=datetime.now(timezone.utc)
             )
             session.add(sim)
@@ -253,6 +537,7 @@ class TestDatabaseLoading:
             )
             session.add(matrix)
             session.flush()
+            keys = build_matrix_keys()
             
             # Insert cells with equity data (using correct schema)
             for row in range(0, 13):
@@ -261,7 +546,7 @@ class TestDatabaseLoading:
                         matrix_id=matrix.id,
                         row_index=row,
                         col_index=col,
-                        hand_combination=f"Hand{row}{col} vs Random"
+                        hand_combination=keys[row][col]
                     )
                     session.add(cell)
                     session.flush()
@@ -294,10 +579,13 @@ class TestDatabaseLoading:
             assert len(result) == 169, "Should return 13x13 matrix (169 cells)"
             
             # Validate that all cells have proper equity values
-            for hand_key, equity in result.items():
+            for hand_key, value_dict in result.items():
                 assert isinstance(hand_key, str), f"Hand key should be string, got {type(hand_key)}"
-                assert isinstance(equity, (int, float)), f"Equity should be numeric, got {type(equity)}"
-                assert 0.0 <= equity <= 1.0, f"Equity should be between 0 and 1, got {equity}"
+                assert isinstance(value_dict, dict), f"Equity result should be a dict, got {type(value_dict)}"
+                assert "EQUITY" in value_dict, "Result dict should contain EQUITY metric"
+                equity_value = value_dict["EQUITY"]
+                assert isinstance(equity_value, (int, float)), f"Equity should be numeric, got {type(equity_value)}"
+                assert 0.0 <= equity_value <= 1.0, f"Equity should be between 0 and 1, got {equity_value}"
 
 
 class TestDatabaseSchema:
@@ -358,121 +646,130 @@ class TestGUILoadingFunctionality:
     """Test GUI's ability to load data from database."""
 
     def test_gui_loads_data_on_startup(self, provider):
-        """Test that GUI loads existing data when initialized."""
-        # First, insert some test data
+        """Test that GUI loads existing aggregated matrix data when initialized."""
+        from datetime import datetime, timezone
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+        from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+        keys = build_matrix_keys()
         with provider.database_repository.connection.session_scope() as session:
-            from datetime import datetime, timezone
-            from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
-            
             sim = Simulation(
                 name="test_gui_load",
-                parameters='{"position": "UTG", "action": "ALL_IN", "metric": "WIN_LOSE_PROBABILITY", "num_simulations": 1000, "matrix_size": "13x13", "game_type": "cash"}',
-                start_timestamp=datetime.now(timezone.utc)
+                parameters={
+                    "selected_position": "UTG",
+                    "hero_action": "ALL_IN",
+                    "position_actions": {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"},
+                    "active_players": 4,
+                    "num_opponents": 3,
+                    "pot_size": 20.0,
+                    "bet_amount": 10.0,
+                    "sims_per_combo": 120,
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                    "run_kind": "matrix_sweep"
+                },
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc)
             )
             session.add(sim)
             session.flush()
-            
             matrix = HandMatrix(simulation_id=sim.id, matrix_size="13x13")
             session.add(matrix)
             session.flush()
-            
-            # Insert a few cells with data
-            for i in range(3):
-                cell = MatrixCell(
-                    matrix_id=matrix.id,
-                    row_index=i,
-                    col_index=i,
-                    hand_combination=f"AA vs Random"
-                )
-                session.add(cell)
-                session.flush()
-                
-                metric = AggregatedMetric(
-                    cell_id=cell.id,
-                    equity=0.5 + i * 0.1,
-                    convergence_status="AVAILABLE",
-                    last_updated=datetime.now(timezone.utc)
-                )
-                session.add(metric)
-            
+
+            for row in range(13):
+                for col in range(13):
+                    cell = MatrixCell(
+                        matrix_id=matrix.id,
+                        row_index=row,
+                        col_index=col,
+                        hand_combination=keys[row][col]
+                    )
+                    session.add(cell)
+                    session.flush()
+                    metric = AggregatedMetric(
+                        cell_id=cell.id,
+                        equity=0.5,
+                        convergence_status="AVAILABLE",
+                        last_updated=datetime.now(timezone.utc)
+                    )
+                    session.add(metric)
             session.commit()
 
-        # Now test that the provider can load this data
-        from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
-        
-        position = PositionContext.from_id("UTG")
-        action = ActionContext.from_id("ALL_IN")
-        metric = MetricType.from_id("WIN_LOSE_PROBABILITY")
-        
-        # Debug: check what simulations exist
-        with provider.database_repository.connection.session_scope() as session:
-            from hopilot.models import Simulation
-            sims = session.query(Simulation).all()
-            print(f"Found {len(sims)} simulations")
-            for sim in sims:
-                print(f"Sim: {sim.id}, params: {sim.parameters}")
-        
-        result = provider.database_repository.get_strategy_matrix_sync(position, action, metric)
-        
-        assert isinstance(result, dict), "Should return a dict"
-        assert len(result) > 0, "Should have loaded data"
-        assert "AA" in result, "Should have AA data"
-
-    def test_gui_provider_returns_correct_format(self, provider):
-        """Test that get_matrix_payload returns the correct format for GUI."""
-        # Insert test data
-        with provider.database_repository.connection.session_scope() as session:
-            from datetime import datetime, timezone
-            from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
-            
-            sim = Simulation(
-                name="test_format",
-                parameters='{"position": "UTG", "action": "ALL_IN", "metric": "WIN_LOSE_PROBABILITY", "num_simulations": 1000, "matrix_size": "13x13", "game_type": "cash"}',
-                start_timestamp=datetime.now(timezone.utc)
-            )
-            session.add(sim)
-            session.flush()
-            
-            matrix = HandMatrix(simulation_id=sim.id, matrix_size="13x13")
-            session.add(matrix)
-            session.flush()
-            
-            cell = MatrixCell(
-                matrix_id=matrix.id,
-                row_index=0,
-                col_index=0,
-                hand_combination="AA vs Random"
-            )
-            session.add(cell)
-            session.flush()
-            
-            metric = AggregatedMetric(
-                cell_id=cell.id,
-                equity=0.75,
-                convergence_status="AVAILABLE",
-                last_updated=datetime.now(timezone.utc)
-            )
-            session.add(metric)
-            session.commit()
-
-        # Test the provider method
         payload = provider.get_matrix_payload(
             position="UTG",
             metric="WIN_LOSE_PROBABILITY",
             position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
         )
-        
+
+        assert isinstance(payload, dict), "Payload should be a dictionary"
+        assert payload["status"] == "AVAILABLE"
+        assert len(payload["cells"]) == 169
+        assert any(cell["hand_key"] == "AA" for cell in payload["cells"])
+
+    def test_gui_provider_returns_correct_format(self, provider):
+        """Test that get_matrix_payload returns the correct format for GUI."""
+        from datetime import datetime, timezone
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+        from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+        keys = build_matrix_keys()
+        with provider.database_repository.connection.session_scope() as session:
+            sim = Simulation(
+                name="test_format",
+                parameters={
+                    "selected_position": "UTG",
+                    "hero_action": "ALL_IN",
+                    "position_actions": {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"},
+                    "active_players": 4,
+                    "num_opponents": 3,
+                    "pot_size": 20.0,
+                    "bet_amount": 10.0,
+                    "sims_per_combo": 120,
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                    "run_kind": "matrix_sweep"
+                },
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.flush()
+            matrix = HandMatrix(simulation_id=sim.id, matrix_size="13x13")
+            session.add(matrix)
+            session.flush()
+
+            for row in range(13):
+                for col in range(13):
+                    cell = MatrixCell(
+                        matrix_id=matrix.id,
+                        row_index=row,
+                        col_index=col,
+                        hand_combination=keys[row][col]
+                    )
+                    session.add(cell)
+                    session.flush()
+                    session.add(AggregatedMetric(
+                        cell_id=cell.id,
+                        equity=0.75,
+                        convergence_status="AVAILABLE",
+                        last_updated=datetime.now(timezone.utc)
+                    ))
+            session.commit()
+
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="WIN_LOSE_PROBABILITY",
+            position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
+        )
+
         assert "cells" in payload, "Should have cells key"
         assert isinstance(payload["cells"], list), "cells should be a list"
         assert len(payload["cells"]) == 169, "Should have 169 cells (13x13)"
-        
-        # Find the AA cell
-        aa_cell = None
-        for cell in payload["cells"]:
-            if cell["hand_key"] == "AA":
-                aa_cell = cell
-                break
-        
+
+        aa_cell = next((cell for cell in payload["cells"] if cell["hand_key"] == "AA"), None)
         assert aa_cell is not None, "Should have AA cell"
         assert aa_cell["value"] == 0.75, f"AA value should be 0.75, got {aa_cell['value']}"
         assert aa_cell["status"] == "AVAILABLE", "Status should be AVAILABLE"

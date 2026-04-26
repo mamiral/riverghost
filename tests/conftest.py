@@ -205,6 +205,69 @@ def sample_matrix(factory: ModelFactory, db_session: Session, sample_simulation)
 
 
 @pytest.fixture(scope="function")
+def browser_scenario(db_session: Session):
+    """Create a full 13x13 aggregated browser scenario for tests."""
+    from datetime import datetime, timezone
+    from hopilot.gto.aof_hand_matrix import build_matrix_keys
+    from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
+
+    keys = build_matrix_keys()
+    simulation = Simulation(
+        name="browser_scenario",
+        parameters={
+            "selected_position": "UTG",
+            "hero_action": "FOLD",
+            "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+            "active_players": 1,
+            "num_opponents": 1,
+            "pot_size": 20.0,
+            "bet_amount": 10.0,
+            "sims_per_combo": 120,
+            "num_simulations": 120,
+            "matrix_size": "13x13",
+            "game_type": "cash",
+            "run_kind": "matrix_sweep"
+        },
+        start_timestamp=datetime.now(timezone.utc),
+        end_timestamp=datetime.now(timezone.utc)
+    )
+    db_session.add(simulation)
+    db_session.flush()
+
+    matrix = HandMatrix(simulation_id=simulation.id, matrix_size="13x13")
+    db_session.add(matrix)
+    db_session.flush()
+
+    for row in range(13):
+        for col in range(13):
+            hand_key = keys[row][col]
+            cell = MatrixCell(
+                matrix_id=matrix.id,
+                row_index=row,
+                col_index=col,
+                hand_combination=hand_key
+            )
+            db_session.add(cell)
+            db_session.flush()
+            metric = AggregatedMetric(
+                cell_id=cell.id,
+                equity=0.5 + ((row * 13 + col) * 0.0001),
+                ev=1.0 + ((row * 13 + col) * 0.0001),
+                jackpot_adjusted_ev=1.2 + ((row * 13 + col) * 0.0001),
+                win_probability=0.6 + ((row * 13 + col) * 0.0001),
+                convergence_status="AVAILABLE",
+                last_updated=datetime.now(timezone.utc)
+            )
+            db_session.add(metric)
+
+    db_session.commit()
+    return {
+        "simulation": simulation,
+        "matrix": matrix,
+    }
+
+
+@pytest.fixture(scope="function")
 def sample_game_state(factory: ModelFactory, db_session: Session, sample_simulation):
     """Create a sample game state with board cards."""
     state = factory.create_game_state(

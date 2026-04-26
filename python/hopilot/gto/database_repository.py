@@ -371,7 +371,7 @@ class DatabaseRepository:
                     # Get the simulation
                     simulation = session.query(Simulation).filter(
                         and_(position_filter, action_filter)
-                    ).order_by(Simulation.created_at.desc()).first()
+                    ).order_by(Simulation.id.desc()).first()
                     
                     if not simulation:
                         return {}
@@ -440,7 +440,7 @@ class DatabaseRepository:
                     # Get the simulation
                     simulation = session.query(Simulation).filter(
                         and_(position_filter, action_filter)
-                    ).order_by(Simulation.created_at.desc()).first()
+                    ).order_by(Simulation.id.desc()).first()
 
                     if not simulation:
                         logger.debug(f"No simulation found for position={position.id}, action={action.id}")
@@ -1164,14 +1164,37 @@ class DatabaseRepository:
         ]
 
         with self.connection.session_scope() as session:
-            candidates = session.query(Simulation).filter(
-                Simulation.parameters["run_kind"].as_string() == normalized_contract["run_kind"]
-            ).order_by(Simulation.start_timestamp.desc()).all()
+            candidates = (
+                session.query(Simulation)
+                .filter(Simulation.parameters["run_kind"].as_string() == normalized_contract["run_kind"])
+                .order_by(Simulation.end_timestamp.desc().nulls_last(), Simulation.id.desc())
+                .all()
+            )
 
             for candidate in candidates:
-                parameters = normalize_scenario_contract(candidate.parameters)
-                if all(parameters.get(key) == normalized_contract.get(key) for key in contract_keys):
-                    return candidate
+                try:
+                    parameters = normalize_scenario_contract(candidate.parameters)
+                except Exception:
+                    continue
+
+                if not all(parameters.get(key) == normalized_contract.get(key) for key in contract_keys):
+                    continue
+
+                if candidate.end_timestamp is None:
+                    continue
+
+                aggregated_exists = (
+                    session.query(AggregatedMetric.id)
+                    .join(MatrixCell, AggregatedMetric.cell_id == MatrixCell.id)
+                    .join(HandMatrix, MatrixCell.matrix_id == HandMatrix.id)
+                    .filter(HandMatrix.simulation_id == candidate.id)
+                    .first()
+                )
+                if aggregated_exists is None:
+                    continue
+
+                return candidate
+
             return None
 
     def get_matrix_sweep_summary(self, simulation_id: int) -> Optional[Dict[str, Any]]:

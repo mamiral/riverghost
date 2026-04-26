@@ -92,7 +92,7 @@ class BrowserDatabaseProvider:
     ) -> Dict[str, Any]:
         """
         Get matrix payload from database.
-        
+
         Phase 4: Read-only database access for GUI.
         """
         try:
@@ -106,14 +106,13 @@ class BrowserDatabaseProvider:
             )
         except ValueError as e:
             self.logger.warning(f"Invalid context: {e}")
-            # Return empty cells list for invalid context
             return {
                 "context": {
                     "position": position,
                     "action": normalize_position_actions(position_actions or {}).get(position, "UNKNOWN"),
                     "metric": metric,
                     "position_actions": normalize_position_actions(position_actions or {}),
-                    "active_players": sum(1 for action in normalize_position_actions(position_actions or {}).values() if action == "ALL_IN"),
+                    "active_players": sum(1 for action in normalize_position_actions(position_actions or {}).values() if action != "FOLD"),
                     "pot_size": float(pot_size),
                     "bet_amount": float(bet_amount),
                 },
@@ -122,21 +121,18 @@ class BrowserDatabaseProvider:
                 "status_message": f"Invalid context: {e}",
             }
 
-        # Check for NO_CONTEST scenarios first
         if self._is_no_contest_scenario(position, position_actions or {}, strict_current_action):
             self.logger.debug(f"NO_CONTEST scenario detected for position {position}")
             cells = []
             for row in range(13):
                 for col in range(13):
                     hand_key = self._matrix_keys[row][col]
-                    # For NO_CONTEST, the value depends on the metric
                     if metric == "WIN_LOSE_PROBABILITY":
-                        value = 1.0  # Player wins uncontested
+                        value = 1.0
                     elif metric == "EV":
-                        value = pot_size  # Player wins the pot
+                        value = pot_size
                     else:
-                        value = 1.0  # Default to 1.0 for other metrics
-                    
+                        value = 1.0
                     cells.append({
                         "row": row,
                         "col": col,
@@ -152,100 +148,17 @@ class BrowserDatabaseProvider:
                 "status_message": "No contest - all other players folded",
             }
 
-        # Query database for matrix data (now uses aggregation engine)
         try:
-            matrix_data = self._run_async_query(context)
+            scenario_contract = self._build_scenario_contract(context)
+            simulation = self.database_repository.find_matrix_sweep_run_by_contract(scenario_contract)
+            if simulation is None:
+                return self._build_missing_payload(context)
 
-            if not matrix_data:
-                self.logger.debug(f"No matrix data found for context: {context}")
+            summary = self.database_repository.get_matrix_sweep_summary(simulation.id)
+            if summary is None or summary["hand_matrix"] is None or not summary["matrix_cells"] or len(summary["matrix_cells"]) != 169:
+                return self._build_missing_payload(context)
 
-                # For missing data, return cells with LOADING status instead of trying solver fallback
-                # This allows the GUI to show loading state and request computation
-                cells = []
-                for row in range(13):
-                    for col in range(13):
-                        hand_key = self._matrix_keys[row][col]
-                        cells.append({
-                            "row": row,
-                            "col": col,
-                            "hand_key": hand_key,
-                            "value": None,
-                            "status": "LOADING",  # Changed from MISSING to LOADING
-                            "display": "Computing...",  # Changed from "-" to "Computing..."
-                        })
-
-                return {
-                    "context": context,
-                    "cells": cells,
-                    "status": "LOADING",
-                    "status_message": "Matrix data is being computed from game states",
-                }
-            
-            # Format the matrix for GUI display
-            formatted_matrix = {}
-            metric_id = context["metric"]
-            for hand_key, metric_dict in matrix_data.items():
-                if isinstance(metric_dict, dict) and metric_id in metric_dict:
-                    value = metric_dict[metric_id]
-                    formatted_matrix[hand_key] = format_metric_value(context["metric"], value)
-                elif not isinstance(metric_dict, dict):
-                    formatted_matrix[hand_key] = format_metric_value(context["metric"], metric_dict)
-
-            # Build cells list in the same format as precompute
-            cells = []
-            for row in range(13):
-                for col in range(13):
-                    hand_key = self._matrix_keys[row][col]
-                    raw_value = None
-                    display = "-"
-                    status = STATUS_MISSING
-                    if hand_key in matrix_data:
-                        metric_dict = matrix_data[hand_key]
-                        if isinstance(metric_dict, dict) and metric_id in metric_dict:
-                            raw_value = metric_dict[metric_id]
-                            # Ensure raw_value is numeric
-                            if isinstance(raw_value, str):
-                                try:
-                                    raw_value = float(raw_value)
-                                except ValueError:
-                                    raw_value = 0.5  # default value
-                            display = format_metric_value(context["metric"], raw_value)
-                            status = STATUS_AVAILABLE
-
-                            # Call completion callback if provided
-                            if on_cell_complete and callable(on_cell_complete):
-                                try:
-                                    on_cell_complete(row, col, raw_value, status)
-                                except Exception as callback_error:
-                                    self.logger.warning(f"Cell completion callback failed: {callback_error}")
-
-                        elif not isinstance(metric_dict, dict):
-                            raw_value = metric_dict
-                            # Ensure raw_value is numeric
-                            if isinstance(raw_value, str):
-                                try:
-                                    raw_value = float(raw_value)
-                                except ValueError:
-                                    raw_value = 0.5  # default value
-                            display = format_metric_value(context["metric"], raw_value)
-                            status = STATUS_AVAILABLE
-
-                            # Call completion callback if provided
-                            if on_cell_complete and callable(on_cell_complete):
-                                try:
-                                    on_cell_complete(row, col, raw_value, status)
-                                except Exception as callback_error:
-                                    self.logger.warning(f"Cell completion callback failed: {callback_error}")
-
-                    cells.append({
-                        "row": row,
-                        "col": col,
-                        "hand_key": hand_key,
-                        "value": raw_value,
-                        "status": status,
-                        "display": display,
-                    })
-            
+            cells = self._build_cells_from_summary(summary["matrix_cells"], metric, on_cell_complete)
             return {
                 "context": context,
                 "cells": cells,
@@ -254,25 +167,98 @@ class BrowserDatabaseProvider:
             }
         except Exception as e:
             self.logger.error(f"Database query failed: {e}", exc_info=True)
-            # Return full matrix of MISSING cells on database error (no solver fallback)
-            cells = []
-            for row in range(13):
-                for col in range(13):
-                    hand_key = self._matrix_keys[row][col]
-                    cells.append({
-                        "row": row,
-                        "col": col,
-                        "hand_key": hand_key,
-                        "value": None,
-                        "status": STATUS_MISSING,
-                        "display": format_metric_value(context["metric"], None),
-                    })
-            return {
-                "context": context,
-                "cells": cells,
-                "status": STATUS_MISSING,
-                "status_message": f"Database error: {e}",
-            }
+            payload = self._build_missing_payload(context)
+            payload["status_message"] = f"Database error: {e}"
+            return payload
+
+    def _build_scenario_contract(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the persisted matrix-sweep scenario contract from browser context."""
+        return {
+            "selected_position": context["position"],
+            "hero_action": context["action"],
+            "position_actions": context["position_actions"],
+            "active_players": sum(1 for action in context["position_actions"].values() if action != "FOLD"),
+            "num_opponents": max(0, sum(1 for pos, action in context["position_actions"].items() if action != "FOLD" and pos != context["position"])),
+            "pot_size": float(context["pot_size"]),
+            "bet_amount": float(context["bet_amount"]),
+            "sims_per_combo": 120,
+            "num_simulations": 120,
+            "matrix_size": "13x13",
+            "game_type": "cash",
+            "run_kind": "matrix_sweep",
+        }
+
+    def _build_missing_payload(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Return the explicit missing scenario payload according to the spec."""
+        cells = []
+        for row in range(13):
+            for col in range(13):
+                hand_key = self._matrix_keys[row][col]
+                cells.append({
+                    "row": row,
+                    "col": col,
+                    "hand_key": hand_key,
+                    "value": None,
+                    "status": STATUS_MISSING,
+                    "display": format_metric_value(context["metric"], None),
+                })
+        return {
+            "context": context,
+            "cells": cells,
+            "status": STATUS_MISSING,
+            "status_message": "No aggregated run available for the requested scenario",
+        }
+
+    def _build_cells_from_summary(
+        self,
+        matrix_cells: list,
+        metric: str,
+        on_cell_complete: Optional[Any],
+    ) -> list[Dict[str, Any]]:
+        """Build a 169-cell payload from matrix summary rows."""
+        cells = []
+        for cell in matrix_cells:
+            metric_value = 0.0
+            status = STATUS_AVAILABLE
+            if cell.aggregated_metric is not None:
+                metric_value = self._extract_metric_value(cell.aggregated_metric, metric)
+            else:
+                metric_value = 0.0
+
+            hand_key = cell.hand_combination
+            if hasattr(cell, "hero_hand") and " vs " in hand_key:
+                hand_key = cell.hero_hand
+
+            display = format_metric_value(metric, metric_value)
+            cells.append({
+                "row": cell.row_index,
+                "col": cell.col_index,
+                "hand_key": hand_key,
+                "value": metric_value,
+                "status": status,
+                "display": display,
+            })
+
+            if on_cell_complete and callable(on_cell_complete):
+                try:
+                    on_cell_complete(cell.row_index, cell.col_index, metric_value, status)
+                except Exception as callback_error:
+                    self.logger.warning(f"Cell completion callback failed: {callback_error}")
+
+        # Ensure the payload is ordered by row and col
+        return sorted(cells, key=lambda c: (c["row"], c["col"]))
+
+    def _extract_metric_value(self, aggregated_metric, metric: str) -> float:
+        """Extract the requested metric value from an AggregatedMetric row."""
+        if metric == "WIN_LOSE_PROBABILITY":
+            return float(aggregated_metric.win_probability if aggregated_metric.win_probability is not None else aggregated_metric.equity or 0.0)
+        if metric == "EQUITY":
+            return float(aggregated_metric.equity if aggregated_metric.equity is not None else 0.0)
+        if metric == "EV":
+            return float(aggregated_metric.ev if aggregated_metric.ev is not None else aggregated_metric.jackpot_adjusted_ev or 0.0)
+        if metric == "EQR":
+            return float(aggregated_metric.jackpot_adjusted_ev if aggregated_metric.jackpot_adjusted_ev is not None else aggregated_metric.ev or 0.0)
+        return 0.0
 
     def get_matrix_from_database(
         self,
@@ -313,7 +299,7 @@ class BrowserDatabaseProvider:
             raise ValueError(f"Invalid metric: {metric}")
 
         actions = normalize_position_actions(position_actions or {})
-        active_players = sum(1 for action in actions.values() if action == "ALL_IN")
+        active_players = sum(1 for action in actions.values() if action != "FOLD")
 
         return {
             "position": position,

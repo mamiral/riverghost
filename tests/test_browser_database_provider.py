@@ -134,41 +134,92 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
     def test_get_matrix_payload_valid_context_queries_database(self, mock_db_class):
-        """Test that valid context triggers database query."""
-        # Mock database repository
+        """Test that valid context triggers aggregated run lookup."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        
-        mock_db.get_strategy_matrix_sync.return_value = {"AsKs": {"EV": 0.55}, "AhKh": {"EV": 0.52}}
-        
+
+        mock_db.find_matrix_sweep_run_by_contract.return_value = MagicMock(id=1)
+        mock_db.get_matrix_sweep_summary.return_value = {
+            "simulation": MagicMock(id=1),
+            "hand_matrix": MagicMock(id=2),
+            "matrix_cells": [
+                MagicMock(row_index=row, col_index=col, hand_combination="AA", aggregated_metric=MagicMock(equity=0.55, win_probability=None, ev=None, jackpot_adjusted_ev=None))
+                for row in range(13) for col in range(13)
+            ],
+            "aggregated_metrics": []
+        }
+
+        provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EQUITY",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+        )
+
+        assert mock_db.find_matrix_sweep_run_by_contract.called
+        assert mock_db.get_matrix_sweep_summary.called
+        assert payload["status"] == STATUS_AVAILABLE
+        assert len(payload["cells"]) == 169
+        assert payload["cells"][0]["status"] == STATUS_AVAILABLE
+
+    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    def test_get_matrix_payload_builds_canonical_scenario_contract(self, mock_db_class):
+        """Test that the provider builds the correct scenario contract for repository lookup."""
+        from hopilot.gto.aof_hand_matrix import build_matrix_keys
+
+        mock_db = MagicMock()
+        mock_db_class.return_value = mock_db
+        mock_db.find_matrix_sweep_run_by_contract.return_value = MagicMock(id=1)
+
+        mock_db.get_matrix_sweep_summary.return_value = {
+            "simulation": MagicMock(id=1),
+            "hand_matrix": MagicMock(id=2),
+            "matrix_cells": [
+                MagicMock(
+                    row_index=row,
+                    col_index=col,
+                    hand_combination=build_matrix_keys()[row][col],
+                    aggregated_metric=MagicMock(equity=0.55, win_probability=0.55, ev=0.75, jackpot_adjusted_ev=1.0)
+                )
+                for row in range(13) for col in range(13)
+            ],
+            "aggregated_metrics": []
+        }
+
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
             position="UTG",
             metric="EV",
             position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
         )
-        
-        # Verify database was called
-        assert mock_db.get_strategy_matrix_sync.called
+
+        assert payload["status"] == STATUS_AVAILABLE
+        assert len(payload["cells"]) == 169
+
+        called_contract = mock_db.find_matrix_sweep_run_by_contract.call_args[0][0]
+        assert called_contract["selected_position"] == "UTG"
+        assert called_contract["hero_action"] == "FOLD"
+        assert called_contract["position_actions"]["BTN"] == "ALL_IN"
+        assert called_contract["active_players"] == 1
+        assert called_contract["num_opponents"] == 1
+        assert called_contract["run_kind"] == "matrix_sweep"
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
     def test_get_matrix_payload_database_failure_returns_missing(self, mock_db_class):
-        """Test that database errors are caught and return graceful MISSING payload."""
-        # Mock database repository to raise exception
+        """Test that repository failures return graceful MISSING payload."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        mock_db.get_strategy_matrix_sync.side_effect = Exception("Database connection failed")
-        
+        mock_db.find_matrix_sweep_run_by_contract.side_effect = Exception("Database connection failed")
+
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
             position="UTG",
             metric="EV",
             position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN"},  # Avoid NO_CONTEST scenario
         )
-        
-        # Should return status payload with error message
-        assert len(payload["cells"]) == 169  # 13x13 matrix
-        assert all(cell["status"] == "MISSING" for cell in payload["cells"])
+
+        assert len(payload["cells"]) == 169
+        assert all(cell["status"] == STATUS_MISSING for cell in payload["cells"])
         assert "Database error" in payload.get("status_message", "")
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
@@ -176,16 +227,15 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         """Test that error payload includes context for debugging."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        mock_db.get_matrix_payload.side_effect = Exception("Query failed")
-        
+        mock_db.find_matrix_sweep_run_by_contract.side_effect = Exception("Query failed")
+
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
             position="BTN",
             metric="EQUITY",
             position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
         )
-        
-        # Verify context is preserved in error payload
+
         assert "context" in payload
         assert payload["context"]["position"] == "BTN"
         assert payload["context"]["metric"] == "EQUITY"
@@ -240,23 +290,17 @@ class TestBrowserDatabaseProviderCallbacks:
         """Test that get_matrix_payload works with database repository."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        
-        expected_payload = {
-            "context": {},
-            "cells": [],
-            "status_message": None,
-        }
-        mock_db.get_strategy_matrix_sync.return_value = {}
-        
+
+        mock_db.find_matrix_sweep_run_by_contract.return_value = None
+
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         provider.get_matrix_payload(
             position="UTG",
             metric="EV",
             position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN"},  # Avoid NO_CONTEST
         )
-        
-        # Verify database repository method was called
-        assert mock_db.get_strategy_matrix_sync.called
+
+        assert mock_db.find_matrix_sweep_run_by_contract.called
 
 
 class TestBrowserDatabaseProviderInitialization:
