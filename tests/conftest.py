@@ -268,6 +268,150 @@ def browser_scenario(db_session: Session):
 
 
 @pytest.fixture(scope="function")
+def seed_raw_run(db_session: Session):
+    """
+    Seed one simulation run plus raw GameState/Player rows inside a recorded run boundary.
+
+    Returns a callable so tests can vary scenario contract values, hand matrix linkage,
+    and the generated raw rows while reusing one deterministic setup path.
+    """
+    from datetime import datetime, timezone
+    from hopilot.models import Simulation, HandMatrix, GameState, Player
+
+    def _seed(
+        *,
+        run_name: str = "raw_run",
+        selected_position: str = "UTG",
+        hero_action: str = "FOLD",
+        position_actions: dict | None = None,
+        include_hand_matrix: bool = True,
+        game_states: list[dict] | None = None,
+    ):
+        normalized_actions = position_actions or {
+            "UTG": "FOLD",
+            "BTN": "ALL_IN",
+            "SB": "FOLD",
+            "BB": "FOLD",
+        }
+        active_players = [pos for pos, action in normalized_actions.items() if action != "FOLD"]
+        num_opponents = max(0, len([pos for pos in active_players if pos != selected_position]))
+
+        simulation = Simulation(
+            name=run_name,
+            parameters={
+                "selected_position": selected_position,
+                "hero_action": hero_action,
+                "position_actions": normalized_actions,
+                "active_players": active_players,
+                "num_opponents": num_opponents,
+                "pot_size": 20.0,
+                "bet_amount": 10.0,
+                "sims_per_combo": 120,
+                "num_simulations": 120,
+                "matrix_size": "13x13",
+                "game_type": "cash",
+                "run_kind": "matrix_sweep",
+            },
+            start_timestamp=datetime.now(timezone.utc),
+            end_timestamp=datetime.now(timezone.utc),
+        )
+        db_session.add(simulation)
+        db_session.flush()
+
+        matrix = None
+        if include_hand_matrix:
+            matrix = HandMatrix(simulation_id=simulation.id, matrix_size="13x13")
+            db_session.add(matrix)
+            db_session.flush()
+
+        rows = game_states or [
+            {
+                "round": "preflop",
+                "pot_size": 20.0,
+                "board_cards_str": "",
+                "outcome": "hero_win",
+                "players": [
+                    {
+                        "position": selected_position,
+                        "hole_cards": "AsAh",
+                        "stack_size": 100.0,
+                        "is_hero": True,
+                    },
+                    {
+                        "position": "BTN",
+                        "hole_cards": "KdKh",
+                        "stack_size": 100.0,
+                        "is_hero": False,
+                    },
+                ],
+            }
+        ]
+
+        created_states = []
+        for row in rows:
+            gs = GameState(
+                timestamp=datetime.now(timezone.utc),
+                round=row.get("round", "preflop"),
+                pot_size=row.get("pot_size", 20.0),
+                board_cards_str=row.get("board_cards_str", ""),
+                outcome=row.get("outcome"),
+            )
+            db_session.add(gs)
+            db_session.flush()
+
+            for player_data in row.get("players", []):
+                player = Player(
+                    game_state_id=gs.id,
+                    position=player_data["position"],
+                    hole_cards=player_data["hole_cards"],
+                    stack_size=player_data.get("stack_size", 100.0),
+                    is_hero=player_data.get("is_hero", False),
+                    hand_class=player_data.get("hand_class"),
+                    final_strength=player_data.get("final_strength"),
+                )
+                db_session.add(player)
+
+            created_states.append(gs)
+
+        if created_states:
+            simulation.parameters["raw_game_state_id_start"] = created_states[0].id
+            simulation.parameters["raw_game_state_id_end"] = created_states[-1].id
+        else:
+            simulation.parameters["raw_game_state_id_start"] = None
+            simulation.parameters["raw_game_state_id_end"] = None
+
+        db_session.add(simulation)
+        db_session.commit()
+
+        return {
+            "simulation": simulation,
+            "matrix": matrix,
+            "game_states": created_states,
+            "raw_start": simulation.parameters.get("raw_game_state_id_start"),
+            "raw_end": simulation.parameters.get("raw_game_state_id_end"),
+        }
+
+    return _seed
+
+
+@pytest.fixture(scope="function")
+def seed_raw_runs(seed_raw_run):
+    """Seed multiple raw runs and return their descriptors as a list."""
+
+    def _seed_many(run_specs: list[dict]):
+        seeded = []
+        for index, spec in enumerate(run_specs, start=1):
+            merged = {
+                "run_name": f"raw_run_{index}",
+                **spec,
+            }
+            seeded.append(seed_raw_run(**merged))
+        return seeded
+
+    return _seed_many
+
+
+@pytest.fixture(scope="function")
 def sample_game_state(factory: ModelFactory, db_session: Session, sample_simulation):
     """Create a sample game state with board cards."""
     state = factory.create_game_state(

@@ -13,7 +13,8 @@ Tests verify that all queries work together and produce consistent results.
 import pytest
 import sys
 import os
-from datetime import datetime
+import shutil
+from datetime import datetime, timezone
 
 # Add python directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
@@ -24,6 +25,16 @@ from hopilot.gto.convergence_analysis_queries import ConvergenceAnalysisQueries
 from hopilot.gto.jackpot_frequency_queries import JackpotFrequencyQueries
 from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
+from hopilot.gto.replay_query_service import ReplayQueryService
+from hopilot.gto.query_builder import PredefinedQueries
+from hopilot.models import (
+    AggregatedMetric,
+    GameState,
+    HandMatrix,
+    MatrixCell,
+    Player,
+    Simulation,
+)
 
 
 @pytest.fixture
@@ -127,6 +138,58 @@ def comprehensive_test_db():
         pass
 
 
+def _create_raw_run(
+    repo: DatabaseRepository,
+    run_name: str,
+    parameters: dict,
+    game_state_rows: list[dict],
+):
+    with repo.connection.session_scope() as session:
+        simulation = Simulation(
+            name=run_name,
+            parameters=dict(parameters),
+            start_timestamp=datetime.now(timezone.utc),
+            end_timestamp=datetime.now(timezone.utc),
+        )
+        session.add(simulation)
+        session.flush()
+
+        created_states = []
+        for row in game_state_rows:
+            game_state = GameState(
+                timestamp=datetime.now(timezone.utc),
+                round='preflop',
+                pot_size=row.get('pot_size', 20.0),
+                board_cards_str=row.get('board_cards_str', ''),
+                outcome=row.get('outcome'),
+            )
+            session.add(game_state)
+            session.flush()
+
+            for player_data in row.get('players', []):
+                session.add(Player(
+                    game_state_id=game_state.id,
+                    position=player_data['position'],
+                    hole_cards=player_data['hole_cards'],
+                    stack_size=player_data.get('stack_size', 100.0),
+                    is_hero=player_data.get('is_hero', False),
+                ))
+
+            created_states.append(game_state)
+
+        if created_states:
+            simulation.parameters['raw_game_state_id_start'] = created_states[0].id
+            simulation.parameters['raw_game_state_id_end'] = created_states[-1].id
+        else:
+            simulation.parameters['raw_game_state_id_start'] = None
+            simulation.parameters['raw_game_state_id_end'] = None
+
+        session.add(simulation)
+        session.commit()
+
+        return simulation, created_states
+
+
 class TestAnalyticalQueryIntegration:
     """Comprehensive integration tests for all analytical queries."""
 
@@ -204,6 +267,222 @@ class TestAnalyticalQueryIntegration:
                 assert 'equity_change' in cell_data
                 # Equity change should be reasonable (not all identical)
                 assert isinstance(cell_data['equity_change'], (int, float))
+
+    def test_query_raw_run_scopes_by_simulation_and_hand_matrix_boundary(self):
+        """Verify raw GameState rows are returned only for the selected run boundary."""
+        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run')
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir, exist_ok=True)
+        db_path = os.path.join(temp_dir, 'test.db')
+        db_url = f'sqlite:///{db_path}'
+
+        try:
+            conn = DatabaseConnection(db_url)
+            conn.create_tables()
+            repo = DatabaseRepository(db_url)
+            service = ReplayQueryService(repo)
+
+            parameters = {
+                "selected_position": "UTG",
+                "hero_action": "FOLD",
+                "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                "active_players": ["BTN"],
+                "num_opponents": 1,
+                "pot_size": 20.0,
+                "bet_amount": 10.0,
+                "sims_per_combo": 120,
+                "matrix_size": "13x13",
+                "game_type": "cash",
+                "run_kind": "matrix_sweep",
+            }
+
+            simulation, game_states = _create_raw_run(
+                repo,
+                run_name="raw_run_boundary",
+                parameters=parameters,
+                game_state_rows=[
+                    {
+                        'round': 'preflop',
+                        'pot_size': 20.0,
+                        'board_cards_str': 'AsAh,KsKd,QhJh',
+                        'outcome': 'hero_win',
+                        'players': [
+                            {'position': 'UTG', 'hole_cards': 'AsAh', 'stack_size': 100.0, 'is_hero': True},
+                            {'position': 'BTN', 'hole_cards': 'KdKh', 'stack_size': 100.0, 'is_hero': False},
+                        ],
+                    },
+                    {
+                        'round': 'flop',
+                        'pot_size': 30.0,
+                        'board_cards_str': 'AsAh,KsKd,QhJh,Ts9s',
+                        'outcome': 'hero_loss',
+                        'players': [
+                            {'position': 'UTG', 'hole_cards': 'AsAh', 'stack_size': 100.0, 'is_hero': True},
+                            {'position': 'BTN', 'hole_cards': 'KdKh', 'stack_size': 100.0, 'is_hero': False},
+                        ],
+                    },
+                ],
+            )
+
+            assert simulation.parameters['raw_game_state_id_start'] is not None
+            assert simulation.parameters['raw_game_state_id_end'] is not None
+
+            raw_result = service.query_raw_run(simulation_id=simulation.id)
+            assert raw_result['status'] == 'AVAILABLE'
+            assert len(raw_result['game_states']) == 2
+            assert [row['game_state_id'] for row in raw_result['game_states']] == [state.id for state in game_states]
+            assert raw_result['matched_runs'][0]['simulation_id'] == simulation.id
+
+            matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation.id)
+            matrix_result = service.query_raw_run(hand_matrix_id=matrix_id)
+            assert matrix_result['status'] == 'AVAILABLE'
+            assert matrix_result['matched_runs'][0]['simulation_id'] == simulation.id
+            assert len(matrix_result['game_states']) == 2
+
+        finally:
+            try:
+                if 'conn' in locals():
+                    conn.close()
+                if os.path.exists(db_path):
+                    os.remove(db_path)
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
+
+    def test_query_raw_run_exact_scenario_contract_unique_match(self):
+        """Verify exact scenario-contract raw run selection returns only the unique matching run."""
+        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run_contract')
+        os.makedirs(temp_dir, exist_ok=True)
+        db_path = os.path.join(temp_dir, 'test.db')
+        db_url = f'sqlite:///{db_path}'
+
+        try:
+            conn = DatabaseConnection(db_url)
+            conn.create_tables()
+            repo = DatabaseRepository(db_url)
+            service = ReplayQueryService(repo)
+
+            parameters = {
+                "selected_position": "UTG",
+                "hero_action": "FOLD",
+                "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                "active_players": ["BTN"],
+                "num_opponents": 1,
+                "pot_size": 20.0,
+                "bet_amount": 10.0,
+                "sims_per_combo": 120,
+                "matrix_size": "13x13",
+                "game_type": "cash",
+                "run_kind": "matrix_sweep",
+            }
+
+            simulation, game_states = _create_raw_run(
+                repo,
+                run_name="raw_run_contract",
+                parameters=parameters,
+                game_state_rows=[
+                    {
+                        'round': 'preflop',
+                        'pot_size': 20.0,
+                        'board_cards_str': 'AsAh,KsKd',
+                        'outcome': 'hero_win',
+                        'players': [
+                            {'position': 'UTG', 'hole_cards': 'AsAh', 'stack_size': 100.0, 'is_hero': True},
+                            {'position': 'BTN', 'hole_cards': 'KdKh', 'stack_size': 100.0, 'is_hero': False},
+                        ],
+                    }
+                ],
+            )
+
+            matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation.id)
+            with repo.connection.session_scope() as session:
+                cell = MatrixCell(matrix_id=matrix_id, row_index=0, col_index=0, hand_combination="AA vs KK")
+                session.add(cell)
+                session.flush()
+                session.add(AggregatedMetric(
+                    cell_id=cell.id,
+                    equity=0.55,
+                    jackpot_adjusted_ev=0.55,
+                    convergence_status="AVAILABLE",
+                    last_updated=datetime.now(timezone.utc),
+                ))
+                session.commit()
+
+            scenario_contract = dict(parameters)
+            scenario_contract["raw_game_state_id_start"] = simulation.parameters["raw_game_state_id_start"]
+            scenario_contract["raw_game_state_id_end"] = simulation.parameters["raw_game_state_id_end"]
+
+            raw_result = service.query_raw_run(scenario_contract=scenario_contract)
+            assert raw_result['status'] == 'AVAILABLE'
+            assert len(raw_result['game_states']) == 1
+            assert raw_result['matched_runs'][0]['simulation_id'] == simulation.id
+
+        finally:
+            try:
+                if 'conn' in locals():
+                    conn.close()
+                if os.path.exists(db_path):
+                    os.remove(db_path)
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
+
+    def test_query_raw_run_with_missing_boundaries_returns_empty_scope(self):
+        """Verify missing raw boundaries produce EMPTY_SCOPE instead of bad data."""
+        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run_empty')
+        os.makedirs(temp_dir, exist_ok=True)
+        db_path = os.path.join(temp_dir, 'test.db')
+        db_url = f'sqlite:///{db_path}'
+
+        try:
+            conn = DatabaseConnection(db_url)
+            conn.create_tables()
+            repo = DatabaseRepository(db_url)
+            service = ReplayQueryService(repo)
+
+            parameters = {
+                "selected_position": "UTG",
+                "hero_action": "FOLD",
+                "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+                "active_players": ["BTN"],
+                "num_opponents": 1,
+                "pot_size": 20.0,
+                "bet_amount": 10.0,
+                "sims_per_combo": 120,
+                "matrix_size": "13x13",
+                "game_type": "cash",
+                "run_kind": "matrix_sweep",
+                "raw_game_state_id_start": None,
+                "raw_game_state_id_end": None,
+            }
+
+            with repo.connection.session_scope() as session:
+                simulation = Simulation(
+                    name="raw_run_missing_boundaries",
+                    parameters=dict(parameters),
+                    start_timestamp=datetime.now(timezone.utc),
+                    end_timestamp=datetime.now(timezone.utc),
+                )
+                session.add(simulation)
+                session.flush()
+                simulation_id = simulation.id
+                session.commit()
+
+            raw_result = service.query_raw_run(simulation_id=simulation_id)
+            assert raw_result['status'] == 'EMPTY_SCOPE'
+            assert raw_result['game_states'] == []
+            assert raw_result['matched_runs'][0]['simulation_id'] == simulation_id
+
+        finally:
+            try:
+                if 'conn' in locals():
+                    conn.close()
+                if os.path.exists(db_path):
+                    os.remove(db_path)
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
 
     def test_analytical_query_performance_under_load(self, comprehensive_test_db):
         """Test that analytical queries perform well under load."""

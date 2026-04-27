@@ -1008,14 +1008,18 @@ class DatabaseRepository:
     # PHASE 3: WRITE METHODS for Precompute System
     # ========================================================================
 
-    def create_simulation(self, parameters: str) -> int:
+    def create_simulation(self, parameters: Any) -> int:
         """Create a new Simulation record and return its ID."""
+        if isinstance(parameters, str):
+            import json
+            parameters = json.loads(parameters)
+
         with self.connection.session_scope() as session:
             # Generate name from timestamp
             sim_name = f"sim_{datetime.now(timezone.utc).isoformat()}"
             sim = Simulation(
                 name=sim_name,
-                parameters=parameters,
+                parameters=dict(parameters),
                 start_timestamp=datetime.now(timezone.utc)
             )
             session.add(sim)
@@ -1200,6 +1204,14 @@ class DatabaseRepository:
             )
             return simulation
 
+    def get_simulation_for_hand_matrix(self, hand_matrix_id: int) -> Optional[Simulation]:
+        """Return the simulation for a given hand matrix ID."""
+        with self.connection.session_scope() as session:
+            matrix = session.query(HandMatrix).filter(HandMatrix.id == hand_matrix_id).first()
+            if matrix is None:
+                return None
+            return matrix.simulation
+
     def get_or_create_hand_matrix_for_simulation(
         self,
         simulation_id: int,
@@ -1316,6 +1328,149 @@ class DatabaseRepository:
                 return candidate
 
             return None
+
+    def list_matrix_sweep_runs_by_contract(self, scenario_contract: Dict[str, Any]) -> List[Simulation]:
+        """Return all completed runs matching the canonical scenario contract."""
+        normalized_contract = normalize_scenario_contract(scenario_contract)
+        contract_keys = [
+            "selected_position",
+            "hero_action",
+            "position_actions",
+            "active_players",
+            "num_opponents",
+            "pot_size",
+            "bet_amount",
+            "sims_per_combo",
+            "matrix_size",
+            "game_type",
+            "run_kind",
+        ]
+
+        with self.connection.session_scope() as session:
+            candidates = (
+                session.query(Simulation)
+                .filter(Simulation.parameters["run_kind"].as_string() == normalized_contract["run_kind"])
+                .order_by(Simulation.end_timestamp.desc().nulls_last(), Simulation.id.desc())
+                .all()
+            )
+
+            matches: List[Simulation] = []
+            for candidate in candidates:
+                try:
+                    parameters = normalize_scenario_contract(candidate.parameters)
+                except Exception:
+                    continue
+
+                if not all(parameters.get(key) == normalized_contract.get(key) for key in contract_keys):
+                    continue
+
+                if candidate.end_timestamp is None:
+                    continue
+
+                aggregated_exists = (
+                    session.query(AggregatedMetric.id)
+                    .join(MatrixCell, AggregatedMetric.cell_id == MatrixCell.id)
+                    .join(HandMatrix, MatrixCell.matrix_id == HandMatrix.id)
+                    .filter(HandMatrix.simulation_id == candidate.id)
+                    .first()
+                )
+                if aggregated_exists is None:
+                    continue
+
+                matches.append(candidate)
+
+            return matches
+
+    def resolve_scenario_run_selection(
+        self,
+        scenario_contract: Dict[str, Any],
+        explicit_run_id: Optional[int] = None,
+    ) -> tuple[Optional[Simulation], List[Simulation]]:
+        """Resolve the run to use for scenario-contract queries."""
+        matches = self.list_matrix_sweep_runs_by_contract(scenario_contract)
+        if explicit_run_id is not None:
+            selected = next((run for run in matches if run.id == explicit_run_id), None)
+            return selected, matches
+
+        if len(matches) == 1:
+            return matches[0], matches
+
+        return None, matches
+
+    def is_run_boundary_readable(self, simulation: Simulation) -> bool:
+        """Return True when the simulation has a valid raw run boundary."""
+        try:
+            parameters = normalize_scenario_contract(simulation.parameters)
+        except Exception:
+            return False
+
+        return (
+            parameters.get("raw_game_state_id_start") is not None
+            and parameters.get("raw_game_state_id_end") is not None
+        )
+
+    def _serialize_run_reference(self, simulation: Simulation) -> Dict[str, Any]:
+        return {
+            "simulation_id": simulation.id,
+            "name": simulation.name,
+            "raw_game_state_id_start": simulation.parameters.get("raw_game_state_id_start"),
+            "raw_game_state_id_end": simulation.parameters.get("raw_game_state_id_end"),
+        }
+
+    def build_empty_scope_result(
+        self,
+        status: str,
+        status_message: str,
+        matched_runs: Optional[List[Simulation]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": status,
+            "status_message": status_message,
+            "matched_runs": [self._serialize_run_reference(run) for run in matched_runs] if matched_runs else [],
+            "game_states": [],
+        }
+
+    def get_run_raw_projection(
+        self,
+        raw_game_state_id_start: int,
+        raw_game_state_id_end: int,
+    ) -> List[Dict[str, Any]]:
+        """Return raw GameState views ordered by GameState.id and hero-hole extraction."""
+        with self.connection.session_scope() as session:
+            game_states = (
+                session.query(GameState)
+                .options(selectinload(GameState.players))
+                .filter(
+                    GameState.id >= raw_game_state_id_start,
+                    GameState.id <= raw_game_state_id_end,
+                )
+                .order_by(GameState.id.asc())
+                .all()
+            )
+
+            projection = []
+            for game_state in game_states:
+                hero_player = next((player for player in game_state.players if player.is_hero), None)
+                projection.append({
+                    "game_state_id": game_state.id,
+                    "timestamp": game_state.timestamp.isoformat() if game_state.timestamp else None,
+                    "round": game_state.round,
+                    "pot_size": float(game_state.pot_size) if game_state.pot_size is not None else 0.0,
+                    "board_cards_str": game_state.board_cards_str or "",
+                    "outcome": game_state.outcome,
+                    "hero_hole_cards": hero_player.hole_cards if hero_player else None,
+                    "players": [
+                        {
+                            "player_id": player.id,
+                            "position": player.position,
+                            "hole_cards": player.hole_cards,
+                            "stack_size": float(player.stack_size) if player.stack_size is not None else 0.0,
+                            "is_hero": bool(player.is_hero),
+                        }
+                        for player in game_state.players
+                    ],
+                })
+            return projection
 
     def get_matrix_sweep_summary(self, simulation_id: int) -> Optional[Dict[str, Any]]:
         """Return one run-scoped projection of simulation, matrix, cells, and metrics."""

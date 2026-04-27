@@ -24,6 +24,8 @@ from hopilot.models import (
     Bet,
     Jackpot
 )
+from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.replay_query_service import ReplayQueryService
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 
 logger = get_logger(__name__)
@@ -336,3 +338,21 @@ class PredefinedQueries:
             .add_sort('avg_jackpot_ev', 'desc')
             .execute()
         )
+
+    async def get_run_scoped_raw_game_states(
+        self,
+        scenario_contract: Optional[Dict[str, Any]] = None,
+        explicit_run_id: Optional[int] = None,
+        simulation_id: Optional[int] = None,
+        hand_matrix_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return raw GameState projections for a persisted run scope."""
+        repository = DatabaseRepository(self.database_url)
+        service = ReplayQueryService(repository)
+        result = service.query_raw_run(
+            scenario_contract=scenario_contract,
+            explicit_run_id=explicit_run_id,
+            simulation_id=simulation_id,
+            hand_matrix_id=hand_matrix_id,
+        )
+        return result.get("game_states", [])

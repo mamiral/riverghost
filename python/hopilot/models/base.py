@@ -5,7 +5,7 @@ Provides common functionality for all database models including
 timestamps, serialization, and validation.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from sqlalchemy import Column, DateTime, Integer, MetaData
@@ -37,6 +37,7 @@ class BaseModel(Base):
 
     Provides:
     - Auto-incrementing primary key
+    - Timestamps for creation and update
     - Serialization methods
     - Validation hooks
     """
@@ -44,6 +45,8 @@ class BaseModel(Base):
     __abstract__ = True
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     def __init__(self, **kwargs):
         """Initialize model with validation."""

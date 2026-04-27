@@ -9,6 +9,7 @@ PHASE 5: P0 - CRITICAL
 - Tests simulation and hand matrix lifecycle
 """
 
+import json
 import os
 import tempfile
 import pytest
@@ -71,7 +72,7 @@ class TestDatabaseRepositoryWrites:
         with db_conn.session_scope() as session:
             sim = session.query(Simulation).filter_by(id=simulation_id).first()
             assert sim is not None
-            assert sim.parameters == test_parameters
+            assert sim.parameters == json.loads(test_parameters)
 
     def test_create_simulation_parameters_persisted(self, test_db):
         """
@@ -92,9 +93,8 @@ class TestDatabaseRepositoryWrites:
         db_conn = DatabaseConnection(test_db)
         with db_conn.session_scope() as session:
             sim = session.query(Simulation).filter_by(id=simulation_id).first()
-            assert sim.parameters == test_parameters
-            # Verify it's the exact same string, not re-encoded
-            assert '"num_simulations": 5000' in sim.parameters
+            assert sim.parameters == json.loads(test_parameters)
+            assert sim.parameters['num_simulations'] == 5000
 
     def test_create_hand_matrix_linked_to_simulation(self, test_db):
         """

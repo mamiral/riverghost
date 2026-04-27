@@ -1,10 +1,20 @@
 import os
 import tempfile
+from datetime import datetime, timezone
 
 import pytest
 
 from hopilot.database import DatabaseConnection
 from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.matrix_sweep_contract import build_run_parameters
+from hopilot.models import (
+    AggregatedMetric,
+    GameState,
+    HandMatrix,
+    MatrixCell,
+    Player,
+    Simulation,
+)
 
 
 class TestDatabaseRepositoryPrecomputePersistence:
@@ -105,3 +115,176 @@ class TestDatabaseRepositoryPrecomputePersistence:
 
         links = repo.get_scenario_run_links_for_job(job_session_id)
         assert [link.scenario_key for link in links] == ["first", "second", "third"]
+
+    def test_list_matrix_sweep_runs_by_contract_returns_matching_runs(self, test_db):
+        repo = DatabaseRepository(test_db)
+        scenario_contract = {
+            "selected_position": "UTG",
+            "hero_action": "FOLD",
+            "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+            "active_players": ["BTN"],
+            "num_opponents": 1,
+            "pot_size": 20.0,
+            "bet_amount": 10.0,
+            "sims_per_combo": 120,
+            "matrix_size": "13x13",
+            "game_type": "cash",
+            "run_kind": "matrix_sweep",
+            "raw_game_state_id_start": 1,
+            "raw_game_state_id_end": 2,
+        }
+        parameters = build_run_parameters(scenario_contract, raw_game_state_id_start=1)
+
+        with repo.connection.session_scope() as session:
+            simulation = Simulation(
+                name="list-matching-run",
+                parameters=parameters,
+                start_timestamp=datetime.now(timezone.utc),
+                end_timestamp=datetime.now(timezone.utc),
+            )
+            session.add(simulation)
+            session.flush()
+            simulation_id = simulation.id
+
+        matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation_id)
+        with repo.connection.session_scope() as session:
+            cell = MatrixCell(
+                matrix_id=matrix_id,
+                row_index=0,
+                col_index=0,
+                hand_combination="AA vs KK",
+            )
+            session.add(cell)
+            session.flush()
+
+            session.add(AggregatedMetric(
+                cell_id=cell.id,
+                equity=0.42,
+                jackpot_adjusted_ev=0.42,
+                convergence_status="AVAILABLE",
+                last_updated=datetime.now(timezone.utc),
+            ))
+
+        result = repo.list_matrix_sweep_runs_by_contract(scenario_contract)
+        assert len(result) == 1
+        assert result[0].id == simulation.id
+
+    def test_resolve_scenario_run_selection_returns_none_for_ambiguous_matches(self, test_db):
+        repo = DatabaseRepository(test_db)
+        scenario_contract = {
+            "selected_position": "UTG",
+            "hero_action": "FOLD",
+            "position_actions": {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+            "active_players": ["BTN"],
+            "num_opponents": 1,
+            "pot_size": 20.0,
+            "bet_amount": 10.0,
+            "sims_per_combo": 120,
+            "matrix_size": "13x13",
+            "game_type": "cash",
+            "run_kind": "matrix_sweep",
+            "raw_game_state_id_start": 1,
+            "raw_game_state_id_end": 2,
+        }
+        parameters = build_run_parameters(scenario_contract, raw_game_state_id_start=1)
+
+        simulation_ids = []
+        with repo.connection.session_scope() as session:
+            for idx in range(2):
+                simulation = Simulation(
+                    name=f"ambiguous-run-{idx}",
+                    parameters=parameters,
+                    start_timestamp=datetime.now(timezone.utc),
+                    end_timestamp=datetime.now(timezone.utc),
+                )
+                session.add(simulation)
+                session.flush()
+                simulation_ids.append(simulation.id)
+
+        for idx, simulation_id in enumerate(simulation_ids):
+            matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation_id)
+            with repo.connection.session_scope() as session:
+                cell = MatrixCell(
+                    matrix_id=matrix_id,
+                    row_index=0,
+                    col_index=0,
+                    hand_combination="AA vs KK",
+                )
+                session.add(cell)
+                session.flush()
+                session.add(AggregatedMetric(
+                    cell_id=cell.id,
+                    equity=0.5 + 0.01 * idx,
+                    jackpot_adjusted_ev=0.5 + 0.01 * idx,
+                    convergence_status="AVAILABLE",
+                    last_updated=datetime.now(timezone.utc),
+                ))
+
+        selected, matches = repo.resolve_scenario_run_selection(scenario_contract)
+        assert selected is None
+        assert len(matches) == 2
+
+        explicit_selected, explicit_matches = repo.resolve_scenario_run_selection(
+            scenario_contract,
+            explicit_run_id=matches[0].id,
+        )
+        assert explicit_selected is not None
+        assert explicit_selected.id == matches[0].id
+        assert len(explicit_matches) == 2
+
+    def test_get_run_raw_projection_returns_hero_hole_cards_and_ascending_order(self, test_db):
+        repo = DatabaseRepository(test_db)
+        with repo.connection.session_scope() as session:
+            game_state_1 = GameState(
+                timestamp=datetime.now(timezone.utc),
+                round="preflop",
+                pot_size=20.0,
+                board_cards_str="As,Ks,Qd",
+                outcome="hero_win",
+            )
+            session.add(game_state_1)
+            session.flush()
+            session.add(Player(
+                game_state_id=game_state_1.id,
+                position="UTG",
+                hole_cards="AsAh",
+                stack_size=100.0,
+                is_hero=True,
+            ))
+            session.add(Player(
+                game_state_id=game_state_1.id,
+                position="BTN",
+                hole_cards="KdKh",
+                stack_size=100.0,
+                is_hero=False,
+            ))
+
+            game_state_2 = GameState(
+                timestamp=datetime.now(timezone.utc),
+                round="preflop",
+                pot_size=30.0,
+                board_cards_str="",
+                outcome="villain_win",
+            )
+            session.add(game_state_2)
+            session.flush()
+            session.add(Player(
+                game_state_id=game_state_2.id,
+                position="UTG",
+                hole_cards="QsQh",
+                stack_size=100.0,
+                is_hero=True,
+            ))
+            session.add(Player(
+                game_state_id=game_state_2.id,
+                position="BTN",
+                hole_cards="JhJd",
+                stack_size=100.0,
+                is_hero=False,
+            ))
+
+        projection = repo.get_run_raw_projection(game_state_1.id, game_state_2.id)
+        assert len(projection) == 2
+        assert projection[0]["game_state_id"] == game_state_1.id
+        assert projection[0]["hero_hole_cards"] == "AsAh"
+        assert projection[1]["game_state_id"] == game_state_2.id

@@ -1,10 +1,12 @@
 """Simulation model for poker analysis database."""
 
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy import Column, DateTime, String, Text
 from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.ext.mutable import MutableDict
 
 from hopilot.models.base import BaseModel
 
@@ -23,6 +25,14 @@ MATRIX_SWEEP_REQUIRED_PARAMS = [
 ]
 
 
+class SimulationParameters(MutableDict):
+    @classmethod
+    def coerce(cls, key, value):
+        if isinstance(value, str):
+            value = json.loads(value)
+        return super().coerce(key, value)
+
+
 class Simulation(BaseModel):
     """
     Represents a poker simulation run.
@@ -36,7 +46,7 @@ class Simulation(BaseModel):
     name = Column(String(255), unique=True, nullable=False, index=True)
     start_timestamp = Column(DateTime, nullable=False)
     end_timestamp = Column(DateTime, nullable=True)
-    parameters = Column(JSON, nullable=False)
+    parameters = Column(SimulationParameters.as_mutable(JSON), nullable=False)
 
     def __init__(self, **kwargs):
         """Initialize simulation with validation."""

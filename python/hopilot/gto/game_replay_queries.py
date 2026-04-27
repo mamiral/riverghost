@@ -16,7 +16,9 @@ from sqlalchemy.orm import Session, joinedload
 from hopilot.database import DatabaseConnection
 from hopilot.models import GameState, Player, Bet, BoardCard, HandMatrix, MatrixCell
 from hopilot.performance_monitor import PerformanceMonitor
+from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.query_cache import cached_query
+from hopilot.gto.replay_query_service import ReplayQueryService
 
 logger = logging.getLogger(__name__)
 
@@ -56,32 +58,24 @@ class GameReplayQueryEngine:
             Complete game sequence with chronological events
         """
         with self.performance_monitor.track_operation("replay_game_sequence"):
-            with self.db_connection.session_scope() as session:
-                # Get the base GameState with relationships
-                game_state = session.query(GameState).options(
-                    joinedload(GameState.matrix_cell),
-                    joinedload(GameState.players),
-                    joinedload(GameState.bets),
-                    joinedload(GameState.board_cards),
-                    joinedload(GameState.jackpots)
-                ).filter(GameState.id == game_state_id).first()
+            service = ReplayQueryService(DatabaseRepository(self.database_url))
+            result = service.replay_game_state(game_state_id)
 
-                if not game_state:
+            if result.get("status") != "AVAILABLE":
+                if result.get("status") == "NOT_FOUND":
                     logger.warning(f"GameState {game_state_id} not found")
                     return None
+                return None
 
-                # Build chronological sequence
-                sequence = self._build_chronological_sequence(session, game_state)
-
-                return {
-                    'game_state_id': game_state_id,
-                    'hand_combination': game_state.matrix_cell.hand_combination if game_state.matrix_cell else None,
-                    'final_outcome': game_state.outcome,
-                    'final_pot_size': float(game_state.pot_size),
-                    'sequence': sequence,
-                    'total_events': len(sequence),
-                    'timestamp': game_state.timestamp.isoformat() if game_state.timestamp else None
-                }
+            return {
+                'game_state_id': result['game_state_id'],
+                'hand_combination': result.get('hand_combination'),
+                'final_outcome': result.get('outcome'),
+                'final_pot_size': result.get('pot_size'),
+                'sequence': result.get('sequence', []),
+                'total_events': len(result.get('sequence', [])),
+                'timestamp': result.get('timestamp')
+            }
 
     def replay_games_by_hand_combination(
         self,
@@ -156,8 +150,7 @@ class GameReplayQueryEngine:
                 # Count events by type
                 bet_count = session.query(func.count(Bet.id)).filter(Bet.game_state_id == game_state_id).scalar()
                 player_count = session.query(func.count(Player.id)).filter(Player.game_state_id == game_state_id).scalar()
-                # Each game state has one set of board cards (5 cards: flop3 + turn + river)
-                board_card_count = 5 if game_state.board_cards_id else 0
+                board_card_count = len(self._parse_board_cards(game_state.board_cards_str))
 
                 return {
                     'game_state_id': game_state_id,
@@ -171,6 +164,11 @@ class GameReplayQueryEngine:
                     },
                     'timestamp': game_state.timestamp.isoformat() if game_state.timestamp else None
                 }
+
+    def _parse_board_cards(self, board_cards_str: Optional[str]) -> List[str]:
+        if not board_cards_str:
+            return []
+        return [card.strip() for card in board_cards_str.split(',') if card.strip()]
 
     def _build_chronological_sequence(
         self,
