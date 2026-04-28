@@ -17,11 +17,9 @@ from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
 
 
 @pytest.fixture
-def test_db():
+def test_db(tmp_path):
     """Create a test database for jackpot frequency testing."""
-    temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db')
-    os.makedirs(temp_dir, exist_ok=True)
-    db_path = os.path.join(temp_dir, 'test.db')
+    db_path = tmp_path / 'test.db'
     db_url = f'sqlite:///{db_path}'
 
     conn = DatabaseConnection(db_url)
@@ -32,9 +30,6 @@ def test_db():
     # Cleanup
     try:
         conn.close()
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        os.rmdir(temp_dir)
     except Exception:
         pass
 
@@ -50,8 +45,8 @@ def populated_test_db_with_jackpots(test_db):
     sim_id = repo.create_simulation(sim_params)
     matrix_id = repo.create_hand_matrix(sim_id)
 
-    # Create MatrixCell
-    hand_combo = "AA vs AK"
+    # Create MatrixCell for an AKs hero hand coordinate.
+    hand_combo = "AKs vs AA"
     cell_id = derivation_engine._ensure_matrix_cell_exists(matrix_id, 0, 1, hand_combo)
 
     # Create game states with some jackpots
@@ -68,21 +63,30 @@ def populated_test_db_with_jackpots(test_db):
         }
         gs_id = repo.create_game_state(gs_data)
 
-        # Create a player for this game state
-        player_data = {
+        # Create a hero player for this game state so matrix mapping works.
+        hero_player_data = {
             'game_state_id': gs_id,
-            'position': 'hero' if i % 2 == 0 else 'villain',
-            'hole_cards': 'AsAh' if i % 2 == 0 else 'AsKd',  # rank+suit+rank+suit format
+            'position': 'hero',
+            'hole_cards': 'AsKs',
             'stack_size': 10000,
-            'is_hero': i % 2 == 0
+            'is_hero': True
         }
-        player_id = repo.create_player(player_data)
+        hero_player_id = repo.create_player(hero_player_data)
+
+        # Create a second player for realism.
+        repo.create_player({
+            'game_state_id': gs_id,
+            'position': 'villain',
+            'hole_cards': 'KsKd',
+            'stack_size': 10000,
+            'is_hero': False
+        })
 
         # Create jackpots for 5% of games
         if i % 20 == 0:  # Every 20th game has a jackpot
             jackpot_data = {
                 'game_state_id': gs_id,
-                'player_id': player_id,
+                'player_id': hero_player_id,
                 'jackpot_type': 'ROYAL_FLUSH' if i % 40 == 0 else 'STRAIGHT_FLUSH',
                 'payout_amount': 5000 if i % 40 == 0 else 1000,
                 'qualifying_cards': ['As', 'Ks', 'Qs', 'Js', 'Ts'] if i % 40 == 0 else ['As', 'Ks', 'Qs', 'Js', '9s'],
@@ -252,11 +256,6 @@ class TestJackpotFrequencyQueries:
         sim_id = repo.create_simulation(sim_params)
         matrix_id = repo.create_hand_matrix(sim_id)
 
-        board_id = repo.create_board_card({
-            'flop1': '2s', 'flop2': '3s', 'flop3': '4s',
-            'turn': '5s', 'river': '6s'
-        })
-
         hand_combo = "22 vs 33"
         cell_id = derivation_engine._ensure_matrix_cell_exists(matrix_id, 0, 1, hand_combo)
 
@@ -265,11 +264,18 @@ class TestJackpotFrequencyQueries:
             gs_data = {
                 'cell_id': cell_id,
                 'pot_size': 100,
-                'board_cards_id': board_id,
+                'board_cards_str': '2s,3s,4s,5s,6s',
                 'round': 'preflop',
                 'outcome': 'loss'
             }
-            repo.create_game_state(gs_data)
+            gs_id = repo.create_game_state(gs_data)
+            repo.create_player({
+                'game_state_id': gs_id,
+                'position': 'hero',
+                'hole_cards': 'AsKs',
+                'stack_size': 1000,
+                'is_hero': True
+            })
 
         result = engine.get_jackpot_frequency_analysis(matrix_id, min_samples=50)
 

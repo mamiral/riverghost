@@ -19,6 +19,15 @@ from hopilot.gto.aof_precompute_runner import GuiRunState
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
 from hopilot.logging_config import get_logger
 
+
+@pytest.fixture(autouse=True)
+def pygame_display():
+    """Initialize and clean up pygame display for GUI integration tests."""
+    pygame.init()
+    pygame.display.set_mode((800, 600))
+    yield
+    pygame.quit()
+
 logger = get_logger(__name__)
 
 

@@ -14,12 +14,16 @@ from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.replay_query_service import ReplayQueryService
 from hopilot.models import GameState, Player, Simulation, HandMatrix, MatrixCell
 
-def test_game_replay_queries():
+def _tmp_db_path(tmp_path, prefix: str):
+    db_dir = tmp_path / prefix
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return db_dir / 'test.db'
+
+def test_game_replay_queries(tmp_path):
     """Test the game replay query engine."""
 
     # Create temp DB
-    temp_dir = tempfile.mkdtemp(prefix='test_replay_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+    db_path = _tmp_db_path(tmp_path, 'test_replay_db_')
     db_url = f'sqlite:///{db_path}'
 
     try:
@@ -97,9 +101,8 @@ def test_game_replay_queries():
             pass  # Ignore cleanup errors in tests
 
 
-def test_replay_query_service_statuses():
-    temp_dir = tempfile.mkdtemp(prefix='test_replay_status_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+def test_replay_query_service_statuses(tmp_path):
+    db_path = _tmp_db_path(tmp_path, 'test_replay_status_db_')
     db_url = f'sqlite:///{db_path}'
 
     try:
@@ -169,9 +172,8 @@ def test_replay_query_service_statuses():
             pass
 
 
-def test_replay_query_service_empty_board_cards_str():
-    temp_dir = tempfile.mkdtemp(prefix='test_replay_empty_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+def test_replay_query_service_empty_board_cards_str(tmp_path):
+    db_path = _tmp_db_path(tmp_path, 'test_replay_empty_db_')
     db_url = f'sqlite:///{db_path}'
 
     try:
@@ -222,9 +224,8 @@ def test_replay_query_service_empty_board_cards_str():
             pass
 
 
-def test_game_replay_engine_delegates_to_truthful_service():
-    temp_dir = tempfile.mkdtemp(prefix='test_replay_delegate_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+def test_game_replay_engine_delegates_to_truthful_service(tmp_path):
+    db_path = _tmp_db_path(tmp_path, 'test_replay_delegate_db_')
     db_url = f'sqlite:///{db_path}'
 
     try:
@@ -276,9 +277,8 @@ def test_game_replay_engine_delegates_to_truthful_service():
             pass
 
 
-def test_replay_games_by_hand_combination_does_not_require_cell_id():
-    temp_dir = tempfile.mkdtemp(prefix='test_replay_hand_combination_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+def test_replay_games_by_hand_combination_does_not_require_cell_id(tmp_path):
+    db_path = _tmp_db_path(tmp_path, 'test_replay_hand_combination_db_')
     db_url = f'sqlite:///{db_path}'
 
     try:
@@ -359,9 +359,8 @@ def test_replay_games_by_hand_combination_does_not_require_cell_id():
             pass
 
 
-def test_replay_query_engine_does_not_expose_legacy_schema_fields():
-    temp_dir = tempfile.mkdtemp(prefix='test_replay_legacy_fields_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+def test_replay_query_engine_does_not_expose_legacy_schema_fields(tmp_path):
+    db_path = _tmp_db_path(tmp_path, 'test_replay_legacy_fields_db_')
     db_url = f'sqlite:///{db_path}'
 
     try:

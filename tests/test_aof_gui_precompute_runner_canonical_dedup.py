@@ -1,9 +1,12 @@
 import os
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
+from hopilot.gto.aof_hand_matrix import iter_canonical_matrix_cells
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
+from hopilot.gto.matrix_sweep_contract import build_run_parameters, mark_raw_sweep_complete
 
 
 def test_canonical_dedup_reuses_persisted_cells_with_request_local_context(tmp_path):
@@ -14,41 +17,53 @@ def test_canonical_dedup_reuses_persisted_cells_with_request_local_context(tmp_p
     
     # Populate database with test data for canonical scenario
     repo = provider.database_repository
-    session = repo.session
-    
-    # Create simulation and matrix
-    sim_id = repo.create_simulation('{"num_simulations": 1000, "game_type": "NLHE"}')
-    matrix_id = repo.create_hand_matrix(sim_id)
-    
-    # Insert test data for AA hand
     from hopilot.models import MatrixCell, AggregatedMetric
-    aa_cell = MatrixCell(
-        matrix_id=matrix_id,
-        row_idx=0,  # AA is typically at (0,0)
-        col_idx=0,
-        hand_combination="AA"
-    )
-    session.add(aa_cell)
-    session.flush()  # Get the cell ID
-    
-    # Add metrics for EV
-    ev_metric = AggregatedMetric(
-        cell_id=aa_cell.id,
-        metric_type="EV",
-        value=0.75,
-        sample_count=1000
-    )
-    session.add(ev_metric)
-    
-    # Add metrics for WIN_LOSE_PROBABILITY  
-    wlp_metric = AggregatedMetric(
-        cell_id=aa_cell.id,
-        metric_type="WIN_LOSE_PROBABILITY",
-        value=0.82,
-        sample_count=1000
-    )
-    session.add(wlp_metric)
-    session.commit()
+    with repo.connection.session_scope() as session:
+        # Create a completed matrix sweep simulation with scenario contract metadata
+        contract = build_run_parameters({
+            "selected_position": "UTG",
+            "hero_action": "ALL_IN",
+            "position_actions": {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
+            "active_players": ["UTG", "BTN"],
+            "num_opponents": 1,
+            "pot_size": 20.0,
+            "bet_amount": 10.0,
+            "sims_per_combo": 120,
+            "matrix_size": "13x13",
+            "game_type": "cash",
+            "run_kind": "matrix_sweep",
+        })
+        sim_id = repo.create_matrix_sweep_simulation(contract)
+        matrix_id = repo.create_hand_matrix(sim_id)
+
+        # Insert a full canonical matrix so the provider can build a complete payload
+        aa_cell = None
+        for row, col, hand_key in iter_canonical_matrix_cells():
+            cell = MatrixCell(
+                matrix_id=matrix_id,
+                row_index=row,
+                col_index=col,
+                hand_combination=hand_key,
+            )
+            session.add(cell)
+            session.flush()
+            if hand_key == "AA":
+                aa_cell = cell
+
+        assert aa_cell is not None
+        # Add metrics for EV and WIN_LOSE_PROBABILITY in the same aggregated row
+        metrics = AggregatedMetric(
+            cell_id=aa_cell.id,
+            ev=0.75,
+            win_probability=0.82,
+            sample_count=1000,
+            last_updated="2026-01-01T00:00:00+00:00"
+        )
+        session.add(metrics)
+
+    # Update the simulation to a completed run so it will be found by contract lookup
+    contract = mark_raw_sweep_complete(contract, raw_game_state_id_end=1, raw_rows_written=1, raw_players_written=1, failed_combinations=0)
+    repo.update_matrix_sweep_simulation(sim_id, parameters=contract, end_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
     # Test deduplication: same scenario should reuse persisted data
     payload_a = provider.get_matrix_payload(
@@ -87,32 +102,51 @@ def test_uncontested_payload_not_reused_for_contested_scenario(tmp_path):
     
     # Populate database with uncontested scenario data
     repo = provider.database_repository
-    session = repo.session
-    
-    # Create simulation and matrix for uncontested scenario
-    sim_id = repo.create_simulation('{"num_simulations": 1000, "game_type": "NLHE"}')
-    matrix_id = repo.create_hand_matrix(sim_id)
-    
-    # Insert test data for uncontested scenario (all players all-in)
     from hopilot.models import MatrixCell, AggregatedMetric
-    aa_cell = MatrixCell(
-        matrix_id=matrix_id,
-        row_idx=0,
-        col_idx=0,
-        hand_combination="AA"
-    )
-    session.add(aa_cell)
-    session.flush()
-    
-    # Add metrics for uncontested WIN_LOSE_PROBABILITY
-    uncontested_metric = AggregatedMetric(
-        cell_id=aa_cell.id,
-        metric_type="WIN_LOSE_PROBABILITY",
-        value=0.95,  # High win probability in uncontested scenario
-        sample_count=1000
-    )
-    session.add(uncontested_metric)
-    session.commit()
+    with repo.connection.session_scope() as session:
+        # Create a completed matrix sweep simulation with scenario contract metadata
+        contract = build_run_parameters({
+            "selected_position": "BB",
+            "hero_action": "ALL_IN",
+            "position_actions": {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"},
+            "active_players": ["UTG", "BTN", "SB", "BB"],
+            "num_opponents": 3,
+            "pot_size": 20.0,
+            "bet_amount": 10.0,
+            "sims_per_combo": 120,
+            "matrix_size": "13x13",
+            "game_type": "cash",
+            "run_kind": "matrix_sweep",
+        })
+        sim_id = repo.create_matrix_sweep_simulation(contract)
+        matrix_id = repo.create_hand_matrix(sim_id)
+
+        # Insert a full canonical matrix so the provider can build a complete payload
+        aa_cell = None
+        for row, col, hand_key in iter_canonical_matrix_cells():
+            cell = MatrixCell(
+                matrix_id=matrix_id,
+                row_index=row,
+                col_index=col,
+                hand_combination=hand_key,
+            )
+            session.add(cell)
+            session.flush()
+            if hand_key == "AA":
+                aa_cell = cell
+
+        assert aa_cell is not None
+        # Add metrics for uncontested WIN_LOSE_PROBABILITY
+        uncontested_metric = AggregatedMetric(
+            cell_id=aa_cell.id,
+            win_probability=0.95,  # High win probability in uncontested scenario
+            sample_count=1000,
+            last_updated="2026-01-01T00:00:00+00:00"
+        )
+        session.add(uncontested_metric)
+
+    contract = mark_raw_sweep_complete(contract, raw_game_state_id_end=1, raw_rows_written=1, raw_players_written=1, failed_combinations=0)
+    repo.update_matrix_sweep_simulation(sim_id, parameters=contract, end_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
     # Test uncontested scenario (all players all-in)
     uncontested = provider.get_matrix_payload(

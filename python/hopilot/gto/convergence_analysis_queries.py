@@ -228,14 +228,28 @@ class ConvergenceAnalysisQueries:
         """
         with self.performance_monitor.track_operation("convergence_stability"):
             with self.db_connection.session_scope() as session:
-                # Get all GameStates for this cell
-                game_states = session.query(GameState).join(MatrixCell).filter(
+                matrix_cell = session.query(MatrixCell).filter(
                     and_(
                         MatrixCell.matrix_id == matrix_id,
                         MatrixCell.row_index == row_idx,
                         MatrixCell.col_index == col_idx
                     )
-                ).order_by(asc(GameState.timestamp)).all()
+                ).first()
+
+                if not matrix_cell:
+                    return None
+
+                all_game_states = (
+                    session.query(GameState)
+                    .options(selectinload(GameState.players))
+                    .order_by(asc(GameState.timestamp))
+                    .all()
+                )
+
+                game_states = [
+                    gs for gs in all_game_states
+                    if self._game_state_matches_cell(gs, row_idx, col_idx)
+                ]
 
                 if len(game_states) < window_size * 2:
                     return None
@@ -243,7 +257,7 @@ class ConvergenceAnalysisQueries:
                 # Calculate rolling equity values
                 stability_points = []
 
-                for i in range(window_size, len(game_states) + 1, window_size // 2):
+                for i in range(window_size, len(game_states) + 1, max(1, window_size // 2)):
                     subset = game_states[:i]
                     equity = self._calculate_equity_for_subset(subset)
 

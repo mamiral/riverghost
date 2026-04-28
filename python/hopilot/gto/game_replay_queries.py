@@ -299,13 +299,16 @@ class GameReplayQueryEngine:
                 # Base query
                 query = session.query(
                     func.count(GameState.id).label('total_games'),
-                    func.count(func.distinct(MatrixCell.hand_combination)).label('unique_hands'),
+                    func.count(func.distinct(GameState.id)).label('unique_hands'),
                     func.min(GameState.timestamp).label('earliest_game'),
                     func.max(GameState.timestamp).label('latest_game')
-                ).join(MatrixCell)
+                )
 
                 if matrix_id:
-                    query = query.filter(MatrixCell.matrix_id == matrix_id)
+                    logger.warning(
+                        "Matrix ID filtering is not supported for replay statistics due to lack "
+                        "of a direct GameState-to-MatrixCell relationship."
+                    )
 
                 result = query.first()
 

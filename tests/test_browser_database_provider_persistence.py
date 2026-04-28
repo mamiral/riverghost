@@ -637,9 +637,7 @@ class TestDatabaseSchema:
         - So database schema is never initialized
         - GUI fails to load because tables don't exist
         """
-        # This test just documents the bug
-        # The fix: hopilot.py should call connection.create_tables() on startup
-        pass
+        pytest.skip("Test documents a known initialization issue; not executed as a functional test")
 
 
 class TestGUILoadingFunctionality:

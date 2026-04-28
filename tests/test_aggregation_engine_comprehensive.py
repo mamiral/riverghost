@@ -38,13 +38,9 @@ def generate_hero_hole_cards(row_idx: int, col_idx: int) -> str:
 
 
 @pytest.fixture
-def test_db():
-    temp_dir = tempfile.mkdtemp(prefix='comprehensive_test_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'test.db')
+def test_db(tmp_path):
+    db_path = tmp_path / 'test.db'
     db_url = f'sqlite:///{db_path}'
-
-    if os.path.exists(db_path):
-        os.remove(db_path)
 
     conn = DatabaseConnection(db_url)
     conn.create_tables()
@@ -53,9 +49,6 @@ def test_db():
 
     try:
         conn.close()
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception:
         pass
 

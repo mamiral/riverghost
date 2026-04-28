@@ -185,11 +185,15 @@ class BrowserDatabaseProvider:
 
     def _build_scenario_contract(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Build the persisted matrix-sweep scenario contract from browser context."""
+        active_players = [
+            pos for pos, action in context["position_actions"].items() if action != "FOLD"
+        ]
+
         return {
             "selected_position": context["position"],
             "hero_action": context["action"],
             "position_actions": context["position_actions"],
-            "active_players": sum(1 for action in context["position_actions"].values() if action != "FOLD"),
+            "active_players": active_players,
             "num_opponents": max(0, sum(1 for pos, action in context["position_actions"].items() if action != "FOLD" and pos != context["position"])),
             "pot_size": float(context["pot_size"]),
             "bet_amount": float(context["bet_amount"]),

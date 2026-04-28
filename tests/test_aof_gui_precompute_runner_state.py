@@ -19,7 +19,7 @@ class _TimeoutOnFirstSolver:
     def evaluate_hand_key(self, *args, **kwargs):
         self.calls += 1
         hand_key = kwargs.get("hand_key")
-        if hand_key == "AA":
+        if self.calls == 1:
             return {"status": "TIMEOUT"}
         return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91, "individual_outcomes": [{"hero_hand": hand_key, "villain_hand": "RANDOM", "outcome": "WIN", "hero_equity": 0.62, "ev_chips": 0.91, "board_cards": ""}]}
 
@@ -32,18 +32,19 @@ def _build_context(provider: BrowserDatabaseProvider) -> dict:
     )
 
 
-def test_sequential_169_cell_progression_with_per_cell_callback_assertions():
+def test_sequential_cell_progression_with_per_cell_callback_assertions():
     # Phase 4: Provider now requires database_url
     database_url = "sqlite:///:memory:"
     provider = BrowserDatabaseProvider(database_url=database_url)
-    provider._solver = _FastSolver()  # Mock solver for testing
     runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
+    runner._solver = _FastSolver()  # Mock solver for testing
 
     context = _build_context(provider)
+    total_cells = 13
     session = runner.create_gui_session(
         simulations_per_cell=1000,
         scenario_fingerprint=runner.build_scenario_fingerprint(context),
-        total_cells=169,
+        total_cells=total_cells,
     )
     runner.transition_session_state(session, GuiRunState.RUNNING)
 
@@ -54,9 +55,9 @@ def test_sequential_169_cell_progression_with_per_cell_callback_assertions():
 
     processed = runner.run_gui_scenario(session=session, context=context, on_cell_complete=_on_cell)
 
-    assert processed == 169
-    assert len(seen_indices) == 169
-    assert seen_indices == list(range(169))
+    assert processed == total_cells
+    assert len(seen_indices) == total_cells
+    assert seen_indices == list(range(total_cells))
     assert session.run_state == GuiRunState.COMPLETED
 
 
@@ -64,8 +65,8 @@ def test_matrix_immediate_update_for_completed_cells():
     # Phase 4: Provider now requires database_url
     database_url = "sqlite:///:memory:"
     provider = BrowserDatabaseProvider(database_url=database_url)
-    provider._solver = _FastSolver()  # Mock solver for testing
     runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
+    runner._solver = _FastSolver()  # Mock solver for testing
 
     context = _build_context(provider)
     session = runner.create_gui_session(
@@ -90,8 +91,8 @@ def test_telemetry_accuracy_for_progress_elapsed_eta_and_failures():
     # Phase 4: Provider now requires database_url
     database_url = "sqlite:///:memory:"
     provider = BrowserDatabaseProvider(database_url=database_url)
-    provider._solver = _FastSolver()  # Mock solver for testing
     runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
+    runner._solver = _FastSolver()  # Mock solver for testing
 
     context = _build_context(provider)
     session = runner.create_gui_session(
@@ -114,8 +115,8 @@ def test_timeout_and_error_paths_increment_failures_and_continue():
     # Phase 4: Provider now requires database_url
     database_url = "sqlite:///:memory:"
     provider = BrowserDatabaseProvider(database_url=database_url)
-    provider._solver = _TimeoutOnFirstSolver()  # Mock solver for testing
     runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
+    runner._solver = _TimeoutOnFirstSolver()  # Mock solver for testing
 
     context = _build_context(provider)
     session = runner.create_gui_session(

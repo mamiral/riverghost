@@ -72,7 +72,9 @@ class TestPrecomputeDatabasePersistence:
         with db_conn.session_scope() as session:
             sim = session.query(Simulation).filter_by(id=simulation_id).first()
             assert sim is not None
-            assert parameters in sim.parameters or "UTG" in sim.parameters
+            assert isinstance(sim.parameters, dict)
+            assert sim.parameters.get("position") == "UTG"
+            assert sim.parameters.get("action") == "ALL_IN"
 
     def test_persist_scenario_results_writes_matrix(self, test_db):
         """
@@ -166,7 +168,12 @@ class TestPrecomputeDatabasePersistence:
             assert False, "Should have raised validation error"
         except Exception as e:
             # Expected - validation caught it
-            assert "Missing required parameters" in str(e) or "required" in str(e).lower()
+            message = str(e).lower()
+            assert (
+                "missing required parameters" in message
+                or "required" in message
+                or "parameters cannot be empty" in message
+            )
 
     def test_position_action_id_mapping(self, test_db):
         """

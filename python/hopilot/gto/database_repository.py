@@ -1270,6 +1270,20 @@ class DatabaseRepository:
             for cell in cells:
                 session.delete(cell)
 
+    def _compare_contract_values(self, saved_value: Any, query_value: Any, key: str) -> bool:
+        """Compare saved contract values with query contract values flexibly."""
+        if key == "active_players":
+            if isinstance(saved_value, list) and isinstance(query_value, list):
+                return sorted(saved_value) == sorted(query_value)
+            if isinstance(saved_value, list) and isinstance(query_value, int):
+                return len(saved_value) == query_value
+            if isinstance(saved_value, int) and isinstance(query_value, list):
+                return saved_value == len(query_value)
+            if isinstance(saved_value, int) and isinstance(query_value, int):
+                return saved_value == query_value
+            return False
+        return saved_value == query_value
+
     def find_matrix_sweep_run_by_contract(self, scenario_contract: Dict[str, Any]) -> Optional[Simulation]:
         """Find one persisted matrix-sweep run by its canonical scenario contract."""
         normalized_contract = normalize_scenario_contract(scenario_contract)
@@ -1301,7 +1315,10 @@ class DatabaseRepository:
                 except Exception:
                     continue
 
-                if not all(parameters.get(key) == normalized_contract.get(key) for key in contract_keys):
+                if not all(
+                    self._compare_contract_values(parameters.get(key), normalized_contract.get(key), key)
+                    for key in contract_keys
+                ):
                     continue
 
                 if candidate.end_timestamp is None:
@@ -1353,7 +1370,10 @@ class DatabaseRepository:
                 except Exception:
                     continue
 
-                if not all(parameters.get(key) == normalized_contract.get(key) for key in contract_keys):
+                if not all(
+                    self._compare_contract_values(parameters.get(key), normalized_contract.get(key), key)
+                    for key in contract_keys
+                ):
                     continue
 
                 if candidate.end_timestamp is None:
@@ -1691,6 +1711,33 @@ class DatabaseRepository:
                 session.flush()  # Get the ID
 
                 game_state_id = game_state.id
+
+                # Persist any player rows provided with the game state.
+                players_data = game_state_data.get('players', [])
+                for player_data in players_data:
+                    if 'position' not in player_data or not str(player_data['position']).strip():
+                        raise DataIntegrityError("Player position cannot be empty")
+
+                    hole_cards = player_data.get('hole_cards')
+                    if not isinstance(hole_cards, str) or len(hole_cards) != 4:
+                        raise DataIntegrityError(
+                            f"Hole cards must be a 4-character string, got: {hole_cards}"
+                        )
+
+                    if 'stack_size' not in player_data or player_data['stack_size'] < 0:
+                        raise DataIntegrityError("Player stack_size must be a non-negative number")
+
+                    player = Player(
+                        game_state_id=game_state_id,
+                        position=player_data['position'],
+                        hole_cards=player_data['hole_cards'],
+                        stack_size=player_data['stack_size'],
+                        is_hero=player_data.get('is_hero', False)
+                    )
+                    session.add(player)
+                    session.flush()
+                    logger.info(f"Created player {player.id} for game state {game_state_id}")
+
                 logger.info(f"Created game state {game_state_id}")
                 return game_state_id
 

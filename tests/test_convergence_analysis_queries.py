@@ -17,11 +17,9 @@ from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
 
 
 @pytest.fixture
-def test_db():
+def test_db(tmp_path):
     """Create a test database for convergence analysis testing."""
-    temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db')
-    os.makedirs(temp_dir, exist_ok=True)
-    db_path = os.path.join(temp_dir, 'test.db')
+    db_path = tmp_path / 'test.db'
     db_url = f'sqlite:///{db_path}'
 
     conn = DatabaseConnection(db_url)
@@ -32,9 +30,8 @@ def test_db():
     # Cleanup
     try:
         conn.close()
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        os.rmdir(temp_dir)
+        if db_path.exists():
+            db_path.unlink()
     except Exception:
         pass
 
@@ -58,6 +55,23 @@ def populated_test_db_with_series(test_db):
     # Pattern: mostly wins early, then more balanced, then stabilizing
     game_states = []
 
+    hero_hole_cards = 'AsKs'
+    board_cards_str = 'As,Ks,Qd,Jh,Th'
+    player_template = [
+        {
+            'position': 'UTG',
+            'hole_cards': hero_hole_cards,
+            'stack_size': 1000.0,
+            'is_hero': True
+        },
+        {
+            'position': 'BTN',
+            'hole_cards': 'QdJh',
+            'stack_size': 1000.0,
+            'is_hero': False
+        }
+    ]
+
     # Phase 1: High win rate (first 500 samples)
     for i in range(500):
         # 80% wins, 10% losses, 10% ties
@@ -69,11 +83,11 @@ def populated_test_db_with_series(test_db):
             outcome = 'tie'
 
         gs_data = {
-            'cell_id': cell_id,
             'pot_size': 1000,
-            'board_cards_id': board_id,
+            'board_cards_str': board_cards_str,
             'round': 'preflop',
-            'outcome': outcome
+            'outcome': outcome,
+            'players': [dict(player) for player in player_template]
         }
         gs_id = repo.create_game_state(gs_data)
         game_states.append(gs_id)
@@ -89,11 +103,11 @@ def populated_test_db_with_series(test_db):
             outcome = 'tie'
 
         gs_data = {
-            'cell_id': cell_id,
             'pot_size': 1000,
-            'board_cards_id': board_id,
+            'board_cards_str': board_cards_str,
             'round': 'preflop',
-            'outcome': outcome
+            'outcome': outcome,
+            'players': [dict(player) for player in player_template]
         }
         gs_id = repo.create_game_state(gs_data)
         game_states.append(gs_id)
@@ -109,11 +123,11 @@ def populated_test_db_with_series(test_db):
             outcome = 'tie'
 
         gs_data = {
-            'cell_id': cell_id,
             'pot_size': 1000,
-            'board_cards_id': board_id,
+            'board_cards_str': board_cards_str,
             'round': 'preflop',
-            'outcome': outcome
+            'outcome': outcome,
+            'players': [dict(player) for player in player_template]
         }
         gs_id = repo.create_game_state(gs_data)
         game_states.append(gs_id)

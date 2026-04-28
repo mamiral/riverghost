@@ -138,8 +138,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
 
-        mock_db.find_matrix_sweep_run_by_contract.return_value = MagicMock(id=1)
-        mock_db.get_matrix_sweep_summary.return_value = {
+        mock_db.get_cross_run_matrix_summary.return_value = {
             "simulation": MagicMock(id=1),
             "hand_matrix": MagicMock(id=2),
             "matrix_cells": [
@@ -156,8 +155,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
             position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
         )
 
-        assert mock_db.find_matrix_sweep_run_by_contract.called
-        assert mock_db.get_matrix_sweep_summary.called
+        assert mock_db.get_cross_run_matrix_summary.called
         assert payload["status"] == STATUS_AVAILABLE
         assert len(payload["cells"]) == 169
         assert payload["cells"][0]["status"] == STATUS_AVAILABLE
@@ -169,9 +167,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
 
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        mock_db.find_matrix_sweep_run_by_contract.return_value = MagicMock(id=1)
-
-        mock_db.get_matrix_sweep_summary.return_value = {
+        mock_db.get_cross_run_matrix_summary.return_value = {
             "simulation": MagicMock(id=1),
             "hand_matrix": MagicMock(id=2),
             "matrix_cells": [
@@ -196,11 +192,11 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         assert payload["status"] == STATUS_AVAILABLE
         assert len(payload["cells"]) == 169
 
-        called_contract = mock_db.find_matrix_sweep_run_by_contract.call_args[0][0]
+        called_contract = mock_db.get_cross_run_matrix_summary.call_args[0][0]
         assert called_contract["selected_position"] == "UTG"
         assert called_contract["hero_action"] == "FOLD"
         assert called_contract["position_actions"]["BTN"] == "ALL_IN"
-        assert called_contract["active_players"] == 1
+        assert called_contract["active_players"] == ["BTN"]
         assert called_contract["num_opponents"] == 1
         assert called_contract["run_kind"] == "matrix_sweep"
 
@@ -209,7 +205,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         """Test that repository failures return graceful MISSING payload."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        mock_db.find_matrix_sweep_run_by_contract.side_effect = Exception("Database connection failed")
+        mock_db.get_cross_run_matrix_summary.side_effect = Exception("Database connection failed")
 
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
@@ -227,7 +223,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         """Test that error payload includes context for debugging."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
-        mock_db.find_matrix_sweep_run_by_contract.side_effect = Exception("Query failed")
+        mock_db.get_cross_run_matrix_summary.side_effect = Exception("Query failed")
 
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         payload = provider.get_matrix_payload(
@@ -286,21 +282,31 @@ class TestBrowserDatabaseProviderCallbacks:
     """Tests for callback handling in database queries."""
 
     @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
-    def test_get_matrix_payload_passes_callback_to_database(self, mock_db_class):
-        """Test that get_matrix_payload works with database repository."""
+    def test_get_matrix_payload_invokes_callback_for_each_cell(self, mock_db_class):
+        """Test that get_matrix_payload invokes the cell completion callback."""
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
+        mock_db.get_cross_run_matrix_summary.return_value = {
+            "simulation": MagicMock(id=1),
+            "hand_matrix": MagicMock(id=2),
+            "matrix_cells": [
+                MagicMock(row_index=row, col_index=col, hand_combination="AA", aggregated_metric=MagicMock(equity=0.55, win_probability=None, ev=None, jackpot_adjusted_ev=None))
+                for row in range(13) for col in range(13)
+            ],
+            "aggregated_metrics": []
+        }
 
-        mock_db.find_matrix_sweep_run_by_contract.return_value = None
-
+        callback = MagicMock()
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         provider.get_matrix_payload(
             position="UTG",
             metric="EV",
             position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN"},  # Avoid NO_CONTEST
+            on_cell_complete=callback,
         )
 
-        assert mock_db.find_matrix_sweep_run_by_contract.called
+        assert mock_db.get_cross_run_matrix_summary.called
+        assert callback.call_count == 169
 
 
 class TestBrowserDatabaseProviderInitialization:

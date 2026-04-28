@@ -75,37 +75,20 @@ class TestStateMachineControllerIntegration:
         # Start and then stop
         controller.trigger_event("start")
         result = controller.trigger_event("stop")
-        
+
         assert result is True
         assert mock_panel.stop_precompute.called, "Should call stop_precompute"
-        assert controller.get_current_state() == SimulationState.RUNNING
+        assert controller.get_current_state() == SimulationState.STOPPING
 
-        # Verify panel method was called
+        # Verify panel method was called once for stop
         mock_panel.start_precompute.assert_called_once()
-
-        # Trigger pause
-        result = controller.trigger_event("pause")
-        assert result is True
-        assert controller.get_current_state() == SimulationState.PAUSED
-
-        # Verify pause was called
-        mock_panel.pause_precompute.assert_called_once()
-
-        # Trigger resume
-        result = controller.trigger_event("resume")
-        assert result is True
-        assert controller.get_current_state() == SimulationState.RUNNING
-
-        # Verify resume was called
-        mock_panel.resume_precompute.assert_called_once()
-
-        # Trigger stop
-        result = controller.trigger_event("stop")
-        assert result is True
-        assert controller.get_current_state() == SimulationState.IDLE
-
-        # Verify stop was called
         mock_panel.stop_precompute.assert_called_once()
+
+        # Stop should block further pause/resume transitions
+        assert controller.trigger_event("pause") is False
+        assert controller.get_current_state() == SimulationState.STOPPING
+        assert controller.trigger_event("resume") is False
+        assert controller.get_current_state() == SimulationState.STOPPING
 
     def test_multiple_start_calls_are_handled(self, controller, mock_panel):
         """Integration test: Multiple start calls are handled correctly."""
@@ -114,16 +97,15 @@ class TestStateMachineControllerIntegration:
         assert result1 is True
         assert controller.get_current_state() == SimulationState.RUNNING
 
-        # Second start (should be handled gracefully)
+        # Second start should be rejected when already running
         result2 = controller.trigger_event("start")
-        # Result depends on implementation - may succeed or be ignored
-        assert result2 is not None  # Some result should be returned
+        assert result2 is False
 
         # Should still be in RUNNING state
         assert controller.get_current_state() == SimulationState.RUNNING
 
-        # Verify start was called twice
-        assert mock_panel.start_precompute.call_count == 2
+        # Verify start was called only once
+        assert mock_panel.start_precompute.call_count == 1
 
     def test_invalid_transitions_are_rejected(self, controller):
         """Integration test: Invalid state transitions are properly rejected."""
@@ -142,9 +124,9 @@ class TestStateMachineControllerIntegration:
 
     def test_reset_functionality_works(self, controller, mock_panel):
         """Integration test: Reset functionality returns to clean state."""
-        # Start and run
-        controller.trigger_event("start")
-        assert controller.get_current_state() == SimulationState.RUNNING
+        # Simulate a completed session before reset
+        controller.mark_completed()
+        assert controller.get_current_state() == SimulationState.COMPLETED
 
         # Reset
         result = controller.trigger_event("reset")

@@ -55,7 +55,7 @@ class TestAoFBrowserPanelDatabaseIntegration:
                     "selected_position": "UTG",
                     "hero_action": "ALL_IN",
                     "position_actions": {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"},
-                    "active_players": 4,
+                    "active_players": ["UTG", "BTN", "SB", "BB"],
                     "num_opponents": 3,
                     "pot_size": 20.0,
                     "bet_amount": 10.0,

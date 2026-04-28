@@ -23,11 +23,9 @@ from hopilot.gto.query_cache import get_cache_stats, QueryResultCache
 
 
 @pytest.fixture
-def performance_test_db():
+def performance_test_db(tmp_path):
     """Create a test database for performance testing."""
-    temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db')
-    os.makedirs(temp_dir, exist_ok=True)
-    db_path = os.path.join(temp_dir, 'performance_test.db')
+    db_path = tmp_path / 'performance_test.db'
     db_url = f'sqlite:///{db_path}'
 
     conn = DatabaseConnection(db_url)
@@ -38,9 +36,6 @@ def performance_test_db():
     # Cleanup
     try:
         conn.close()
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        os.rmdir(temp_dir)
     except Exception:
         pass
 

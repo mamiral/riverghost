@@ -39,14 +39,13 @@ from hopilot.models import (
 
 
 @pytest.fixture
-def comprehensive_test_db():
+def comprehensive_test_db(tmp_path):
     """Create a comprehensive test database with all analytical data."""
-    temp_dir = tempfile.mkdtemp(prefix='comprehensive_test_db_', dir=os.path.dirname(__file__))
-    db_path = os.path.join(temp_dir, 'comprehensive_test.db')
+    temp_dir = tmp_path / 'comprehensive_test_db'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    db_path = temp_dir / 'comprehensive_test.db'
     db_url = f'sqlite:///{db_path}'
 
-    if os.path.exists(db_path):
-        os.remove(db_path)
     conn = DatabaseConnection(db_url)
     conn.create_tables()
 
@@ -288,18 +287,14 @@ class TestAnalyticalQueryIntegration:
         assert 'board_cards_id' not in raw_state
         assert 'cell_id' not in raw_state
 
-    def test_query_raw_run_scopes_by_simulation_and_hand_matrix_boundary(self):
+    def test_query_raw_run_scopes_by_simulation_and_hand_matrix_boundary(self, tmp_path):
         """Verify raw GameState rows are returned only for the selected run boundary."""
-        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run')
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir, exist_ok=True)
-        db_path = os.path.join(temp_dir, 'test.db')
+        db_path = tmp_path / 'raw_run.db'
         db_url = f'sqlite:///{db_path}'
 
         try:
-            if os.path.exists(db_path):
-                os.remove(db_path)
+            if db_path.exists():
+                db_path.unlink()
             conn = DatabaseConnection(db_url)
             conn.create_tables()
             repo = DatabaseRepository(db_url)
@@ -372,16 +367,14 @@ class TestAnalyticalQueryIntegration:
             except Exception:
                 pass
 
-    def test_query_raw_run_exact_scenario_contract_unique_match(self):
+    def test_query_raw_run_exact_scenario_contract_unique_match(self, tmp_path):
         """Verify exact scenario-contract raw run selection returns only the unique matching run."""
-        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run_contract')
-        os.makedirs(temp_dir, exist_ok=True)
-        db_path = os.path.join(temp_dir, 'test.db')
+        db_path = tmp_path / 'raw_run_contract.db'
         db_url = f'sqlite:///{db_path}'
 
         try:
-            if os.path.exists(db_path):
-                os.remove(db_path)
+            if db_path.exists():
+                db_path.unlink()
             conn = DatabaseConnection(db_url)
             conn.create_tables()
             repo = DatabaseRepository(db_url)
@@ -452,16 +445,14 @@ class TestAnalyticalQueryIntegration:
             except Exception:
                 pass
 
-    def test_query_raw_run_with_missing_boundaries_returns_empty_scope(self):
+    def test_query_raw_run_with_missing_boundaries_returns_empty_scope(self, tmp_path):
         """Verify missing raw boundaries produce EMPTY_SCOPE instead of bad data."""
-        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run_empty')
-        os.makedirs(temp_dir, exist_ok=True)
-        db_path = os.path.join(temp_dir, 'test.db')
+        db_path = tmp_path / 'raw_run_empty.db'
         db_url = f'sqlite:///{db_path}'
 
         try:
-            if os.path.exists(db_path):
-                os.remove(db_path)
+            if db_path.exists():
+                db_path.unlink()
             conn = DatabaseConnection(db_url)
             conn.create_tables()
             repo = DatabaseRepository(db_url)
