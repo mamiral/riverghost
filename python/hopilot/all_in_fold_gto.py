@@ -22,7 +22,7 @@ class AllInFoldGTOSolver:
     The optimal strategy is determined by finding the equity threshold where EV = 0.
     """
 
-    def __init__(self, analyzer: PokerAnalyzer, persistence: GameStatePersistence):
+    def __init__(self, analyzer: PokerAnalyzer, persistence: Optional[GameStatePersistence] = None):
         self.analyzer = analyzer
         self.persistence = persistence
         self.logger = get_logger(__name__)
@@ -306,8 +306,6 @@ class AllInFoldGTOSolver:
             # Create game state for this simulation
             timestamp = datetime.now().isoformat()
             game_state_id = self.persistence.store_game_state(
-                simulation_id=simulation_id,
-                matrix_cell_id=matrix_cell_id,
                 timestamp=timestamp,
                 round_name='preflop',
                 pot_size=pot_size,

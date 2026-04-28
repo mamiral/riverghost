@@ -114,7 +114,8 @@ class TestAllInFoldGTOSolver:
         assert 0.0 <= result['threshold_equity'] <= 1.0, "Threshold equity should be between 0 and 1"
 
         # Validate optimal_hands is a list
-        assert isinstance(result['optimal_hands'], list), "Optimal hands should be a list"
+        assert isinstance(result['optimal_hands'], int), "Optimal hands should be an integer count"
+        assert result['optimal_hands'] == len(result['optimal_range']), "optimal_hands should match optimal_range length"
 
         # Validate total_hands is reasonable
         assert isinstance(result['total_hands'], int), "Total hands should be an integer"
