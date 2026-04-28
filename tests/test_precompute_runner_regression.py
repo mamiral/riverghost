@@ -220,9 +220,9 @@ class TestPrecomputeRunNoKeyError:
         
         assert result == 0
         
-        # Verify mock was called - indicating scenarios were processed)
-        assert mock_provider.get_matrix_payload.called, (
-            "Provider should have been called during run()"
+        # Verify provider context builder was used to orchestrate the run.
+        assert mock_provider._build_context.called, (
+            "Provider _build_context should have been called during run()"
         )
 
 

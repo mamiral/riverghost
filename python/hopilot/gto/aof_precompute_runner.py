@@ -1192,7 +1192,20 @@ class AoFPrecomputeRunner:
 
                 context = None
                 payload = None
-                if self.provider is not None and hasattr(self.provider, "get_matrix_payload"):
+                if self.provider is not None and hasattr(self.provider, "_build_context"):
+                    context = self.provider._build_context(  # pylint: disable=protected-access
+                        position=scenario["position"],
+                        metric=scenario["metric"],
+                        position_actions=scenario["position_actions"],
+                        strict_current_action=scenario["strict_current_action"],
+                    )
+
+                if (
+                    context is None
+                    or not isinstance(context, dict)
+                    or "action" not in context
+                    or "position_actions" not in context
+                ) and self.provider is not None and hasattr(self.provider, "get_matrix_payload"):
                     payload = self.provider.get_matrix_payload(
                         position=scenario["position"],
                         metric=scenario["metric"],
@@ -1201,19 +1214,6 @@ class AoFPrecomputeRunner:
                     )
                     if isinstance(payload, dict):
                         context = payload.get("context")
-
-                if (
-                    context is None
-                    or not isinstance(context, dict)
-                    or "action" not in context
-                    or "position_actions" not in context
-                ) and self.provider is not None and hasattr(self.provider, "_build_context"):
-                    context = self.provider._build_context(  # pylint: disable=protected-access
-                        position=scenario["position"],
-                        metric=scenario["metric"],
-                        position_actions=scenario["position_actions"],
-                        strict_current_action=scenario["strict_current_action"],
-                    )
 
                 if context is None:
                     raise ValueError("Failed to build scenario context from provider")
