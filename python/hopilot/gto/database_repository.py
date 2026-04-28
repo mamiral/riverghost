@@ -22,7 +22,6 @@ from hopilot.models import (
     GameState,
     Player,
     Bet,
-    BoardCard,
     Jackpot,
     PrecomputeJobSession,
     ScenarioRunLink,
@@ -137,27 +136,6 @@ class DatabaseRepository:
             logger.error(f"Error validating bet {bet_id}: {e}")
             raise DatabaseConnectionError(f"Failed to validate bet existence: {e}") from e
 
-    def _validate_board_card_exists(self, board_card_id: int) -> None:
-        """
-        Validate that a board card exists.
-
-        Args:
-            board_card_id: BoardCard ID to validate
-
-        Raises:
-            DataIntegrityError: If board card does not exist
-        """
-        try:
-            with self.connection.session_scope() as session:
-                exists = session.query(BoardCard.id).filter(BoardCard.id == board_card_id).first() is not None
-                if not exists:
-                    raise DataIntegrityError(f"BoardCard with ID {board_card_id} does not exist")
-        except DataIntegrityError:
-            raise
-        except Exception as e:
-            logger.error(f"Error validating board card {board_card_id}: {e}")
-            raise DatabaseConnectionError(f"Failed to validate board card existence: {e}") from e
-
     def _validate_jackpot_exists(self, jackpot_id: int) -> None:
         """
         Validate that a jackpot exists.
@@ -210,14 +188,17 @@ class DatabaseRepository:
         Raises:
             DataIntegrityError: If validation fails
         """
-        required_fields = ['cell_id', 'pot_size', 'board_cards_id']
+        required_fields = ['pot_size']
         for field in required_fields:
             if field not in game_state_data:
                 raise DataIntegrityError(f"Missing required field: {field}")
 
-        # Validate foreign keys
-        self._validate_matrix_cell_exists(game_state_data['cell_id'])
-        self._validate_board_card_exists(game_state_data['board_cards_id'])
+        if 'board_cards_str' not in game_state_data:
+            raise DataIntegrityError("Missing required field: board_cards_str")
+
+        # Validate optional legacy fields
+        if 'cell_id' in game_state_data:
+            self._validate_matrix_cell_exists(game_state_data['cell_id'])
 
         # Validate pot_size
         if game_state_data['pot_size'] < 0:
@@ -226,6 +207,16 @@ class DatabaseRepository:
         # Validate round if provided
         if 'round' in game_state_data and game_state_data['round'] not in ['preflop', 'flop', 'turn', 'river']:
             raise DataIntegrityError("Round must be 'preflop', 'flop', 'turn', or 'river'")
+
+        if 'board_cards_str' in game_state_data and not isinstance(game_state_data['board_cards_str'], str):
+            raise DataIntegrityError("board_cards_str must be a string")
+
+    def _resolve_board_cards_str(self, game_state_data: Dict[str, Any]) -> str:
+        """Resolve raw board cards string from provided game state data."""
+        board_cards_str = game_state_data.get('board_cards_str')
+        if board_cards_str is None:
+            raise DataIntegrityError("Missing required field: board_cards_str")
+        return board_cards_str
 
     def _validate_player_data(self, player_data: Dict[str, Any]) -> None:
         """
@@ -1578,12 +1569,12 @@ class DatabaseRepository:
         Create a new game state with complete game data.
 
         Args:
-            game_state_data: Dictionary containing all game state information including:
-                - cell_id: MatrixCell ID (required)
+            game_state_data: Dictionary containing game state information including:
                 - timestamp: Game timestamp (optional, defaults to now)
                 - round: Game round (preflop/flop/turn/river)
                 - pot_size: Current pot size
-                - board_cards_id: BoardCards ID
+                - board_cards_str: Comma-separated board cards string
+                - board_cards_id: Optional legacy BoardCards ID
                 - outcome: Game outcome (optional)
 
         Returns:
@@ -1597,13 +1588,12 @@ class DatabaseRepository:
 
         try:
             with self.connection.session_scope() as session:
-                # Create GameState
+                board_cards_str = self._resolve_board_cards_str(game_state_data)
                 game_state = GameState(
-                    cell_id=game_state_data['cell_id'],
                     timestamp=game_state_data.get('timestamp', datetime.now(timezone.utc)),
                     round=game_state_data.get('round', 'preflop'),
                     pot_size=game_state_data['pot_size'],
-                    board_cards_id=game_state_data['board_cards_id'],
+                    board_cards_str=board_cards_str,
                     outcome=game_state_data.get('outcome')
                 )
                 session.add(game_state)
@@ -1634,12 +1624,9 @@ class DatabaseRepository:
             with self.connection.session_scope() as session:
                 # Query with eager loading of relationships
                 game_state = session.query(GameState).options(
-                    # Load related entities
                     selectinload(GameState.players),
                     selectinload(GameState.bets),
-                    selectinload(GameState.board_cards),
-                    selectinload(GameState.jackpots),
-                    selectinload(GameState.matrix_cell)
+                    selectinload(GameState.jackpots)
                 ).filter(GameState.id == game_state_id).first()
 
                 if not game_state:
@@ -1648,17 +1635,16 @@ class DatabaseRepository:
                 # Convert to dictionary with relationships
                 return {
                     'id': game_state.id,
-                    'cell_id': game_state.cell_id,
                     'timestamp': game_state.timestamp,
                     'round': game_state.round,
                     'pot_size': float(game_state.pot_size),
-                    'board_cards_id': game_state.board_cards_id,
+                    'board_cards_str': game_state.board_cards_str,
                     'outcome': game_state.outcome,
                     'players': [
                         {
                             'id': player.id,
                             'position': player.position,
-                            'hand': player.hand,
+                            'hole_cards': player.hole_cards,
                             'stack_size': float(player.stack_size) if player.stack_size else None,
                             'is_hero': player.is_hero
                         }
@@ -1669,19 +1655,11 @@ class DatabaseRepository:
                             'id': bet.id,
                             'player_id': bet.player_id,
                             'amount': float(bet.amount),
-                            'bet_type': bet.bet_type,
+                            'action_type': bet.action_type,
                             'round': bet.round
                         }
                         for bet in game_state.bets
                     ],
-                    'board_cards': {
-                        'id': game_state.board_cards.id,
-                        'flop1': game_state.board_cards.flop1,
-                        'flop2': game_state.board_cards.flop2,
-                        'flop3': game_state.board_cards.flop3,
-                        'turn': game_state.board_cards.turn,
-                        'river': game_state.board_cards.river
-                    } if game_state.board_cards else None,
                     'jackpots': [
                         {
                             'id': jackpot.id,
@@ -1690,13 +1668,7 @@ class DatabaseRepository:
                             'qualifying_cards': jackpot.qualifying_cards
                         }
                         for jackpot in game_state.jackpots
-                    ],
-                    'matrix_cell': {
-                        'id': game_state.matrix_cell.id,
-                        'hand_combination': game_state.matrix_cell.hand_combination,
-                        'row_index': game_state.matrix_cell.row_index,
-                        'col_index': game_state.matrix_cell.col_index
-                    } if game_state.matrix_cell else None
+                    ]
                 }
 
         except Exception as e:
@@ -1720,10 +1692,10 @@ class DatabaseRepository:
         """
         self._validate_game_state_exists(game_state_id)
 
-        # Validate update data (only check provided fields)
-        update_data = {'cell_id': 1, 'pot_size': 0, 'board_cards_id': 1}  # dummy values for required fields
-        update_data.update(updates)
-        self._validate_game_state_data(update_data)
+        if 'pot_size' in updates and updates['pot_size'] < 0:
+            raise DataIntegrityError("Pot size cannot be negative")
+        if 'round' in updates and updates['round'] not in ['preflop', 'flop', 'turn', 'river']:
+            raise DataIntegrityError("Round must be 'preflop', 'flop', 'turn', or 'river'")
 
         try:
             with self.connection.session_scope() as session:
@@ -1733,7 +1705,7 @@ class DatabaseRepository:
                     return False
 
                 # Update allowed fields
-                allowed_fields = {'round', 'pot_size', 'outcome'}
+                allowed_fields = {'round', 'pot_size', 'outcome', 'board_cards_str'}
                 for field, value in updates.items():
                     if field in allowed_fields:
                         setattr(game_state, field, value)
@@ -1911,7 +1883,7 @@ class DatabaseRepository:
                         {
                             'id': bet.id,
                             'amount': float(bet.amount),
-                            'bet_type': bet.bet_type,
+                            'action_type': bet.action_type,
                             'round': bet.round
                         }
                         for bet in player.bets
@@ -1963,7 +1935,7 @@ class DatabaseRepository:
                             {
                                 'id': bet.id,
                                 'amount': float(bet.amount),
-                                'bet_type': bet.bet_type,
+                                'action_type': bet.action_type,
                                 'round': bet.round
                             }
                             for bet in player.bets
@@ -2366,328 +2338,7 @@ class DatabaseRepository:
             logger.error(f"Failed to delete bet {bet_id}: {e}")
             raise DatabaseConnectionError(f"Failed to delete bet: {e}") from e
 
-    # ===== BOARDCARDS CRUD OPERATIONS =====
-
-    def create_board_card(self, board_card_data: Dict[str, Any]) -> int:
-        """
-        Create a new board card combination.
-
-        Args:
-            board_card_data: Dictionary containing board card information including:
-                - flop1, flop2, flop3: Flop cards (required)
-                - turn: Turn card (required)
-                - river: River card (required)
-
-        Returns:
-            ID of the created board card
-
-        Raises:
-            DataIntegrityError: If validation fails
-            DatabaseConnectionError: If database operation fails
-        """
-        self._validate_board_card_data(board_card_data)
-
-        try:
-            with self.connection.session_scope() as session:
-                # Create BoardCard
-                board_card = BoardCard(
-                    flop1=board_card_data['flop1'],
-                    flop2=board_card_data['flop2'],
-                    flop3=board_card_data['flop3'],
-                    turn=board_card_data['turn'],
-                    river=board_card_data['river']
-                )
-                session.add(board_card)
-                session.flush()  # Get the ID
-
-                board_card_id = board_card.id
-                logger.info(f"Created board card {board_card_id}: {board_card.flop1}{board_card.flop2}{board_card.flop3} {board_card.turn} {board_card.river}")
-                return board_card_id
-
-        except Exception as e:
-            logger.error(f"Failed to create board card: {e}")
-            raise DatabaseConnectionError(f"Failed to create board card: {e}") from e
-
-    def get_or_create_board_card(self, board_card_data: Dict[str, Any]) -> int:
-        """
-        Get existing board card combination or create new one if it doesn't exist.
-
-        This enables board card reuse for performance and data consistency.
-
-        Args:
-            board_card_data: Dictionary containing board card information:
-                - flop1, flop2, flop3: Flop cards (required)
-                - turn: Turn card (required)
-                - river: River card (required)
-
-        Returns:
-            ID of the existing or newly created board card
-
-        Raises:
-            DatabaseConnectionError: If database operation fails
-        """
-        try:
-            with self.connection.session_scope() as session:
-                # Try to find existing board card with same combination
-                existing = session.query(BoardCard).filter(
-                    BoardCard.flop1 == board_card_data['flop1'],
-                    BoardCard.flop2 == board_card_data['flop2'],
-                    BoardCard.flop3 == board_card_data['flop3'],
-                    BoardCard.turn == board_card_data['turn'],
-                    BoardCard.river == board_card_data['river']
-                ).first()
-
-                if existing:
-                    logger.debug(f"Reusing existing board card {existing.id}")
-                    return existing.id
-
-                # Create new board card
-                board_card = BoardCard(
-                    flop1=board_card_data['flop1'],
-                    flop2=board_card_data['flop2'],
-                    flop3=board_card_data['flop3'],
-                    turn=board_card_data['turn'],
-                    river=board_card_data['river']
-                )
-                session.add(board_card)
-                session.flush()  # Get the ID
-
-                board_card_id = board_card.id
-                logger.info(f"Created new board card {board_card_id}: {board_card.flop1}{board_card.flop2}{board_card.flop3} {board_card.turn} {board_card.river}")
-                return board_card_id
-
-        except Exception as e:
-            logger.error(f"Failed to get or create board card: {e}")
-            raise DatabaseConnectionError(f"Failed to get or create board card: {e}") from e
-
-    def get_board_card(self, board_card_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve a board card by ID.
-
-        Args:
-            board_card_id: BoardCard ID
-
-        Returns:
-            Dictionary containing board card data, or None if not found
-
-        Raises:
-            DatabaseConnectionError: If database operation fails
-        """
-        try:
-            with self.connection.session_scope() as session:
-                board_card = session.query(BoardCard).filter(BoardCard.id == board_card_id).first()
-
-                if not board_card:
-                    return None
-
-                # Convert to dictionary
-                return {
-                    'id': board_card.id,
-                    'flop1': board_card.flop1,
-                    'flop2': board_card.flop2,
-                    'flop3': board_card.flop3,
-                    'turn': board_card.turn,
-                    'river': board_card.river,
-                    'flop': board_card.flop,
-                    'all_cards': board_card.all_cards,
-                    'street_cards': board_card.street_cards
-                }
-
-        except Exception as e:
-            logger.error(f"Failed to retrieve board card {board_card_id}: {e}")
-            raise DatabaseConnectionError(f"Failed to retrieve board card: {e}") from e
-
-    def find_board_card_by_cards(self, flop1: str, flop2: str, flop3: str, turn: str, river: str) -> Optional[int]:
-        """
-        Find a board card by its exact card combination.
-
-        Args:
-            flop1, flop2, flop3: Flop cards
-            turn: Turn card
-            river: River card
-
-        Returns:
-            BoardCard ID if found, None otherwise
-
-        Raises:
-            DatabaseConnectionError: If database operation fails
-        """
-        try:
-            with self.connection.session_scope() as session:
-                board_card = session.query(BoardCard).filter(
-                    BoardCard.flop1 == flop1,
-                    BoardCard.flop2 == flop2,
-                    BoardCard.flop3 == flop3,
-                    BoardCard.turn == turn,
-                    BoardCard.river == river
-                ).first()
-
-                return board_card.id if board_card else None
-
-        except Exception as e:
-            logger.error(f"Failed to find board card by cards: {e}")
-            raise DatabaseConnectionError(f"Failed to find board card: {e}") from e
-
-    def get_board_cards_by_pattern(self, pattern: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Retrieve board cards matching specific patterns (e.g., containing certain suits/ranks).
-
-        Args:
-            pattern: Dictionary with search criteria:
-                - contains_rank: List of ranks that must be present
-                - contains_suit: List of suits that must be present
-                - excludes_rank: List of ranks that must not be present
-                - excludes_suit: List of suits that must not be present
-
-        Returns:
-            List of matching board card dictionaries
-
-        Raises:
-            DatabaseConnectionError: If database operation fails
-        """
-        try:
-            with self.connection.session_scope() as session:
-                query = session.query(BoardCard)
-
-                # Apply pattern filters
-                if 'contains_rank' in pattern:
-                    ranks = pattern['contains_rank']
-                    # Check if any of the board cards contain the required ranks
-                    rank_conditions = []
-                    for rank in ranks:
-                        rank_conditions.extend([
-                            BoardCard.flop1.like(f'{rank}%'),
-                            BoardCard.flop2.like(f'{rank}%'),
-                            BoardCard.flop3.like(f'{rank}%'),
-                            BoardCard.turn.like(f'{rank}%'),
-                            BoardCard.river.like(f'{rank}%')
-                        ])
-                    if rank_conditions:
-                        query = query.filter(or_(*rank_conditions))
-
-                if 'contains_suit' in pattern:
-                    suits = pattern['contains_suit']
-                    # Check if any of the board cards contain the required suits
-                    suit_conditions = []
-                    for suit in suits:
-                        suit_conditions.extend([
-                            BoardCard.flop1.like(f'%{suit}'),
-                            BoardCard.flop2.like(f'%{suit}'),
-                            BoardCard.flop3.like(f'%{suit}'),
-                            BoardCard.turn.like(f'%{suit}'),
-                            BoardCard.river.like(f'%{suit}')
-                        ])
-                    if suit_conditions:
-                        query = query.filter(or_(*suit_conditions))
-
-                # Note: excludes_rank and excludes_suit would require more complex NOT EXISTS logic
-                # For now, we'll implement the simpler contains logic
-
-                board_cards = query.limit(100).all()  # Limit results for performance
-
-                # Convert to dictionaries
-                return [
-                    {
-                        'id': bc.id,
-                        'flop1': bc.flop1,
-                        'flop2': bc.flop2,
-                        'flop3': bc.flop3,
-                        'turn': bc.turn,
-                        'river': bc.river,
-                        'flop': bc.flop,
-                        'all_cards': bc.all_cards
-                    }
-                    for bc in board_cards
-                ]
-
-        except Exception as e:
-            logger.error(f"Failed to get board cards by pattern: {e}")
-            raise DatabaseConnectionError(f"Failed to get board cards by pattern: {e}") from e
-
-    def update_board_card(self, board_card_id: int, updates: Dict[str, Any]) -> bool:
-        """
-        Update an existing board card.
-
-        Args:
-            board_card_id: BoardCard ID to update
-            updates: Dictionary of fields to update (flop1, flop2, flop3, turn, river)
-
-        Returns:
-            True if update was successful, False if board card not found
-
-        Raises:
-            DataIntegrityError: If validation fails
-            DatabaseConnectionError: If database operation fails
-        """
-        self._validate_board_card_exists(board_card_id)
-
-        # Validate update data (only check provided fields)
-        update_data = {'flop1': 'As', 'flop2': 'Ks', 'flop3': 'Qs', 'turn': 'Js', 'river': 'Ts'}  # dummy values
-        update_data.update(updates)
-        self._validate_board_card_data(update_data)
-
-        try:
-            with self.connection.session_scope() as session:
-                board_card = session.query(BoardCard).filter(BoardCard.id == board_card_id).first()
-
-                if not board_card:
-                    return False
-
-                # Update allowed fields
-                allowed_fields = {'flop1', 'flop2', 'flop3', 'turn', 'river'}
-                for field, value in updates.items():
-                    if field in allowed_fields:
-                        setattr(board_card, field, value)
-
-                session.commit()
-                logger.info(f"Updated board card {board_card_id}")
-                return True
-
-        except Exception as e:
-            logger.error(f"Failed to update board card {board_card_id}: {e}")
-            raise DatabaseConnectionError(f"Failed to update board card: {e}") from e
-
-    def delete_board_card(self, board_card_id: int) -> bool:
-        """
-        Delete a board card.
-
-        Note: This should only be done if no GameStates reference this board card.
-
-        Args:
-            board_card_id: BoardCard ID to delete
-
-        Returns:
-            True if deletion was successful, False if board card not found
-
-        Raises:
-            DataIntegrityError: If validation fails
-            DatabaseConnectionError: If database operation fails
-        """
-        self._validate_board_card_exists(board_card_id)
-
-        try:
-            with self.connection.session_scope() as session:
-                board_card = session.query(BoardCard).filter(BoardCard.id == board_card_id).first()
-
-                if not board_card:
-                    return False
-
-                # Check if any GameStates reference this board card
-                referenced_count = session.query(GameState).filter(GameState.board_cards_id == board_card_id).count()
-                if referenced_count > 0:
-                    logger.warning(f"Cannot delete board card {board_card_id}: referenced by {referenced_count} game states")
-                    return False
-
-                # Delete the board card
-                session.delete(board_card)
-                session.commit()
-
-                logger.info(f"Deleted board card {board_card_id}")
-                return True
-
-        except Exception as e:
-            logger.error(f"Failed to delete board card {board_card_id}: {e}")
-            raise DatabaseConnectionError(f"Failed to delete board card: {e}") from e
+    # Legacy BoardCards operations have been removed in favor of GameStates-first board_cards_str storage.
 
     # ===== JACKPOTS CRUD OPERATIONS =====
 
@@ -3111,12 +2762,12 @@ class DatabaseRepository:
                 game_state_objects = []
 
                 for game_state_data in game_states_data:
+                    board_cards_str = self._resolve_board_cards_str(game_state_data)
                     game_state = GameState(
-                        cell_id=game_state_data['cell_id'],
                         timestamp=game_state_data.get('timestamp', datetime.now(timezone.utc)),
                         round=game_state_data.get('round', 'preflop'),
                         pot_size=game_state_data['pot_size'],
-                        board_cards_id=game_state_data['board_cards_id'],
+                        board_cards_str=board_cards_str,
                         outcome=game_state_data.get('outcome')
                     )
                     game_state_objects.append(game_state)
@@ -3341,12 +2992,12 @@ class DatabaseRepository:
                 if 'game_states' in simulation_data:
                     game_state_objects = []
                     for gs_data in simulation_data['game_states']:
+                        board_cards_str = self._resolve_board_cards_str(gs_data)
                         gs = GameState(
-                            cell_id=gs_data['cell_id'],
                             timestamp=gs_data.get('timestamp', datetime.now(timezone.utc)),
                             round=gs_data.get('round', 'preflop'),
                             pot_size=gs_data['pot_size'],
-                            board_cards_id=gs_data['board_cards_id'],
+                            board_cards_str=board_cards_str,
                             outcome=gs_data.get('outcome')
                         )
                         game_state_objects.append(gs)

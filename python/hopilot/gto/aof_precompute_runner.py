@@ -677,42 +677,23 @@ class AoFPrecomputeRunner:
                 bet_amount = float(context.get("bet_amount", pot_size))
                 
                 for outcome in individual_outcomes:
-                    # Create board cards (handle empty board cards for preflop)
-                    board_cards_str = outcome.get("board_cards", "")
-                    if not board_cards_str.strip():
-                        # Preflop game - create placeholder board cards
-                        board_card_data = {
-                            'flop1': '??', 'flop2': '??', 'flop3': '??',
-                            'turn': '??', 'river': '??'
-                        }
+                    # Create board cards string for GameState storage
+                    raw_board_cards = outcome.get("board_cards", "")
+                    if not raw_board_cards.strip():
+                        board_cards_str = ",".join(['??'] * 5)
                     else:
-                        # Parse board cards string (assuming format like "As Ks Qs")
-                        cards = board_cards_str.split()
-                        if len(cards) >= 5:
-                            board_card_data = {
-                                'flop1': cards[0], 'flop2': cards[1], 'flop3': cards[2],
-                                'turn': cards[3], 'river': cards[4]
-                            }
-                        else:
-                            # Incomplete board - pad with placeholders
-                            cards.extend(['??'] * (5 - len(cards)))
-                            board_card_data = {
-                                'flop1': cards[0], 'flop2': cards[1], 'flop3': cards[2],
-                                'turn': cards[3], 'river': cards[4]
-                            }
-                
-                    with performance_monitor.track_operation("create_board_card", cell_id=cell_id):
-                        board_cards_id = self.database_repository.get_or_create_board_card(board_card_data)
-                
-                    # Create GameState
+                        cards = [card.strip() for card in raw_board_cards.replace(',', ' ').split() if card.strip()]
+                        cards.extend(['??'] * max(0, 5 - len(cards)))
+                        board_cards_str = ",".join(cards[:5])
+
+                    # Use GameStates-first storage and avoid legacy BoardCard IDs
                     game_state_data = {
-                        'cell_id': cell_id,
                         'round': 'preflop',
                         'pot_size': pot_size,
-                        'board_cards_id': board_cards_id,
+                        'board_cards_str': board_cards_str,
                         'outcome': outcome.get('outcome')
                     }
-                    
+
                     with performance_monitor.track_operation("create_game_state", cell_id=cell_id):
                         game_state_id = self.database_repository.create_game_state(game_state_data)
                 

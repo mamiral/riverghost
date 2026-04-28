@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from hopilot.jackpot_detector import JackpotDetector
 from hopilot.metrics_calculator import MetricsCalculator, calculate_matrix_equity, calculate_jackpot_analysis
-from hopilot.models import GameState, Player, BoardCard, MatrixCell
+from hopilot.models import GameState, Player, MatrixCell
 
 
 class TestJackpotDetector:

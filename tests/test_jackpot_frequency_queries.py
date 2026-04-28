@@ -50,12 +50,6 @@ def populated_test_db_with_jackpots(test_db):
     sim_id = repo.create_simulation(sim_params)
     matrix_id = repo.create_hand_matrix(sim_id)
 
-    # Create board cards
-    board_id = repo.create_board_card({
-        'flop1': 'As', 'flop2': 'Ks', 'flop3': 'Qs',
-        'turn': 'Js', 'river': 'Ts'
-    })
-
     # Create MatrixCell
     hand_combo = "AA vs AK"
     cell_id = derivation_engine._ensure_matrix_cell_exists(matrix_id, 0, 1, hand_combo)
@@ -68,7 +62,7 @@ def populated_test_db_with_jackpots(test_db):
         gs_data = {
             'cell_id': cell_id,
             'pot_size': 1000,
-            'board_cards_id': board_id,
+            'board_cards_str': 'As,Ks,Qs,Js,Ts',
             'round': 'preflop',
             'outcome': 'win'  # All games win for simplicity
         }

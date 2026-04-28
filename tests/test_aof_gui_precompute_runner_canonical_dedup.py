@@ -20,20 +20,13 @@ def test_canonical_dedup_reuses_persisted_cells_with_request_local_context(tmp_p
     sim_id = repo.create_simulation('{"num_simulations": 1000, "game_type": "NLHE"}')
     matrix_id = repo.create_hand_matrix(sim_id)
     
-    # Create board
-    board_id = repo.create_board_card({
-        'flop1': 'As', 'flop2': 'Ks', 'flop3': 'Qs',
-        'turn': 'Js', 'river': 'Ts'
-    })
-    
     # Insert test data for AA hand
     from hopilot.models import MatrixCell, AggregatedMetric
     aa_cell = MatrixCell(
         matrix_id=matrix_id,
         row_idx=0,  # AA is typically at (0,0)
         col_idx=0,
-        hand_combination="AA",
-        board_id=board_id
+        hand_combination="AA"
     )
     session.add(aa_cell)
     session.flush()  # Get the cell ID
@@ -100,20 +93,13 @@ def test_uncontested_payload_not_reused_for_contested_scenario(tmp_path):
     sim_id = repo.create_simulation('{"num_simulations": 1000, "game_type": "NLHE"}')
     matrix_id = repo.create_hand_matrix(sim_id)
     
-    # Create board
-    board_id = repo.create_board_card({
-        'flop1': 'As', 'flop2': 'Ks', 'flop3': 'Qs',
-        'turn': 'Js', 'river': 'Ts'
-    })
-    
     # Insert test data for uncontested scenario (all players all-in)
     from hopilot.models import MatrixCell, AggregatedMetric
     aa_cell = MatrixCell(
         matrix_id=matrix_id,
         row_idx=0,
         col_idx=0,
-        hand_combination="AA",
-        board_id=board_id
+        hand_combination="AA"
     )
     session.add(aa_cell)
     session.flush()

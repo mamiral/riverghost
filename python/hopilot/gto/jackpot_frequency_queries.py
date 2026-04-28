@@ -11,10 +11,11 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from sqlalchemy import text, func, and_, or_, asc, desc, case, cast, Integer, Float
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from hopilot.database import DatabaseConnection
-from hopilot.models import GameState, MatrixCell, Jackpot, HandMatrix
+from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards
+from hopilot.models import GameState, Player, MatrixCell, Jackpot, HandMatrix
 from hopilot.performance_monitor import PerformanceMonitor
 from hopilot.gto.query_cache import cached_query
 
@@ -57,61 +58,55 @@ class JackpotFrequencyQueries:
         """
         with self.performance_monitor.track_operation("jackpot_frequency_analysis"):
             with self.db_connection.session_scope() as session:
-                # Base query for jackpot events
-                base_query = session.query(Jackpot)
-
                 if matrix_id is not None:
-                    # Join through GameState to filter by matrix
-                    base_query = base_query.join(GameState).join(MatrixCell).filter(
-                        MatrixCell.matrix_id == matrix_id
-                    )
+                    matrix = session.query(HandMatrix).filter(HandMatrix.id == matrix_id).first()
+                    if matrix is None:
+                        logger.warning(f"No HandMatrix found for matrix_id={matrix_id}")
+                        return {}
+                else:
+                    matrix = None
 
-                # Get total game states for denominator
-                total_games_query = session.query(func.count(GameState.id))
+                query = session.query(GameState).options(selectinload(GameState.players).selectinload(Player.jackpots))
+                game_states = query.all()
 
-                if matrix_id is not None:
-                    total_games_query = total_games_query.join(MatrixCell).filter(
-                        MatrixCell.matrix_id == matrix_id
-                    )
+                if matrix is not None:
+                    valid_cells = {
+                        (cell.row_index, cell.col_index)
+                        for cell in session.query(MatrixCell).filter(MatrixCell.matrix_id == matrix_id).all()
+                    }
+                    game_states = [
+                        gs for gs in game_states
+                        if self._game_state_matches_matrix(gs, valid_cells)
+                    ]
 
-                total_games = total_games_query.scalar()
-
+                total_games = len(game_states)
                 if total_games < min_samples:
                     logger.warning(f"Insufficient samples: {total_games} < {min_samples}")
                     return {}
 
-                # Analyze jackpot frequency by type using a single aggregated query
-                jackpot_aggregates = session.query(
-                    Jackpot.jackpot_type,
-                    func.count(Jackpot.id).label('count'),
-                    func.avg(Jackpot.payout_amount).label('avg_payout')
-                )
-
-                if matrix_id is not None:
-                    jackpot_aggregates = jackpot_aggregates.join(GameState).join(MatrixCell).filter(
-                        MatrixCell.matrix_id == matrix_id
-                    )
-
-                jackpot_aggregates = jackpot_aggregates.group_by(Jackpot.jackpot_type).all()
+                jackpot_aggregates: Dict[str, list[float]] = {}
+                for gs in game_states:
+                    for player in gs.players:
+                        for jackpot in player.jackpots:
+                            jackpot_aggregates.setdefault(jackpot.jackpot_type, []).append(float(jackpot.payout_amount))
 
                 jackpot_stats = {}
-                for jt, count, avg_payout in jackpot_aggregates:
+                for jt, payouts in jackpot_aggregates.items():
+                    count = len(payouts)
+                    avg_payout = sum(payouts) / count if count else 0
                     frequency = count / total_games if total_games > 0 else 0
-                    ev_impact = frequency * float(avg_payout or 0)
+                    ev_impact = frequency * avg_payout
 
                     jackpot_stats[jt] = {
                         'count': count,
                         'frequency': frequency,
-                        'avg_payout': float(avg_payout or 0),
+                        'avg_payout': avg_payout,
                         'ev_impact': ev_impact,
                         'frequency_percent': frequency * 100
                     }
 
-                # Calculate overall jackpot statistics
                 total_jackpots = sum(stats['count'] for stats in jackpot_stats.values())
                 overall_frequency = total_jackpots / total_games if total_games > 0 else 0
-
-                # Calculate total EV impact from all jackpots
                 total_ev_impact = sum(stats['ev_impact'] for stats in jackpot_stats.values())
 
                 return {
@@ -142,86 +137,86 @@ class JackpotFrequencyQueries:
         """
         with self.performance_monitor.track_operation("jackpot_ev_by_hand"):
             with self.db_connection.session_scope() as session:
-                # Get all matrix cells with sufficient samples and their jackpots in one query
-                cells_query = session.query(
-                    MatrixCell,
-                    func.count(GameState.id).label('sample_count')
-                ).outerjoin(GameState, MatrixCell.id == GameState.cell_id).filter(
-                    MatrixCell.matrix_id == matrix_id
-                ).group_by(MatrixCell.id).having(
-                    func.count(GameState.id) >= min_samples
-                ).subquery()
+                matrix = session.query(HandMatrix).filter(HandMatrix.id == matrix_id).first()
+                if matrix is None:
+                    logger.warning(f"No HandMatrix found for matrix_id={matrix_id}")
+                    return {
+                        'matrix_id': matrix_id,
+                        'hands_analyzed': 0,
+                        'min_samples': min_samples,
+                        'hand_analysis': [],
+                        'summary': {
+                            'total_hands': 0,
+                            'total_ev_impact': 0.0,
+                            'average_ev_impact': 0.0
+                        }
+                    }
 
-                # Get all jackpots for cells in this matrix with a single query
-                jackpots_query = session.query(
-                    Jackpot,
-                    GameState.cell_id
-                ).join(GameState, Jackpot.game_state_id == GameState.id).join(
-                    MatrixCell, GameState.cell_id == MatrixCell.id
-                ).filter(MatrixCell.matrix_id == matrix_id).all()
+                game_states = (
+                    session.query(GameState)
+                    .options(selectinload(GameState.players).selectinload(Player.jackpots))
+                    .all()
+                )
 
-                # Group jackpots by cell_id
-                jackpots_by_cell = {}
-                for jackpot, cell_id in jackpots_query:
-                    if cell_id not in jackpots_by_cell:
-                        jackpots_by_cell[cell_id] = []
-                    jackpots_by_cell[cell_id].append(jackpot)
+                cells_by_coord = {
+                    (cell.row_index, cell.col_index): cell
+                    for cell in session.query(MatrixCell).filter(MatrixCell.matrix_id == matrix_id).all()
+                }
 
-                # Get cells data
-                cells_data = session.query(
-                    MatrixCell,
-                    func.count(GameState.id).label('sample_count')
-                ).join(GameState).filter(
-                    MatrixCell.matrix_id == matrix_id
-                ).group_by(MatrixCell.id).having(
-                    func.count(GameState.id) >= min_samples
-                ).all()
+                sample_counts: Dict[tuple[int, int], int] = {}
+                jackpot_records: Dict[tuple[int, int], list[Jackpot]] = {}
+
+                for gs in game_states:
+                    coord = self._derive_game_state_cell_coordinate(gs)
+                    if coord is None or coord not in cells_by_coord:
+                        continue
+
+                    sample_counts[coord] = sample_counts.get(coord, 0) + 1
+                    for player in gs.players:
+                        for jackpot in player.jackpots:
+                            jackpot_records.setdefault(coord, []).append(jackpot)
 
                 hand_ev_analysis = []
+                for coord, sample_count in sample_counts.items():
+                    if sample_count < min_samples:
+                        continue
 
-                for cell, sample_count in cells_data:
-                    cell_jackpots = jackpots_by_cell.get(cell.id, [])
+                    cell = cells_by_coord.get(coord)
+                    cell_jackpots = jackpot_records.get(coord, [])
+                    if not cell_jackpots:
+                        continue
 
-                    if cell_jackpots:
-                        # Calculate jackpot frequency for this hand
-                        jackpot_count = len(cell_jackpots)
-                        frequency = jackpot_count / sample_count
+                    jackpot_count = len(cell_jackpots)
+                    frequency = jackpot_count / sample_count
+                    total_payout = sum(float(j.payout_amount) for j in cell_jackpots)
+                    avg_payout = total_payout / jackpot_count if jackpot_count > 0 else 0
+                    ev_impact = frequency * avg_payout
 
-                        # Calculate average payout
-                        total_payout = sum(float(j.payout_amount) for j in cell_jackpots)
-                        avg_payout = total_payout / jackpot_count if jackpot_count > 0 else 0
+                    jackpot_types: Dict[str, list[float]] = {}
+                    for jackpot in cell_jackpots:
+                        jackpot_types.setdefault(jackpot.jackpot_type, []).append(float(jackpot.payout_amount))
 
-                        # Calculate EV impact
-                        ev_impact = frequency * avg_payout
+                    type_stats = {
+                        jt: {
+                            'count': len(payouts),
+                            'avg_payout': sum(payouts) / len(payouts),
+                            'frequency': len(payouts) / sample_count,
+                            'ev_impact': (len(payouts) / sample_count) * (sum(payouts) / len(payouts))
+                        }
+                        for jt, payouts in jackpot_types.items()
+                    }
 
-                        # Group by jackpot type
-                        jackpot_types = {}
-                        for jackpot in cell_jackpots:
-                            jt = jackpot.jackpot_type
-                            if jt not in jackpot_types:
-                                jackpot_types[jt] = []
-                            jackpot_types[jt].append(float(jackpot.payout_amount))
-
-                        type_stats = {}
-                        for jt, payouts in jackpot_types.items():
-                            type_stats[jt] = {
-                                'count': len(payouts),
-                                'avg_payout': sum(payouts) / len(payouts),
-                                'frequency': len(payouts) / sample_count,
-                                'ev_impact': (len(payouts) / sample_count) * (sum(payouts) / len(payouts))
-                            }
-
-                        hand_ev_analysis.append({
-                            'row_idx': cell.row_index,
-                            'col_idx': cell.col_index,
-                            'hand_combination': cell.hand_combination,
-                            'sample_count': sample_count,
-                            'total_jackpots': jackpot_count,
-                            'jackpot_frequency': frequency,
-                            'avg_jackpot_payout': avg_payout,
-                            'jackpot_ev_impact': ev_impact,
-                            'jackpot_types': type_stats
-                        })
+                    hand_ev_analysis.append({
+                        'row_idx': cell.row_index,
+                        'col_idx': cell.col_index,
+                        'hand_combination': cell.hand_combination,
+                        'sample_count': sample_count,
+                        'total_jackpots': jackpot_count,
+                        'jackpot_frequency': frequency,
+                        'avg_jackpot_payout': avg_payout,
+                        'jackpot_ev_impact': ev_impact,
+                        'jackpot_types': type_stats
+                    })
 
                 # Sort by EV impact (descending)
                 hand_ev_analysis.sort(key=lambda x: x['jackpot_ev_impact'], reverse=True)
@@ -233,6 +228,20 @@ class JackpotFrequencyQueries:
                     'hand_analysis': hand_ev_analysis,
                     'summary': self._calculate_jackpot_ev_summary(hand_ev_analysis)
                 }
+
+    def _game_state_matches_matrix(self, game_state: GameState, valid_cells: set[tuple[int, int]]) -> bool:
+        coord = self._derive_game_state_cell_coordinate(game_state)
+        return coord in valid_cells if coord is not None else False
+
+    def _derive_game_state_cell_coordinate(self, game_state: GameState) -> Optional[tuple[int, int]]:
+        hero_player = next((player for player in game_state.players if player.is_hero), None)
+        if hero_player is None:
+            return None
+
+        try:
+            return hand_coordinates_from_hole_cards(hero_player.hole_cards)
+        except ValueError:
+            return None
 
     @cached_query(ttl=600)  # Cache for 10 minutes
     def get_jackpot_temporal_analysis(
@@ -256,12 +265,18 @@ class JackpotFrequencyQueries:
         with self.performance_monitor.track_operation("jackpot_temporal_analysis"):
             with self.db_connection.session_scope() as session:
                 # Get all game states ordered by timestamp
-                query = session.query(GameState).order_by(asc(GameState.timestamp))
+                query = session.query(GameState).options(selectinload(GameState.players).selectinload(Player.jackpots)).order_by(asc(GameState.timestamp))
+                game_states = query.all()
 
                 if matrix_id is not None:
-                    query = query.join(MatrixCell).filter(MatrixCell.matrix_id == matrix_id)
-
-                game_states = query.all()
+                    valid_cells = {
+                        (cell.row_index, cell.col_index)
+                        for cell in session.query(MatrixCell).filter(MatrixCell.matrix_id == matrix_id).all()
+                    }
+                    game_states = [
+                        gs for gs in game_states
+                        if self._game_state_matches_matrix(gs, valid_cells)
+                    ]
 
                 if len(game_states) < min(time_intervals):
                     return {}
@@ -280,9 +295,10 @@ class JackpotFrequencyQueries:
                     total_payout = 0.0
 
                     for gs in subset:
-                        if gs.jackpots:
-                            jackpot_count += len(gs.jackpots)
-                            total_payout += sum(float(j.payout_amount) for j in gs.jackpots)
+                        for player in gs.players:
+                            if player.jackpots:
+                                jackpot_count += len(player.jackpots)
+                                total_payout += sum(float(j.payout_amount) for j in player.jackpots)
 
                     frequency = jackpot_count / interval if interval > 0 else 0
                     avg_payout = total_payout / jackpot_count if jackpot_count > 0 else 0.0

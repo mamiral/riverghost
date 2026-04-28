@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.all_in_fold_gto import AllInFoldGTOSolver
 from hopilot.database.persistence import DatabasePersistenceStrategy
-from hopilot.models import GameState, Player, Bet, BoardCard, Jackpot, Base
+from hopilot.models import GameState, Player, Bet, Jackpot, Base
 
 
 class TestDatabaseRemediation:
@@ -67,7 +67,6 @@ class TestDatabaseRemediation:
             session.query(GameState).count()
             session.query(Player).count()
             session.query(Bet).count()
-            session.query(BoardCard).count()
             session.query(Jackpot).count()
         except Exception as e:
             pytest.fail(f"Database tables not created properly: {e}")
@@ -131,7 +130,7 @@ class TestDatabaseRemediation:
             # Check game state
             game_state = session.query(GameState).filter_by(id=game_state_id).first()
             assert game_state is not None
-            assert game_state.cell_id == 1
+            assert game_state.board_cards_str == ''
             assert game_state.pot_size == 20.0
             assert game_state.outcome == 'hero_win'
 
@@ -172,11 +171,10 @@ class TestDatabaseRemediation:
         try:
             # Create a game state
             game_state = GameState(
-                cell_id=1,
                 timestamp='2024-01-01T00:00:00',
                 round='preflop',
                 pot_size=20.0,
-                board_cards=1,  # Valid board_cards reference
+                board_cards_str='',
                 outcome='win'
             )
             session.add(game_state)

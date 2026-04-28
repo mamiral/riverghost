@@ -8,7 +8,7 @@ and references to all related entities.
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import Column, DateTime, Index, Numeric, String
 from sqlalchemy.orm import relationship
 
 from hopilot.models.base import BaseModel
@@ -37,6 +37,8 @@ class GameState(BaseModel):
 
     # Relationships
     players = relationship("Player", cascade="all, delete-orphan", overlaps="game_state")
+    bets = relationship("Bet", cascade="all, delete-orphan", backref="game_state", overlaps="players")
+    jackpots = relationship("Jackpot", cascade="all, delete-orphan", backref="game_state", overlaps="players")
 
     def __init__(self, **kwargs):
         """Initialize game state with validation."""
@@ -133,22 +135,30 @@ class GameState(BaseModel):
         """
         from hopilot.models.player import Player
         from hopilot.models.bet import Bet
-        from hopilot.models.board_card import BoardCard
         from hopilot.models.jackpot import Jackpot
-        
+
         # Create game state
-        game_state_data = {k: v for k, v in data.items() 
+        game_state_data = {k: v for k, v in data.items()
                           if k not in ['players', 'bets', 'board_cards', 'jackpots']}
+
+        if data.get('board_cards'):
+            board_cards = data['board_cards']
+            if isinstance(board_cards, dict):
+                card_values = [
+                    board_cards.get('flop1', '??'),
+                    board_cards.get('flop2', '??'),
+                    board_cards.get('flop3', '??'),
+                    board_cards.get('turn', '??'),
+                    board_cards.get('river', '??')
+                ]
+                game_state_data['board_cards_str'] = ','.join(card_values)
+            elif isinstance(board_cards, str):
+                game_state_data['board_cards_str'] = board_cards
+
         game_state = cls.from_dict(game_state_data)
         session.add(game_state)
         session.flush()  # Get ID
-        
-        # Create board cards if present
-        if data.get('board_cards'):
-            board_card = BoardCard.from_dict(data['board_cards'])
-            game_state.board_cards_id = board_card.id
-            session.add(board_card)
-        
+
         # Create players
         for player_data in data.get('players', []):
             player_data['game_state_id'] = game_state.id

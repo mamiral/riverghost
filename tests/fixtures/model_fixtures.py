@@ -18,7 +18,6 @@ from hopilot.models import (
     AggregatedMetric,
     Base,
     Bet,
-    BoardCard,
     GameState,
     HandMatrix,
     Jackpot,
@@ -219,9 +218,9 @@ class ModelFactory:
         suit: str = "s",
         position: int = 0,
         **kwargs
-    ) -> BoardCard:
+    ) -> None:
         """
-        Create a test board card.
+        Create a test board card placeholder by updating the parent game state's board_cards_str.
         
         Args:
             session: SQLAlchemy session
@@ -232,19 +231,27 @@ class ModelFactory:
             **kwargs: Additional fields
         
         Returns:
-            BoardCard instance
+            None
         """
-        card = BoardCard(
-            game_state_id=game_state_id,
-            rank=rank,
-            suit=suit,
-            position=position,
-            **kwargs
-        )
-        session.add(card)
+        # Store board cards on the parent game state as a comma-separated string.
+        game_state = session.query(GameState).filter(GameState.id == game_state_id).first()
+        if not game_state:
+            raise ValueError(f"GameState {game_state_id} does not exist")
+
+        current_cards = []
+        if game_state.board_cards_str:
+            current_cards = game_state.board_cards_str.split(',')
+
+        card_value = f"{rank}{suit}"
+        if len(current_cards) <= position:
+            current_cards.extend(['??'] * (position + 1 - len(current_cards)))
+        current_cards[position] = card_value
+        game_state.board_cards_str = ','.join(current_cards)
+
+        session.add(game_state)
         session.flush()
-        logger.debug(f"Created board card: {rank}{suit} (pos={position})")
-        return card
+        logger.debug(f"Added board card {card_value} at position {position} for GameState {game_state_id}")
+        return game_state
 
     @staticmethod
     def create_game_state(

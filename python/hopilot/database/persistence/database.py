@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from hopilot.logging_config import get_logger
 from .base import GameStatePersistence
-from hopilot.models import GameState, Player
+from hopilot.models import GameState, Player, Bet, Jackpot
 from hopilot.models.player import HandClass
 from hopilot.db import get_session
 
@@ -129,22 +129,15 @@ class DatabasePersistenceStrategy(GameStatePersistence):
     def store_board_cards(self, flop1: str, flop2: str, flop3: str,
                          turn: str, river: str) -> int:
         """
-        Store board cards in the database.
+        Legacy board card persistence is no longer supported.
+
+        This method remains for interface compatibility, but it does not
+        persist a separate BoardCard record in the active GameStates-first model.
         """
-        session = self._get_session()
-
-        board = BoardCard(
-            flop1=flop1,
-            flop2=flop2,
-            flop3=flop3,
-            turn=turn,
-            river=river
+        self.logger.warning(
+            "store_board_cards() is deprecated and not supported in the current architecture."
         )
-        session.add(board)
-        session.flush()
-
-        self.logger.debug(f"Stored board cards {board.id}")
-        return board.id
+        return -1
 
     def store_jackpot(self, game_state_id: int, player_id: int,
                      jackpot_type: str, payout_amount: float,

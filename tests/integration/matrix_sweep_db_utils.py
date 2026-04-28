@@ -98,11 +98,12 @@ def seed_matrix_sweep_raw_run(
             )
             session.add(game_state)
             session.flush()
+            created_at = datetime.now(timezone.utc)
             session.execute(
                 text(
                     """
-                    INSERT INTO players (game_state_id, position, hole_cards, stack_size, is_hero)
-                    VALUES (:game_state_id, :position, :hole_cards, :stack_size, :is_hero)
+                    INSERT INTO players (game_state_id, position, hole_cards, stack_size, is_hero, created_at, updated_at)
+                    VALUES (:game_state_id, :position, :hole_cards, :stack_size, :is_hero, :created_at, :updated_at)
                     """
                 ),
                 {
@@ -111,6 +112,8 @@ def seed_matrix_sweep_raw_run(
                     "hole_cards": "XxYy",
                     "stack_size": 100.0,
                     "is_hero": True,
+                    "created_at": created_at,
+                    "updated_at": created_at,
                 },
             )
 

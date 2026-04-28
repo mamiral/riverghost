@@ -19,6 +19,7 @@ DataValidationError = _MODULE.DataValidationError
 DatabaseConnection = _MODULE.DatabaseConnection
 DatabaseError = _MODULE.DatabaseError
 IntegrityError = _MODULE.IntegrityError
+get_database_connection = _MODULE.get_database_connection
 
 __all__ = [
 	"ConnectionError",
@@ -26,4 +27,5 @@ __all__ = [
 	"DatabaseConnection",
 	"DatabaseError",
 	"IntegrityError",
+	"get_database_connection",
 ]

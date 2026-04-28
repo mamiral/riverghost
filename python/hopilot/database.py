@@ -7,6 +7,7 @@ session management and transaction handling.
 
 import os
 import sqlite3
+import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from hopilot.logging_config import get_logger
+from hopilot.models import GameState, Player, Bet, Jackpot
 
 logger = get_logger(__name__)
 
@@ -341,25 +343,14 @@ def _bulk_insert_batch(conn: DatabaseConnection, game_states_data: List[Dict[str
     """
     with conn.session_scope() as session:
         try:
-            # Create board cards first (avoid duplicates)
-            board_cards_map = {}
+            # Legacy board card objects are no longer supported.
             for gs_data in game_states_data:
-                board_key = (gs_data["board_cards"]["flop1"],
-                           gs_data["board_cards"]["flop2"],
-                           gs_data["board_cards"]["flop3"],
-                           gs_data["board_cards"]["turn"],
-                           gs_data["board_cards"]["river"])
-
-                if board_key not in board_cards_map:
-                    board_card = BoardCard(**gs_data["board_cards"])
-                    session.add(board_card)
-                    session.flush()  # Get ID
-                    board_cards_map[board_key] = board_card.id
-                gs_data["board_cards_id"] = board_cards_map[board_key]
-
-            # Remove board_cards dict, keep only ID
-            for gs_data in game_states_data:
-                del gs_data["board_cards"]
+                if "board_cards" in gs_data or "board_cards_id" in gs_data:
+                    raise DataValidationError(
+                        "Legacy BoardCard storage is no longer supported; use board_cards_str instead."
+                    )
+                if "board_cards_str" not in gs_data:
+                    raise DataValidationError("Missing required field: board_cards_str")
 
             # Bulk create game states
             game_states = []
@@ -411,16 +402,13 @@ def get_game_states_for_cell(cell_id: int, limit: int = 1000) -> List[Dict[str, 
 
     conn = get_database_connection()
 
-    with conn.session_scope() as session:
-        game_states = (
-            session.query(GameState)
-            .filter(GameState.cell_id == cell_id)
-            .order_by(GameState.timestamp.desc())
-            .limit(limit)
-            .all()
-        )
-
-        return [gs.to_dict() for gs in game_states]
+    warnings.warn(
+        "get_game_states_for_cell(...) is deprecated and no longer supports GameState.cell_id-based queries. "
+        "Use the GTO replay query services or GameStates-first analysis paths instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return []
 
 
 def get_convergence_data(cell_id: int) -> List[Dict[str, Any]]:
@@ -438,16 +426,10 @@ def get_convergence_data(cell_id: int) -> List[Dict[str, Any]]:
     conn = get_database_connection()
 
     with conn.session_scope() as session:
-        # Note: This assumes GameState has equity field or needs to be calculated
-        # For now, return basic timestamp data
-        game_states = (
-            session.query(GameState.timestamp)
-            .filter(GameState.cell_id == cell_id)
-            .order_by(GameState.timestamp)
-            .all()
+        warnings.warn(
+            "get_convergence_data(...) is deprecated and no longer supports GameState.cell_id-based queries. "
+            "Use the GTO convergence analysis query services instead.",
+            DeprecationWarning,
+            stacklevel=2
         )
-
-        return [
-            {"timestamp": gs.timestamp.isoformat(), "sequence": i}
-            for i, gs in enumerate(game_states)
-        ]
+        return []

@@ -14,7 +14,7 @@ from sqlalchemy import text, func, and_, or_, asc, desc
 from sqlalchemy.orm import Session, joinedload
 
 from hopilot.database import DatabaseConnection
-from hopilot.models import GameState, Player, Bet, BoardCard, HandMatrix, MatrixCell
+from hopilot.models import GameState, Player, Bet, HandMatrix, MatrixCell
 from hopilot.performance_monitor import PerformanceMonitor
 from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.query_cache import cached_query
@@ -110,13 +110,18 @@ class GameReplayQueryEngine:
                     logger.warning(f"No MatrixCell found for hand combination '{hand_combination}' in matrix {matrix_id}")
                     return []
 
-                # Get GameStates for this cell
-                query = session.query(GameState).filter(GameState.cell_id == matrix_cell.id)
+                # Get candidate GameStates and derive cell membership from hero hole cards
+                candidate_states = (
+                    session.query(GameState)
+                    .options(joinedload(GameState.players))
+                    .order_by(asc(GameState.timestamp) if chronological else desc(GameState.timestamp))
+                    .all()
+                )
 
-                if chronological:
-                    query = query.order_by(asc(GameState.timestamp))
-
-                game_states = query.limit(limit).all()
+                game_states = [
+                    gs for gs in candidate_states
+                    if self._game_state_matches_cell(gs, matrix_cell.row_index, matrix_cell.col_index)
+                ][:limit]
 
                 # Build sequences for each game
                 results = []
@@ -126,6 +131,19 @@ class GameReplayQueryEngine:
                         results.append(sequence)
 
                 return results
+
+    def _game_state_matches_cell(self, game_state: GameState, row_idx: int, col_idx: int) -> bool:
+        hero_player = next((player for player in game_state.players if player.is_hero), None)
+        if hero_player is None:
+            return False
+
+        try:
+            from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards
+            row, col = hand_coordinates_from_hole_cards(hero_player.hole_cards)
+        except Exception:
+            return False
+
+        return row == row_idx and col == col_idx
 
     @cached_query(ttl=600)  # Cache for 10 minutes
     def get_game_timeline_summary(
@@ -199,42 +217,38 @@ class GameReplayQueryEngine:
         })
 
         # Add board card reveals (chronological by street)
-        if game_state.board_cards:
-            # BoardCard contains all community cards in one record
-            board_card = game_state.board_cards
-
-            # Add flop reveal
-            events.append({
-                'event_type': 'board_reveal',
-                'timestamp': None,  # No individual timestamps for board cards
-                'round': 'flop',
-                'data': {
-                    'cards': [board_card.flop1, board_card.flop2, board_card.flop3],
-                    'street': 'flop'
-                }
-            })
-
-            # Add turn reveal
-            events.append({
-                'event_type': 'board_reveal',
-                'timestamp': None,
-                'round': 'turn',
-                'data': {
-                    'card': board_card.turn,
-                    'street': 'turn'
-                }
-            })
-
-            # Add river reveal
-            events.append({
-                'event_type': 'board_reveal',
-                'timestamp': None,
-                'round': 'river',
-                'data': {
-                    'card': board_card.river,
-                    'street': 'river'
-                }
-            })
+        board_cards = self._parse_board_cards(game_state.board_cards_str)
+        if board_cards:
+            if len(board_cards) >= 3:
+                events.append({
+                    'event_type': 'board_reveal',
+                    'timestamp': None,
+                    'round': 'flop',
+                    'data': {
+                        'cards': board_cards[:3],
+                        'street': 'flop'
+                    }
+                })
+            if len(board_cards) >= 4:
+                events.append({
+                    'event_type': 'board_reveal',
+                    'timestamp': None,
+                    'round': 'turn',
+                    'data': {
+                        'card': board_cards[3],
+                        'street': 'turn'
+                    }
+                })
+            if len(board_cards) >= 5:
+                events.append({
+                    'event_type': 'board_reveal',
+                    'timestamp': None,
+                    'round': 'river',
+                    'data': {
+                        'card': board_cards[4],
+                        'street': 'river'
+                    }
+                })
 
         # Add betting actions (chronological)
         if game_state.bets:

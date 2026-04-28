@@ -10,9 +10,10 @@ from typing import Dict, List, Optional, Any, Set
 from datetime import datetime, timezone
 
 from sqlalchemy import func, and_, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from hopilot.database import DatabaseConnection
+from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards
 from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.aggregation_engine import AggregationEngine
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
@@ -138,16 +139,20 @@ class IncrementalAggregationEngine:
         Returns:
             List of GameState objects to process
         """
-        query = session.query(GameState).join(MatrixCell).filter(
-            MatrixCell.matrix_id == matrix_id
-        )
+        matrix_cells = session.query(MatrixCell).filter(MatrixCell.matrix_id == matrix_id).all()
+        valid_cell_coords = {(cell.row_index, cell.col_index) for cell in matrix_cells}
+
+        query = session.query(GameState).options(joinedload(GameState.players))
 
         if new_game_state_ids:
-            # Process specific GameStates
             query = query.filter(GameState.id.in_(new_game_state_ids))
 
-        # Ensure MatrixCell relationship is loaded
-        return query.options(joinedload(GameState.matrix_cell)).all()
+        game_states = query.all()
+
+        return [
+            gs for gs in game_states
+            if self._game_state_matches_matrix_cell(gs, valid_cell_coords)
+        ]
 
     def _group_game_states_by_cell(self, game_states: List[GameState]) -> Dict[tuple, List[GameState]]:
         """
@@ -162,13 +167,29 @@ class IncrementalAggregationEngine:
         cell_groups = {}
 
         for gs in game_states:
-            if gs.matrix_cell:
-                cell_coords = (gs.matrix_cell.row_index, gs.matrix_cell.col_index)
-                if cell_coords not in cell_groups:
-                    cell_groups[cell_coords] = []
-                cell_groups[cell_coords].append(gs)
+            coords = self._get_game_state_cell_coords(gs)
+            if coords is None:
+                continue
+
+            if coords not in cell_groups:
+                cell_groups[coords] = []
+            cell_groups[coords].append(gs)
 
         return cell_groups
+
+    def _get_game_state_cell_coords(self, game_state: GameState) -> Optional[tuple[int, int]]:
+        hero_player = next((player for player in game_state.players if player.is_hero), None)
+        if hero_player is None:
+            return None
+
+        try:
+            return hand_coordinates_from_hole_cards(hero_player.hole_cards)
+        except Exception:
+            return None
+
+    def _game_state_matches_matrix_cell(self, game_state: GameState, valid_cell_coords: Set[tuple[int, int]]) -> bool:
+        coords = self._get_game_state_cell_coords(game_state)
+        return coords in valid_cell_coords if coords is not None else False
 
     def _update_single_cell_incrementally(
         self,
@@ -270,9 +291,11 @@ class IncrementalAggregationEngine:
         if not matrix_cell:
             raise ValueError(f"MatrixCell not found for aggregated metric {existing_metric.id}")
 
-        total_games_in_cell = session.query(func.count(GameState.id)).filter(
-            GameState.cell_id == matrix_cell.id
-        ).scalar()
+        game_states = session.query(GameState).options(joinedload(GameState.players)).all()
+        total_games_in_cell = sum(
+            1 for gs in game_states
+            if self._game_state_matches_cell(gs, matrix_cell.row_index, matrix_cell.col_index)
+        )
 
         current_total_games = float(total_games_in_cell or 0) - len(new_game_states)  # Subtract new ones
         current_equity = float(existing_metric.equity) if existing_metric.equity else 0.0

@@ -31,7 +31,7 @@ def test_aggregate_run_writes_one_simulation_one_matrix_and_169_cell_summaries()
         assert result["matrix_cells_written"] == 169
         assert result["aggregated_metrics_written"] == 169
         assert result["unmapped_hero_records"] == 0
-        assert result["status"] == "completed"
+        assert result["status"] == "aggregated"
     finally:
         fixture.cleanup()
 
@@ -63,7 +63,7 @@ def test_rerun_aggregation_replaces_only_selected_run_summaries_and_keeps_raw_ro
         assert initial_metric_ids != rerun_metric_ids
         assert rerun_result["matrix_cells_recreated"] == 169
         assert rerun_result["aggregated_metrics_recreated"] == 169
-        assert rerun_result["status"] == "completed"
+        assert rerun_result["status"] == "aggregated"
     finally:
         fixture.cleanup()
 
@@ -81,6 +81,6 @@ def test_aggregate_run_excludes_unmappable_hero_records_and_reports_them() -> No
         assert len(summary["matrix_cells"]) == 169
         assert len(summary["aggregated_metrics"]) == 169
         assert result["unmapped_hero_records"] == 1
-        assert result["status"] == "completed"
+        assert result["status"] == "aggregated"
     finally:
         fixture.cleanup()

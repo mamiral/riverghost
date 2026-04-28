@@ -11,9 +11,10 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from sqlalchemy import text, func, and_, or_, asc, desc, case, cast, Integer
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from hopilot.db import get_session
+from hopilot.database import DatabaseConnection
+from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards
 from hopilot.models import GameState, MatrixCell, AggregatedMetric, HandMatrix
 from hopilot.performance_monitor import PerformanceMonitor
 from hopilot.gto.query_cache import cached_query
@@ -37,6 +38,7 @@ class ConvergenceAnalysisQueries:
             database_url: Database connection URL
         """
         self.database_url = database_url
+        self.db_connection = DatabaseConnection(database_url)
         self.performance_monitor = PerformanceMonitor()
 
     @cached_query(ttl=600)  # Cache for 10 minutes
@@ -45,7 +47,8 @@ class ConvergenceAnalysisQueries:
         matrix_id: int,
         row_idx: int,
         col_idx: int,
-        sample_intervals: Optional[List[int]] = None
+        sample_intervals: Optional[List[int]] = None,
+        min_samples: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Get equity convergence time series for a specific matrix cell.
@@ -63,8 +66,7 @@ class ConvergenceAnalysisQueries:
             sample_intervals = [100, 250, 500, 1000, 2500, 5000, 10000]
 
         with self.performance_monitor.track_operation("equity_convergence_series"):
-            session = get_session()
-            try:
+            with self.db_connection.session_scope() as session:
                 # Find the MatrixCell
                 matrix_cell = session.query(MatrixCell).filter(
                     and_(
@@ -78,10 +80,22 @@ class ConvergenceAnalysisQueries:
                     logger.warning(f"No MatrixCell found for matrix_id={matrix_id}, row={row_idx}, col={col_idx}")
                     return None
 
-                # Get all GameStates for this cell, ordered by creation time
-                game_states = session.query(GameState).filter(
-                    GameState.cell_id == matrix_cell.id
-                ).order_by(asc(GameState.timestamp)).all()
+                # Get all raw GameStates ordered by timestamp and derive cell membership from hero hole cards.
+                game_states = (
+                    session.query(GameState)
+                    .options(selectinload(GameState.players))
+                    .order_by(asc(GameState.timestamp))
+                    .all()
+                )
+
+                game_states = [
+                    gs for gs in game_states
+                    if self._game_state_matches_cell(gs, matrix_cell.row_index, matrix_cell.col_index)
+                ]
+
+                if min_samples is not None and len(game_states) < min_samples:
+                    logger.warning(f"Insufficient samples for minimum requirement: {len(game_states)} < {min_samples}")
+                    return None
 
                 if len(game_states) < min(sample_intervals):
                     logger.warning(f"Insufficient samples: {len(game_states)} < {min(sample_intervals)}")
@@ -115,8 +129,18 @@ class ConvergenceAnalysisQueries:
                     'convergence_series': convergence_points,
                     'final_equity': convergence_points[-1]['equity'] if convergence_points else None
                 }
-            finally:
-                session.close()
+
+    def _game_state_matches_cell(self, game_state: GameState, row_idx: int, col_idx: int) -> bool:
+        hero_player = next((player for player in game_state.players if player.is_hero), None)
+        if hero_player is None:
+            return False
+
+        try:
+            row, col = hand_coordinates_from_hole_cards(hero_player.hole_cards)
+        except ValueError:
+            return False
+
+        return row == row_idx and col == col_idx
 
     @cached_query(ttl=600)  # Cache for 10 minutes
     def get_convergence_statistics(
@@ -136,47 +160,44 @@ class ConvergenceAnalysisQueries:
         """
         with self.performance_monitor.track_operation("convergence_statistics"):
             with self.db_connection.session_scope() as session:
-                # Get all matrix cells with sufficient samples
-                cells_with_data = session.query(
-                    MatrixCell,
-                    func.count(GameState.id).label('sample_count')
-                ).join(GameState).filter(
-                    MatrixCell.matrix_id == matrix_id
-                ).group_by(MatrixCell.id).having(
-                    func.count(GameState.id) >= min_samples
-                ).all()
+                cells = session.query(MatrixCell).filter(MatrixCell.matrix_id == matrix_id).all()
 
                 convergence_stats = []
 
-                for cell, sample_count in cells_with_data:
-                    # Get convergence series for this cell
+                for cell in cells:
                     series = self.get_equity_convergence_series(
-                        matrix_id, cell.row_index, cell.col_index,
-                        sample_intervals=[100, 500, 1000, sample_count]
+                        matrix_id,
+                        cell.row_index,
+                        cell.col_index,
+                        sample_intervals=[100, 500, 1000, min_samples],
+                        min_samples=min_samples,
                     )
+                    if not series:
+                        continue
 
-                    if series and len(series['convergence_series']) >= 2:
-                        points = series['convergence_series']
-                        initial_equity = points[0]['equity']
-                        final_equity = points[-1]['equity']
+                    points = series['convergence_series']
+                    if len(points) < 2:
+                        continue
 
-                        # Calculate convergence metrics
-                        equity_change = abs(final_equity - initial_equity)
-                        convergence_rate = equity_change / len(points) if len(points) > 1 else 0
+                    initial_equity = points[0]['equity']
+                    final_equity = points[-1]['equity']
+                    sample_count = series['total_samples']
+                    equity_change = abs(final_equity - initial_equity)
+                    convergence_rate = equity_change / len(points) if len(points) > 1 else 0
 
-                        convergence_stats.append({
-                            'row_idx': cell.row_index,
-                            'col_idx': cell.col_index,
-                            'hand_combination': cell.hand_combination,
-                            'sample_count': sample_count,
-                            'initial_equity': initial_equity,
-                            'final_equity': final_equity,
-                            'equity_change': equity_change,
-                            'convergence_rate': convergence_rate,
-                            'convergence_status': self._assess_convergence_status(
-                                equity_change, sample_count
-                            )
-                        })
+                    convergence_stats.append({
+                        'row_idx': cell.row_index,
+                        'col_idx': cell.col_index,
+                        'hand_combination': cell.hand_combination,
+                        'sample_count': sample_count,
+                        'initial_equity': initial_equity,
+                        'final_equity': final_equity,
+                        'equity_change': equity_change,
+                        'convergence_rate': convergence_rate,
+                        'convergence_status': self._assess_convergence_status(
+                            equity_change, sample_count
+                        )
+                    })
 
                 return {
                     'matrix_id': matrix_id,

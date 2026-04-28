@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import selectinload
 
 from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.aof_hand_matrix import hand_key_from_hole_cards
 from hopilot.models import GameState, Player, Simulation
 from hopilot.logging_config import get_logger
 
@@ -188,6 +189,10 @@ class ReplayQueryService:
         hero = next((player for player in players if player["is_hero"]), None)
         sequence = self._build_replay_sequence(game_state, board_cards)
 
+        hand_combination = getattr(getattr(game_state, "matrix_cell", None), "hand_combination", None)
+        if hand_combination is None:
+            hand_combination = self._derive_hand_combination(game_state)
+
         replay_view = ReplayView(
             status=STATUS_AVAILABLE,
             status_message="Replay available from persisted GameState.",
@@ -209,10 +214,24 @@ class ReplayQueryService:
                 "bets": [],
                 "jackpots": [],
             },
-            hand_combination=getattr(getattr(game_state, "matrix_cell", None), "hand_combination", None),
+            hand_combination=hand_combination,
         )
 
         return replay_view.to_dict()
+
+    def _derive_hand_combination(self, game_state: GameState) -> Optional[str]:
+        hero_player = next((player for player in game_state.players if player.is_hero), None)
+        villain_player = next((player for player in game_state.players if not player.is_hero), None)
+
+        if hero_player is None or villain_player is None:
+            return None
+
+        try:
+            hero_key = hand_key_from_hole_cards(hero_player.hole_cards)
+            villain_key = hand_key_from_hole_cards(villain_player.hole_cards)
+            return f"{hero_key} vs {villain_key}"
+        except ValueError:
+            return None
 
     def _build_replay_sequence(self, game_state: GameState, board_cards: List[str]) -> List[Dict[str, Any]]:
         events: List[Dict[str, Any]] = []

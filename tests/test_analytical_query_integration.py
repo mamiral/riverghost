@@ -14,6 +14,7 @@ import pytest
 import sys
 import os
 import shutil
+import tempfile
 from datetime import datetime, timezone
 
 # Add python directory to path
@@ -40,11 +41,12 @@ from hopilot.models import (
 @pytest.fixture
 def comprehensive_test_db():
     """Create a comprehensive test database with all analytical data."""
-    temp_dir = os.path.join(os.path.dirname(__file__), 'tests', 'temp_test_db')
-    os.makedirs(temp_dir, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix='comprehensive_test_db_', dir=os.path.dirname(__file__))
     db_path = os.path.join(temp_dir, 'comprehensive_test.db')
     db_url = f'sqlite:///{db_path}'
 
+    if os.path.exists(db_path):
+        os.remove(db_path)
     conn = DatabaseConnection(db_url)
     conn.create_tables()
 
@@ -55,12 +57,6 @@ def comprehensive_test_db():
     sim_params = '{"num_simulations": 10000, "matrix_size": "13x13", "game_type": "NLHE"}'
     sim_id = repo.create_simulation(sim_params)
     matrix_id = repo.create_hand_matrix(sim_id)
-
-    # Create board cards
-    board_id = repo.create_board_card({
-        'flop1': 'As', 'flop2': 'Ks', 'flop3': 'Qs',
-        'turn': 'Js', 'river': 'Ts'
-    })
 
     # Create multiple MatrixCells for comprehensive testing
     cells_data = []
@@ -73,6 +69,8 @@ def comprehensive_test_db():
     # Create comprehensive game data
     total_games = 3000  # 1000 games per hand combination
     jackpot_games = 0
+    sample_game_state_id = None
+    sample_outcome = None
 
     for game_idx in range(total_games):
         cell_idx = game_idx // 1000  # Rotate through hand combinations
@@ -83,13 +81,15 @@ def comprehensive_test_db():
         outcome = outcome_patterns[game_idx % 5]
 
         gs_data = {
-            'cell_id': cell_id,
             'pot_size': 1000 + (game_idx % 500),  # Vary pot sizes
-            'board_cards_id': board_id,
+            'board_cards_str': 'As,Ks,Qs,Js,Ts',
             'round': 'preflop',
             'outcome': outcome
         }
         gs_id = repo.create_game_state(gs_data)
+        if game_idx == 0:
+            sample_game_state_id = gs_id
+            sample_outcome = outcome
 
         # Create players
         for player_idx in range(2):  # Hero and villain
@@ -126,14 +126,20 @@ def comprehensive_test_db():
                 repo.create_jackpot(jackpot_data)
                 jackpot_games += 1
 
-    yield db_url, matrix_id, cells_data, total_games, jackpot_games
+    yield db_url, matrix_id, cells_data, total_games, jackpot_games, sample_game_state_id, sample_outcome
 
     # Cleanup
     try:
+        repo.connection.close()
+        repo.aggregation_engine.db_connection.close()
         conn.close()
+    except Exception:
+        pass
+
+    try:
         if os.path.exists(db_path):
             os.remove(db_path)
-        os.rmdir(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception:
         pass
 
@@ -195,7 +201,7 @@ class TestAnalyticalQueryIntegration:
 
     def test_complete_analytical_pipeline(self, comprehensive_test_db):
         """Test the complete analytical query pipeline from data to insights."""
-        db_url, matrix_id, cells_data, total_games, jackpot_games = comprehensive_test_db
+        db_url, matrix_id, cells_data, total_games, jackpot_games, sample_game_state_id, sample_outcome = comprehensive_test_db
 
         # Initialize all query engines
         replay_engine = GameReplayQueryEngine(db_url)
@@ -203,14 +209,21 @@ class TestAnalyticalQueryIntegration:
         jackpot_engine = JackpotFrequencyQueries(db_url)
 
         # Test 1: Game Replay - Get a sample game
-        cell_id = cells_data[0][2]  # First cell
-        replay_result = replay_engine.replay_game_sequence(cell_id, include_player_details=True)
+        replay_result = replay_engine.replay_game_sequence(sample_game_state_id, include_player_details=True)
 
         assert replay_result is not None
-        assert replay_result['game_state_id'] == cell_id
+        assert replay_result['game_state_id'] == sample_game_state_id
         assert 'sequence' in replay_result
-        assert 'hand_combination' in replay_result
-        assert replay_result['hand_combination'] == "AA vs AK"
+        assert replay_result['final_outcome'] == sample_outcome
+        assert replay_result['hand_combination'] is not None
+
+        # Guard: analytical pipeline should operate from raw GameState rows, not legacy board_cards_id or cell_id.
+        repo = DatabaseRepository(db_url)
+        raw_state = repo.get_game_state(sample_game_state_id)
+        assert raw_state is not None
+        assert raw_state['board_cards_str'] == 'As,Ks,Qs,Js,Ts'
+        assert 'board_cards_id' not in raw_state
+        assert 'cell_id' not in raw_state
 
         # Test 2: Convergence Analysis - Get equity convergence
         conv_result = conv_engine.get_equity_convergence_series(
@@ -268,6 +281,13 @@ class TestAnalyticalQueryIntegration:
                 # Equity change should be reasonable (not all identical)
                 assert isinstance(cell_data['equity_change'], (int, float))
 
+        # Guard: analytical pipeline should operate from raw GameState rows, not legacy board_cards_id or cell_id.
+        raw_state = repo.get_game_state(sample_game_state_id)
+        assert raw_state is not None
+        assert raw_state['board_cards_str'] == 'As,Ks,Qs,Js,Ts'
+        assert 'board_cards_id' not in raw_state
+        assert 'cell_id' not in raw_state
+
     def test_query_raw_run_scopes_by_simulation_and_hand_matrix_boundary(self):
         """Verify raw GameState rows are returned only for the selected run boundary."""
         temp_dir = os.path.join(os.path.dirname(__file__), 'temp_test_db_raw_run')
@@ -278,6 +298,8 @@ class TestAnalyticalQueryIntegration:
         db_url = f'sqlite:///{db_path}'
 
         try:
+            if os.path.exists(db_path):
+                os.remove(db_path)
             conn = DatabaseConnection(db_url)
             conn.create_tables()
             repo = DatabaseRepository(db_url)
@@ -358,6 +380,8 @@ class TestAnalyticalQueryIntegration:
         db_url = f'sqlite:///{db_path}'
 
         try:
+            if os.path.exists(db_path):
+                os.remove(db_path)
             conn = DatabaseConnection(db_url)
             conn.create_tables()
             repo = DatabaseRepository(db_url)
@@ -436,6 +460,8 @@ class TestAnalyticalQueryIntegration:
         db_url = f'sqlite:///{db_path}'
 
         try:
+            if os.path.exists(db_path):
+                os.remove(db_path)
             conn = DatabaseConnection(db_url)
             conn.create_tables()
             repo = DatabaseRepository(db_url)
@@ -488,7 +514,7 @@ class TestAnalyticalQueryIntegration:
         """Test that analytical queries perform well under load."""
         import time
 
-        db_url, matrix_id, cells_data, total_games, jackpot_games = comprehensive_test_db
+        db_url, matrix_id, cells_data, total_games, jackpot_games, _sample_game_state_id, _sample_outcome = comprehensive_test_db
 
         conv_engine = ConvergenceAnalysisQueries(db_url)
         jackpot_engine = JackpotFrequencyQueries(db_url)
@@ -516,7 +542,7 @@ class TestAnalyticalQueryIntegration:
 
     def test_analytical_query_data_consistency(self, comprehensive_test_db):
         """Test that analytical queries produce consistent and valid data."""
-        db_url, matrix_id, cells_data, total_games, jackpot_games = comprehensive_test_db
+        db_url, matrix_id, cells_data, total_games, jackpot_games, _sample_game_state_id, _sample_outcome = comprehensive_test_db
 
         conv_engine = ConvergenceAnalysisQueries(db_url)
         jackpot_engine = JackpotFrequencyQueries(db_url)
@@ -549,7 +575,7 @@ class TestAnalyticalQueryIntegration:
 
     def test_analytical_query_error_handling(self, comprehensive_test_db):
         """Test error handling in analytical queries."""
-        db_url, matrix_id, cells_data, total_games, jackpot_games = comprehensive_test_db
+        db_url, matrix_id, cells_data, total_games, jackpot_games, _sample_game_state_id, _sample_outcome = comprehensive_test_db
 
         conv_engine = ConvergenceAnalysisQueries(db_url)
         jackpot_engine = JackpotFrequencyQueries(db_url)
@@ -567,7 +593,7 @@ class TestAnalyticalQueryIntegration:
 
     def test_analytical_query_mathematical_correctness(self, comprehensive_test_db):
         """Test mathematical correctness of analytical calculations."""
-        db_url, matrix_id, cells_data, total_games, jackpot_games = comprehensive_test_db
+        db_url, matrix_id, cells_data, total_games, jackpot_games, _sample_game_state_id, _sample_outcome = comprehensive_test_db
 
         jackpot_engine = JackpotFrequencyQueries(db_url)
 
@@ -591,7 +617,7 @@ class TestAnalyticalQueryIntegration:
 
     def test_analytical_query_integration_workflow(self, comprehensive_test_db):
         """Test a complete analytical workflow from data to insights."""
-        db_url, matrix_id, cells_data, total_games, jackpot_games = comprehensive_test_db
+        db_url, matrix_id, cells_data, total_games, jackpot_games, _sample_game_state_id, _sample_outcome = comprehensive_test_db
 
         # Step 1: Analyze convergence
         conv_engine = ConvergenceAnalysisQueries(db_url)

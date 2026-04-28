@@ -10,10 +10,11 @@ import logging
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timezone
 
-from sqlalchemy import text, func, case, and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import text, func, case, and_, or_, asc
+from sqlalchemy.orm import Session, selectinload
 
 from hopilot.database import DatabaseConnection
+from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards
 from hopilot.models import GameState, MatrixCell, AggregatedMetric, Simulation, HandMatrix, Jackpot
 from hopilot.performance_monitor import PerformanceMonitor
 
@@ -77,57 +78,30 @@ class AggregationEngine:
                     logger.warning(f"No MatrixCell found for matrix_id={matrix_id}, row={row_index}, col={col_index}")
                     return None
 
-                # Count total game states for this cell
-                game_states_count = session.query(func.count(GameState.id)).filter(
-                    GameState.cell_id == matrix_cell.id
-                ).scalar()
+                # Derive game state membership from hero hole cards and matrix cell coordinates
+                candidate_game_states = (
+                    session.query(GameState)
+                    .options(selectinload(GameState.players))
+                    .order_by(asc(GameState.timestamp))
+                    .all()
+                )
 
-                if game_states_count < min_samples:
-                    logger.info(f"Insufficient samples for cell {matrix_cell.id}: {game_states_count} < {min_samples}")
+                game_states = [
+                    gs for gs in candidate_game_states
+                    if self._game_state_matches_cell(gs, matrix_cell.row_index, matrix_cell.col_index)
+                ]
+
+                total_games = len(game_states)
+                if total_games < min_samples:
+                    logger.info(f"Insufficient samples for cell {matrix_cell.id}: {total_games} < {min_samples}")
                     return None
 
-                # Core aggregation query with jackpot integration
-                # First, get basic game state aggregations
-                game_state_agg = session.query(
-                    func.count(GameState.id).label('total_games'),
-                    func.avg(
-                        case(
-                            (GameState.outcome.in_(['win', 'jackpot_win']), 1.0),
-                            (GameState.outcome.in_(['loss', 'jackpot_loss']), 0.0),
-                            (GameState.outcome.in_(['tie', 'jackpot_tie']), 0.5),
-                            else_=0.0
-                        )
-                    ).label('equity'),
-                    func.avg(
-                        case(
-                            (GameState.outcome.in_(['win', 'jackpot_win']), GameState.pot_size),
-                            (GameState.outcome.in_(['loss', 'jackpot_loss']), -GameState.pot_size),
-                            (GameState.outcome.in_(['tie', 'jackpot_tie']), 0.0),
-                            else_=0.0
-                        )
-                    ).label('avg_ev')
-                ).filter(GameState.cell_id == matrix_cell.id).first()
+                equity, avg_ev = self._calculate_aggregate_metrics(game_states)
 
-                # Get jackpot statistics by joining with jackpot table
-                jackpot_agg = session.query(
-                    func.count(func.distinct(GameState.id)).label('games_with_jackpots'),
-                    func.avg(Jackpot.payout_amount).label('avg_jackpot_payout'),
-                    func.sum(Jackpot.payout_amount).label('total_jackpot_payout')
-                ).join(GameState, Jackpot.game_state_id == GameState.id
-                ).filter(GameState.cell_id == matrix_cell.id).first()
-
-                if not game_state_agg:
-                    return None
-
-                # Extract results
-                total_games = game_state_agg.total_games
-                equity = float(game_state_agg.equity) if game_state_agg.equity else 0.0
-                avg_ev = float(game_state_agg.avg_ev) if game_state_agg.avg_ev else 0.0
-
-                # Extract jackpot results
-                games_with_jackpots = jackpot_agg.games_with_jackpots if jackpot_agg and jackpot_agg.games_with_jackpots else 0
-                avg_jackpot_payout = float(jackpot_agg.avg_jackpot_payout) if jackpot_agg and jackpot_agg.avg_jackpot_payout else 0.0
-                total_jackpot_payout = float(jackpot_agg.total_jackpot_payout) if jackpot_agg and jackpot_agg.total_jackpot_payout else 0.0
+                jackpots = session.query(Jackpot).filter(Jackpot.game_state_id.in_([gs.id for gs in game_states])).all()
+                games_with_jackpots = len({jp.game_state_id for jp in jackpots})
+                avg_jackpot_payout = float(sum((jp.payout_amount or 0) for jp in jackpots) / len(jackpots)) if jackpots else 0.0
+                total_jackpot_payout = float(sum((jp.payout_amount or 0) for jp in jackpots))
 
                 # Calculate jackpot frequency
                 jackpot_frequency = games_with_jackpots / total_games if total_games > 0 else 0.0
@@ -171,6 +145,39 @@ class AggregationEngine:
                     f"jackpot_adjusted_EV={jackpot_adjusted_ev:.2f}"
                 )
                 return result
+
+    def _game_state_matches_cell(self, game_state: GameState, row_idx: int, col_idx: int) -> bool:
+        hero_player = next((player for player in game_state.players if player.is_hero), None)
+        if hero_player is None:
+            return False
+
+        try:
+            row, col = hand_coordinates_from_hole_cards(hero_player.hole_cards)
+        except Exception:
+            return False
+
+        return row == row_idx and col == col_idx
+
+    def _calculate_aggregate_metrics(self, game_states: List[GameState]) -> tuple[float, float]:
+        total_games = len(game_states)
+        if total_games == 0:
+            return 0.0, 0.0
+
+        win_score = 0.0
+        ev_sum = 0.0
+
+        for gs in game_states:
+            if gs.outcome in ['win', 'jackpot_win']:
+                win_score += 1.0
+                ev_sum += float(gs.pot_size)
+            elif gs.outcome in ['loss', 'jackpot_loss']:
+                ev_sum -= float(gs.pot_size)
+            elif gs.outcome in ['tie', 'jackpot_tie']:
+                win_score += 0.5
+
+        equity = win_score / total_games
+        avg_ev = ev_sum / total_games
+        return equity, avg_ev
 
     def get_aggregation_query_plan(
         self,
@@ -222,7 +229,8 @@ class AggregationEngine:
                         ELSE 0.0
                     END) as avg_ev
                 FROM game_states gs
-                WHERE gs.cell_id = :cell_id
+                JOIN players p ON p.game_state_id = gs.id
+                WHERE p.is_hero = 1
             """)
 
             result = session.execute(explain_query, {'cell_id': matrix_cell.id})
@@ -265,7 +273,7 @@ class AggregationEngine:
         # Generate recommendations
         if not analysis['uses_indexes']:
             analysis['recommendations'].append(
-                "Consider adding indexes on game_states.cell_id for better aggregation performance"
+                "Consider adding indexes on players.game_state_id and game_states.timestamp for better aggregation performance"
             )
 
         if analysis['full_table_scans'] > 0:
