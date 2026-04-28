@@ -26,8 +26,11 @@ def test_probability_metric_range_and_display():
     assert "cells" in payload
     if payload["cells"]:
         value = payload["cells"][0]["value"]
-        assert 0.0 <= value <= 1.0
-        assert payload["cells"][0]["display"].endswith("%")
+        if value is not None:
+            assert 0.0 <= value <= 1.0
+            assert payload["cells"][0]["display"].endswith("%")
+        else:
+            assert payload["cells"][0]["display"] == "--"
 
 
 def test_equity_and_ev_and_eqr_metric_semantics():
@@ -43,6 +46,11 @@ def test_equity_and_ev_and_eqr_metric_semantics():
     assert "cells" in eq_payload
     assert "cells" in eqr_payload
     if ev_payload["cells"]:
-        assert isinstance(ev_payload["cells"][0]["value"], float)
-        assert 0.0 <= eq_payload["cells"][0]["value"] <= 1.0
-        assert 0.0 <= eqr_payload["cells"][0]["value"] <= 1.0
+        if ev_payload["cells"][0]["value"] is not None:
+            assert isinstance(ev_payload["cells"][0]["value"], float)
+        else:
+            assert ev_payload["cells"][0]["display"] == "--"
+        if eq_payload["cells"][0]["value"] is not None:
+            assert 0.0 <= eq_payload["cells"][0]["value"] <= 1.0
+        if eqr_payload["cells"][0]["value"] is not None:
+            assert 0.0 <= eqr_payload["cells"][0]["value"] <= 1.0

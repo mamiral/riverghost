@@ -34,12 +34,44 @@ def mock_provider():
     provider = Mock()
     
     def mock_build_context(*args, **kwargs):
-        return {"position": kwargs.get("position", "UTG")}
-    
+        position = kwargs.get("position", args[0] if len(args) > 0 else "UTG")
+        metric = kwargs.get("metric", args[1] if len(args) > 1 else "WIN_LOSE_PROBABILITY")
+        position_actions = kwargs.get("position_actions", args[2] if len(args) > 2 else {})
+        action = position_actions.get(position, "UNKNOWN")
+        strict_current_action = kwargs.get("strict_current_action", False)
+
+        return {
+            "position": position,
+            "action": action,
+            "metric": metric,
+            "position_actions": position_actions,
+            "active_players": sum(1 for act in position_actions.values() if act != "FOLD"),
+            "pot_size": float(kwargs.get("pot_size", 20.0)),
+            "bet_amount": float(kwargs.get("bet_amount", 10.0)),
+            "effective_mode": "strict-current-action" if strict_current_action else "analysis",
+            "timeout_ms": 30000,
+        }
+
     def mock_get_matrix_payload(*args, **kwargs):
         """Return a payload with successful cells."""
+        position = kwargs.get("position", args[0] if len(args) > 0 else "UTG")
+        metric = kwargs.get("metric", args[1] if len(args) > 1 else "WIN_LOSE_PROBABILITY")
+        position_actions = kwargs.get("position_actions", args[2] if len(args) > 2 else {})
+        action = position_actions.get(position, "UNKNOWN")
+        strict_current_action = kwargs.get("strict_current_action", False)
+        context = {
+            "position": position,
+            "action": action,
+            "metric": metric,
+            "position_actions": position_actions,
+            "active_players": sum(1 for act in position_actions.values() if act != "FOLD"),
+            "pot_size": float(kwargs.get("pot_size", 20.0)),
+            "bet_amount": float(kwargs.get("bet_amount", 10.0)),
+            "effective_mode": "strict-current-action" if strict_current_action else "analysis",
+            "timeout_ms": 30000,
+        }
         return {
-            "context": {"position": kwargs.get("position", "UTG")},
+            "context": context,
             "cells": [
                 {
                     "row": i,
@@ -155,6 +187,7 @@ class TestPrecomputeRunNoKeyError:
             positions=["UTG"],
             metrics=["WinRate"],
             strict_modes=[True],
+            simulations_per_cell=1,
         )
         
         runner = AoFPrecomputeRunner(
@@ -174,6 +207,7 @@ class TestPrecomputeRunNoKeyError:
             positions=["BTN"],
             metrics=["EachWayEV"],
             strict_modes=[False],
+            simulations_per_cell=1,
         )
         
         runner = AoFPrecomputeRunner(
@@ -201,6 +235,7 @@ class TestDataPersistenceAfterFix:
             positions=["SB"],
             metrics=["WinRate"],
             strict_modes=[True],
+            simulations_per_cell=1,
         )
         
         runner = AoFPrecomputeRunner(
@@ -229,6 +264,7 @@ class TestDataPersistenceAfterFix:
             positions=["BB"],
             metrics=["EachWayEV"],
             strict_modes=[True],
+            simulations_per_cell=1,
         )
         
         runner = AoFPrecomputeRunner(
@@ -255,6 +291,7 @@ class TestDataPersistenceAfterFix:
             positions=["UTG"],
             metrics=["WinRate"],
             strict_modes=[False],
+            simulations_per_cell=1,
         )
         
         runner = AoFPrecomputeRunner(

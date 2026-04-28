@@ -137,9 +137,12 @@ class TestMetricsCalculator:
         assert isinstance(equity, Decimal), "Equity should be a Decimal"
         assert 0.0 <= equity <= 1.0, f"Equity should be between 0 and 1, got {equity}"
 
-        # With fixed seed, result should be reproducible
+        # With fixed seed, repeating the same random sequence should reproduce the result
+        import random
+        random.seed(42)
         equity2 = self.calculator.calculate_cell_equity(cell)
-        assert equity == equity2, "Results should be reproducible with fixed random seed"
+        assert isinstance(equity2, Decimal)
+        assert equity == equity2, "Results should be reproducible when the random seed is reset"
 
         # Test that method handles different game counts
         cell_small = Mock()

@@ -974,12 +974,13 @@ class AoFPrecomputeRunner:
     def _log_gui_lifecycle_event(self, event: str, **fields: Any) -> None:
         self.logger.info("AoF gui precompute event=%s fields=%s", event, fields)
 
-    def _persist_scenario_results(self, scenario_key: str, payload: dict[str, Any]) -> None:
+    def _persist_scenario_results(self, scenario_key: str, payload: dict[str, Any]) -> dict[str, int] | None:
         """
         Phase 3: Persist precompute results to normalized database.
         
         Converts the solver payload (cells with metrics) into database records
         for HandMatrix and MatrixCell tables according to the normalized schema.
+        Returns the simulation and matrix IDs when successful.
         """
         try:
             # Parse scenario key: format is position:actions:metric:strict_mode
@@ -987,7 +988,7 @@ class AoFPrecomputeRunner:
             parts = scenario_key.split(":")
             if len(parts) < 4:
                 self.logger.warning(f"Cannot parse scenario key: {scenario_key}")
-                return
+                return None
 
             position_str = parts[0].strip()
             actions_str = parts[1].strip()  # e.g., "FOLD-FOLD-FOLD-FOLD"
@@ -1017,7 +1018,10 @@ class AoFPrecomputeRunner:
                 try:
                     row_idx = cell.get("row")
                     col_idx = cell.get("col")
-                    hand_key = cell.get("hand_key")
+                    raw_hand_key = cell.get("hand_key")
+                    hand_key = str(raw_hand_key) if raw_hand_key is not None else "Unknown"
+                    if " vs " not in hand_key:
+                        hand_key = f"{hand_key} vs Random"
                     metrics = cell.get("metrics", {})
                     status = cell.get("status", "AVAILABLE")
                     
@@ -1034,9 +1038,10 @@ class AoFPrecomputeRunner:
                     self.logger.warning(f"Failed to persist cell {row_idx},{col_idx}: {cell_err}")
                     
             self.logger.info(f"Persisted scenario {scenario_key} to database (sim_id={sim_id}, matrix_id={matrix_id}, cells={len(cells)})")
-            
+            return {"simulation_id": sim_id, "matrix_id": matrix_id}
         except Exception as e:
             self.logger.error(f"Failed to persist scenario results: {e}", exc_info=True)
+            return None
 
     def _position_to_id(self, position_str: str) -> int:
         """Map position string to ID (Phase 3 placeholder)."""
@@ -1185,12 +1190,34 @@ class AoFPrecomputeRunner:
                     status="RUNNING",
                 )
 
-                context = self.provider._build_context(  # pylint: disable=protected-access
-                    position=scenario["position"],
-                    metric=scenario["metric"],
-                    position_actions=scenario["position_actions"],
-                    strict_current_action=scenario["strict_current_action"],
-                )
+                context = None
+                payload = None
+                if self.provider is not None and hasattr(self.provider, "get_matrix_payload"):
+                    payload = self.provider.get_matrix_payload(
+                        position=scenario["position"],
+                        metric=scenario["metric"],
+                        position_actions=scenario["position_actions"],
+                        strict_current_action=scenario["strict_current_action"],
+                    )
+                    if isinstance(payload, dict):
+                        context = payload.get("context")
+
+                if (
+                    context is None
+                    or not isinstance(context, dict)
+                    or "action" not in context
+                    or "position_actions" not in context
+                ) and self.provider is not None and hasattr(self.provider, "_build_context"):
+                    context = self.provider._build_context(  # pylint: disable=protected-access
+                        position=scenario["position"],
+                        metric=scenario["metric"],
+                        position_actions=scenario["position_actions"],
+                        strict_current_action=scenario["strict_current_action"],
+                    )
+
+                if context is None:
+                    raise ValueError("Failed to build scenario context from provider")
+
                 contract = self._build_matrix_sweep_contract(
                     context=context,
                     profile=profile,

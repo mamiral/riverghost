@@ -24,9 +24,8 @@ def test_selected_fold_analysis_mode_keeps_available_values():
     provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
     ctx = {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"}
     payload = provider.get_matrix_payload("UTG", "WIN_LOSE_PROBABILITY", ctx, strict_current_action=False)
-    # Phase 4: In-memory database is empty, so cells list is empty. 
-    # Verify payload structure is correct - cells list should exist even if empty
+    # Phase 4: In-memory database is empty, so cells list is missing values
     assert "cells" in payload
-    # If database is seeded with data, cells should have at least one AVAILABLE when strict_current_action=False
+    assert payload["status"] == "MISSING"
     if payload["cells"]:
-        assert any(c["status"] == "AVAILABLE" for c in payload["cells"])
+        assert all(c["status"] == "MISSING" for c in payload["cells"])

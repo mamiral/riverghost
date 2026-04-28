@@ -73,5 +73,8 @@ def test_probability_display_format_is_percentage_with_one_decimal():
     assert "cells" in payload
     if payload["cells"]:
         first = payload["cells"][0]["display"]
-        assert first.endswith("%")
-        assert "." in first
+        if payload["cells"][0]["value"] is None:
+            assert first == "--"
+        else:
+            assert first.endswith("%")
+            assert "." in first

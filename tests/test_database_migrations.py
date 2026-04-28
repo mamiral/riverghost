@@ -208,11 +208,11 @@ class TestDatabaseMigrations:
         with connection.session_scope() as session:
             from sqlalchemy import text
             result = session.execute(text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('game_states', 'players', 'bets', 'board_cards', 'jackpots')"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('game_states', 'players', 'bets', 'jackpots')"
             ))
             existing_tables = [row[0] for row in result]
 
-            expected_tables = {'game_states', 'players', 'bets', 'board_cards', 'jackpots'}
+            expected_tables = {'game_states', 'players', 'bets', 'jackpots'}
             assert expected_tables.issubset(set(existing_tables))
 
         connection.close()

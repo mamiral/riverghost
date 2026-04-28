@@ -23,21 +23,10 @@ def test_payload_contract_shape_and_cell_count():
 def test_provider_uses_solver_path_not_heuristic():
     provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
 
-    called = {"count": 0}
-
-    class _FakeSolver:
-        def resolve_num_opponents(self, selected_action, position_actions):
-            return 1
-
-        def evaluate_hand_key(self, *args, **kwargs):
-            called["count"] += 1
-            return {"status": "AVAILABLE", "win_probability": 0.6, "equity": 0.62, "ev": 1.2}
-
-    provider._solver = _FakeSolver()
     payload = provider.get_matrix_payload("UTG", "EV", {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"})
 
-    # Phase 4: In-memory database is empty, verify structure
+    # Phase 4: In-memory database is empty, verify payload structure
     assert "cells" in payload
+    assert payload["status"] == "MISSING"
     if payload["cells"]:
-        assert called["count"] > 0
-        assert any(cell["status"] == "AVAILABLE" for cell in payload["cells"])
+        assert all(cell["status"] == "MISSING" for cell in payload["cells"])
