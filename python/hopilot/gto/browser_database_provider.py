@@ -10,7 +10,7 @@ CREATED IN: Phase 4 cleanup (replaces deleted AoFBrowserDataProvider)
 
 import asyncio
 from typing import Any, Dict, List, Optional
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.database_repository import DatabaseConnectionError, DatabaseRepository
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 from hopilot.gto.aof_browser_state import POSITIONS, normalize_position_actions, METRICS, build_browser_context
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
@@ -33,10 +33,16 @@ class BrowserDatabaseProvider:
         """Initialize with database connection only."""
         self.logger = get_logger(__name__)
         self.database_url = database_url
-        self.database_repository = DatabaseRepository(database_url=database_url)
+        self.database_repository = None
+        self._init_error: Exception | None = None
         self._matrix_keys = build_matrix_keys()
-        
-        self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url}")
+
+        try:
+            self.database_repository = DatabaseRepository(database_url=database_url)
+            self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url}")
+        except Exception as exc:
+            self._init_error = exc
+            self.logger.error("Failed to initialize BrowserDatabaseProvider repository: %s", exc)
 
     def _resolve_num_opponents(self, action: str, position_actions: Dict[str, str]) -> int:
         """Resolve the number of opponents based on action and position actions."""
@@ -144,19 +150,25 @@ class BrowserDatabaseProvider:
             return {
                 "context": context,
                 "cells": cells,
-                "status": STATUS_AVAILABLE,
+                "status": STATUS_NO_CONTEST,
                 "status_message": "No contest - all other players folded",
             }
 
+        if self.database_repository is None:
+            raise DatabaseConnectionError(
+                f"Database repository unavailable for {self.database_url}: {self._init_error}"
+            )
+
         try:
             scenario_contract = self._build_scenario_contract(context)
-            simulation = self.database_repository.find_matrix_sweep_run_by_contract(scenario_contract)
-            if simulation is None:
+            summary = self.database_repository.get_cross_run_matrix_summary(scenario_contract)
+            if summary is None or not summary["matrix_cells"] or len(summary["matrix_cells"]) != 169:
                 return self._build_missing_payload(context)
 
-            summary = self.database_repository.get_matrix_sweep_summary(simulation.id)
-            if summary is None or summary["hand_matrix"] is None or not summary["matrix_cells"] or len(summary["matrix_cells"]) != 169:
-                return self._build_missing_payload(context)
+            if summary.get("hand_matrix") is not None:
+                context["matrix_id"] = summary["hand_matrix"].id
+            else:
+                context["matrix_id"] = None
 
             cells = self._build_cells_from_summary(summary["matrix_cells"], metric, on_cell_complete)
             return {
@@ -230,14 +242,19 @@ class BrowserDatabaseProvider:
                 hand_key = cell.hero_hand
 
             display = format_metric_value(metric, metric_value)
-            cells.append({
+            cell_payload = {
                 "row": cell.row_index,
                 "col": cell.col_index,
                 "hand_key": hand_key,
                 "value": metric_value,
                 "status": status,
                 "display": display,
-            })
+            }
+            if hasattr(cell, "aggregated_metric") and cell.aggregated_metric is not None:
+                sample_count = getattr(cell.aggregated_metric, "sample_count", None)
+                if sample_count is not None:
+                    cell_payload["sample_count"] = int(sample_count)
+            cells.append(cell_payload)
 
             if on_cell_complete and callable(on_cell_complete):
                 try:

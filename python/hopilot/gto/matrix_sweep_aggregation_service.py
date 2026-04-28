@@ -90,6 +90,7 @@ class MatrixSweepAggregationService:
                         cell_id=cell.id,
                         equity=equity,
                         win_probability=win_probability,
+                        sample_count=total,
                         convergence_status=convergence_status,
                         last_updated=timestamp,
                     )

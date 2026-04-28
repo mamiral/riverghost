@@ -6,6 +6,7 @@ database schema, translating browser contexts to efficient database queries.
 """
 
 import asyncio
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
@@ -1371,6 +1372,96 @@ class DatabaseRepository:
                 matches.append(candidate)
 
             return matches
+
+    def get_cross_run_matrix_summary(self, scenario_contract: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return a merged matrix summary across all completed runs for one contract."""
+        runs = self.list_matrix_sweep_runs_by_contract(scenario_contract)
+        if not runs:
+            return None
+
+        merged_cells: dict[tuple[int, int], dict[str, Any]] = {}
+
+        for run in runs:
+            summary = self.get_matrix_sweep_summary(run.id)
+            if summary is None or not summary.get("matrix_cells"):
+                continue
+
+            for cell in summary["matrix_cells"]:
+                coord = (int(cell.row_index), int(cell.col_index))
+                if coord not in merged_cells:
+                    merged_cells[coord] = {
+                        "row_index": int(cell.row_index),
+                        "col_index": int(cell.col_index),
+                        "hand_combination": cell.hand_combination,
+                        "equity_sum": 0.0,
+                        "win_probability_sum": 0.0,
+                        "ev_sum": 0.0,
+                        "jackpot_adjusted_ev_sum": 0.0,
+                        "sample_count_sum": 0,
+                        "latest_updated": None,
+                        "latest_convergence_status": None,
+                    }
+
+                metric = getattr(cell, "aggregated_metric", None)
+                sample_count = 0
+                if metric is not None:
+                    if metric.sample_count is not None:
+                        sample_count = int(metric.sample_count)
+                    else:
+                        sample_count = 1
+
+                if sample_count <= 0:
+                    continue
+
+                data = merged_cells[coord]
+                if metric is not None:
+                    if metric.equity is not None:
+                        data["equity_sum"] += float(metric.equity) * sample_count
+                    if metric.win_probability is not None:
+                        data["win_probability_sum"] += float(metric.win_probability) * sample_count
+                    if metric.ev is not None:
+                        data["ev_sum"] += float(metric.ev) * sample_count
+                    if metric.jackpot_adjusted_ev is not None:
+                        data["jackpot_adjusted_ev_sum"] += float(metric.jackpot_adjusted_ev) * sample_count
+                    data["sample_count_sum"] += sample_count
+                    if metric.last_updated:
+                        if data["latest_updated"] is None or metric.last_updated > data["latest_updated"]:
+                            data["latest_updated"] = metric.last_updated
+                    if metric.convergence_status:
+                        data["latest_convergence_status"] = metric.convergence_status
+
+        if not merged_cells:
+            return None
+
+        merged_summary = []
+        for coord in sorted(merged_cells.keys()):
+            data = merged_cells[coord]
+            sample_count_sum = data["sample_count_sum"]
+            aggregated_metric = None
+            if sample_count_sum > 0:
+                aggregated_metric = SimpleNamespace(
+                    equity=(data["equity_sum"] / sample_count_sum) if data["equity_sum"] else None,
+                    win_probability=(data["win_probability_sum"] / sample_count_sum) if data["win_probability_sum"] else None,
+                    ev=(data["ev_sum"] / sample_count_sum) if data["ev_sum"] else None,
+                    jackpot_adjusted_ev=(data["jackpot_adjusted_ev_sum"] / sample_count_sum) if data["jackpot_adjusted_ev_sum"] else None,
+                    sample_count=sample_count_sum,
+                    convergence_status=data["latest_convergence_status"],
+                    last_updated=data["latest_updated"],
+                )
+
+            merged_summary.append(SimpleNamespace(
+                row_index=data["row_index"],
+                col_index=data["col_index"],
+                hand_combination=data["hand_combination"],
+                aggregated_metric=aggregated_metric,
+            ))
+
+        return {
+            "simulation": None,
+            "hand_matrix": None,
+            "matrix_cells": merged_summary,
+            "aggregated_metrics": [cell.aggregated_metric for cell in merged_summary if cell.aggregated_metric is not None],
+        }
 
     def resolve_scenario_run_selection(
         self,

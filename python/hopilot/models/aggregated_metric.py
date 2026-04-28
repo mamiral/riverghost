@@ -31,6 +31,7 @@ class AggregatedMetric(BaseModel):
     jackpot_adjusted_ev = Column(Numeric(10, 4), nullable=True)  # EV including jackpots
     jackpot_frequency = Column(Numeric(5, 4), nullable=True)  # Frequency of jackpots (0.0000-1.0000)
     avg_jackpot_payout = Column(Numeric(10, 2), nullable=True)  # Average jackpot payout amount
+    sample_count = Column(Integer, nullable=True)  # Number of games/samples used to compute this cell
     convergence_status = Column(String(20), nullable=True)  # Convergence assessment
     last_updated = Column(String(27), nullable=False)  # ISO timestamp
 
@@ -56,6 +57,9 @@ class AggregatedMetric(BaseModel):
         # Validate jackpot frequency range
         if self.jackpot_frequency is not None and not (0 <= self.jackpot_frequency <= 1):
             raise ValueError("Jackpot frequency must be between 0 and 1")
+
+        if self.sample_count is not None and self.sample_count < 0:
+            raise ValueError("Sample count cannot be negative")
 
         # Validate payout amounts
         if self.avg_jackpot_payout is not None and self.avg_jackpot_payout < 0:
@@ -119,6 +123,9 @@ class AggregatedMetric(BaseModel):
 
         if 'avg_jackpot_payout' in simulations_data:
             self.avg_jackpot_payout = Decimal(str(simulations_data['avg_jackpot_payout']))
+
+        if 'sample_count' in simulations_data:
+            self.sample_count = int(simulations_data['sample_count'])
 
         # Calculate jackpot-adjusted EV
         if self.equity is not None and self.expected_jackpot_value is not None:

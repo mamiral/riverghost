@@ -146,8 +146,8 @@ class TestBrowserDatabaseProviderIntegration:
         assert aa_cell["status"] == "AVAILABLE"
         assert abs(aa_cell["value"] - 0.75) < 0.01, f"AA equity should be ~0.75, got {aa_cell['value']}"
 
-    def test_get_matrix_payload_prefers_newest_aggregated_run(self, temp_db_path):
-        """Integration test: provider should select the newest aggregated run for the same scenario."""
+    def test_get_matrix_payload_merges_multiple_aggregated_runs(self, temp_db_path):
+        """Integration test: provider should merge multiple aggregated runs for the same scenario."""
         provider = BrowserDatabaseProvider(database_url=temp_db_path)
         repo = provider.database_repository
 
@@ -184,7 +184,14 @@ class TestBrowserDatabaseProviderIntegration:
                     cell = MatrixCell(matrix_id=older_matrix.id, row_index=row, col_index=col, hand_combination=hand_key)
                     session.add(cell)
                     session.flush()
-                    session.add(AggregatedMetric(cell_id=cell.id, equity=0.45, ev=0.45, convergence_status="AVAILABLE", last_updated=datetime.now(timezone.utc)))
+                    session.add(AggregatedMetric(
+                        cell_id=cell.id,
+                        equity=0.45,
+                        ev=0.45,
+                        sample_count=100,
+                        convergence_status="AVAILABLE",
+                        last_updated=datetime.now(timezone.utc)
+                    ))
 
             newer = Simulation(
                 name="newer_run",
@@ -203,10 +210,14 @@ class TestBrowserDatabaseProviderIntegration:
                     cell = MatrixCell(matrix_id=newer_matrix.id, row_index=row, col_index=col, hand_combination=hand_key)
                     session.add(cell)
                     session.flush()
-                    session.add(AggregatedMetric(cell_id=cell.id, equity=0.85, ev=0.85, convergence_status="AVAILABLE", last_updated=datetime.now(timezone.utc)))
-
-            session.commit()
-
+                    session.add(AggregatedMetric(
+                        cell_id=cell.id,
+                        equity=0.85,
+                        ev=0.85,
+                        sample_count=300,
+                        convergence_status="AVAILABLE",
+                        last_updated=datetime.now(timezone.utc),
+                    ))
         payload = provider.get_matrix_payload(
             position="UTG",
             metric="EV",
@@ -215,11 +226,12 @@ class TestBrowserDatabaseProviderIntegration:
 
         aa_cell = next((cell for cell in payload["cells"] if cell["hand_key"] == "AA"), None)
         assert aa_cell is not None
-        assert aa_cell["value"] == 0.85
+        assert abs(aa_cell["value"] - 0.75) < 1e-6
+        assert aa_cell["sample_count"] == 400
         assert payload["status"] == STATUS_AVAILABLE
 
-    def test_get_matrix_payload_prefers_highest_id_on_tie(self, temp_db_path):
-        """Integration test: provider should prefer the later run by ID when end timestamps tie."""
+    def test_get_matrix_payload_aggregates_tied_runs_by_sample_count(self, temp_db_path):
+        """Integration test: provider should aggregate tied runs using sample_count weights."""
         provider = BrowserDatabaseProvider(database_url=temp_db_path)
         repo = provider.database_repository
 
@@ -257,7 +269,14 @@ class TestBrowserDatabaseProviderIntegration:
                     cell = MatrixCell(matrix_id=first_matrix.id, row_index=row, col_index=col, hand_combination=hand_key)
                     session.add(cell)
                     session.flush()
-                    session.add(AggregatedMetric(cell_id=cell.id, equity=0.5, ev=0.5, convergence_status="AVAILABLE", last_updated=shared_timestamp))
+                    session.add(AggregatedMetric(
+                        cell_id=cell.id,
+                        equity=0.5,
+                        ev=0.5,
+                        sample_count=100,
+                        convergence_status="AVAILABLE",
+                        last_updated=shared_timestamp
+                    ))
 
             second = Simulation(
                 name="tie_second_run",
@@ -276,7 +295,14 @@ class TestBrowserDatabaseProviderIntegration:
                     cell = MatrixCell(matrix_id=second_matrix.id, row_index=row, col_index=col, hand_combination=hand_key)
                     session.add(cell)
                     session.flush()
-                    session.add(AggregatedMetric(cell_id=cell.id, equity=0.9, ev=0.9, convergence_status="AVAILABLE", last_updated=shared_timestamp))
+                    session.add(AggregatedMetric(
+                    cell_id=cell.id,
+                    equity=0.9,
+                    ev=0.9,
+                    sample_count=100,
+                    convergence_status="AVAILABLE",
+                    last_updated=shared_timestamp,
+                ))
 
             session.commit()
 
@@ -288,7 +314,8 @@ class TestBrowserDatabaseProviderIntegration:
 
         aa_cell = next((cell for cell in payload["cells"] if cell["hand_key"] == "AA"), None)
         assert aa_cell is not None
-        assert aa_cell["value"] == 0.9
+        assert abs(aa_cell["value"] - 0.7) < 1e-6
+        assert aa_cell["sample_count"] == 200
         assert payload["status"] == STATUS_AVAILABLE
 
     def test_get_matrix_payload_handles_missing_data(self, temp_db_path):

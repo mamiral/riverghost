@@ -1,4 +1,5 @@
 from concurrent.futures import Future, ThreadPoolExecutor
+from enum import Enum
 import os
 from pathlib import Path
 import pygame
@@ -10,6 +11,14 @@ from hopilot.gto.aof_browser_state import AoFBrowserViewState, POSITIONS, METRIC
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiPrecomputeRunSession, GuiRunState
 from hopilot.gto.convergence_analysis_queries import ConvergenceAnalysisQueries
 from hopilot.gui_components.aof_action_selector import AoFActionSelector
+
+
+class PanelState(Enum):
+    LOADING = "LOADING"
+    AVAILABLE = "AVAILABLE"
+    MISSING = "MISSING"
+    NO_CONTEST = "NO_CONTEST"
+    ERROR = "ERROR"
 from hopilot.gui_components.aof_cell_detail_panel import AoFCellDetailPanel
 from hopilot.gui_components.aof_hand_matrix_panel import AoFHandMatrixPanel
 from hopilot.gui_components.aof_metric_dropdown import AoFMetricDropdown
@@ -31,8 +40,19 @@ class AoFBrowserPanel:
                 "Provide via --database-url argument or configure in gto_defaults.yaml"
             )
         self.provider = BrowserDatabaseProvider(database_url=database_url)
-        self.convergence_queries = ConvergenceAnalysisQueries(database_url)
-        self.runner = AoFPrecomputeRunner(self.provider, database_url)
+
+        try:
+            self.convergence_queries = ConvergenceAnalysisQueries(database_url)
+        except Exception as exc:
+            self.logger.error("Failed to initialize convergence analysis queries: %s", exc)
+            self.convergence_queries = None
+
+        try:
+            self.runner = AoFPrecomputeRunner(self.provider, database_url)
+        except Exception as exc:
+            self.logger.error("Failed to initialize precompute runner: %s", exc)
+            self.runner = None
+
         self.state_machine_controller = None
         self.precompute_session: GuiPrecomputeRunSession | None = None
         self.precompute_context: dict | None = None
@@ -46,6 +66,10 @@ class AoFBrowserPanel:
         self.precompute_executor: ThreadPoolExecutor | None = None
         self.precompute_futures: dict[Future, int] = {}
         self.precompute_payload_persisted = False
+
+        self._last_error: str | None = None
+        self._refresh_context: dict[str, Any] | None = None
+        self._rerun_in_progress = False
 
         # Initialize payload with empty data
         self.payload = {
@@ -84,12 +108,24 @@ class AoFBrowserPanel:
         self.font = pygame.font.SysFont("arial", 18)
         self.small_font = pygame.font.SysFont("arial", 12)
         # Phase 3: Use database provider for data (forces database; no cache fallback)
-        self.payload = self.provider.get_matrix_from_database(
-            self.state.selected_position,
-            self.state.selected_metric,
-            self.state.position_actions,
-            allow_compute=False,
-        )
+        try:
+            self.payload = self.provider.get_matrix_from_database(
+                self.state.selected_position,
+                self.state.selected_metric,
+                self.state.position_actions,
+                allow_compute=False,
+            )
+        except Exception as exc:
+            self.logger.error("Failed to load initial payload from database: %s", exc)
+            self._last_error = str(exc)
+            self.payload = self._build_loading_payload({
+                "position": self.state.selected_position,
+                "metric": self.state.selected_metric,
+                "position_actions": self.state.position_actions,
+            })
+            self.payload["status"] = PanelState.ERROR.value
+            self.payload["status_message"] = f"Database error: {exc}"
+
         self.selected_cell_detail = self._build_selected_cell_detail_model()
         self._load_convergence_data()
         self._restore_precompute_checkpoint_if_available()
@@ -221,18 +257,33 @@ class AoFBrowserPanel:
 
     def _refresh(self):
         # Phase 3: Always use database provider (no cache fallback)
-        if not self.is_loading:
-            self.is_loading = True
-            self._start_async_refresh()
-            self._invalidate_selected_cell_if_needed()
-            self.state.status_message = self.payload.get("status_message")
-            self.selected_cell_detail = self._build_selected_cell_detail_model()
-            self._load_convergence_data()
+        if self.is_loading:
+            return
+
+        if self.precompute_session is not None and self.precompute_session.run_state in (
+            GuiRunState.RUNNING,
+            GuiRunState.PAUSED,
+            GuiRunState.STOPPING,
+        ):
+            self.logger.info("Context changed while precompute was active; stopping previous session")
+            self.stop_precompute()
+            self.reset_precompute()
+            self._rerun_in_progress = False
+
+        self.is_loading = True
+        self._last_error = None
+        self._refresh_context = self._build_current_context()
+        self.payload = self._build_loading_payload({})
+        self.state.status_message = "Loading from database..."
+        self.selected_cell_detail = self._build_selected_cell_detail_model()
+        self._start_async_refresh()
 
     def _start_async_refresh(self):
         """Start async database refresh in background thread."""
         import threading
         import asyncio
+
+        request_context = dict(self._refresh_context or {})
 
         def async_refresh():
             try:
@@ -253,6 +304,7 @@ class AoFBrowserPanel:
                 pygame.event.post(pygame.event.Event(pygame.USEREVENT,
                     event_type="database_refresh",
                     payload=payload,
+                    request_context=request_context,
                     success=True
                 ))
 
@@ -262,6 +314,7 @@ class AoFBrowserPanel:
                 pygame.event.post(pygame.event.Event(pygame.USEREVENT,
                     event_type="database_refresh",
                     error=str(e),
+                    request_context=request_context,
                     success=False
                 ))
 
@@ -271,19 +324,33 @@ class AoFBrowserPanel:
 
     def _handle_async_refresh_result(self, event) -> None:
         """Handle result from async database refresh."""
+        if getattr(event, 'request_context', None) != self._refresh_context:
+            self.logger.debug("Discarding stale database refresh result")
+            return
+
         if getattr(event, 'success', False):
+            self._last_error = None
             self.payload = getattr(event, 'payload', {})
             self._invalidate_selected_cell_if_needed()
             self.state.status_message = self.payload.get("status_message")
             self.selected_cell_detail = self._build_selected_cell_detail_model()
             self._load_convergence_data()
         else:
-            self.state.status_message = f"Database error: {getattr(event, 'error', 'Unknown error')}"
+            error_message = str(getattr(event, 'error', 'Unknown error'))
+            self._last_error = error_message
+            self.state.status_message = f"Database error: {error_message}"
+            self.payload = self._build_loading_payload(self._refresh_context or self.payload.get("context", {}))
+            self.payload["status"] = PanelState.ERROR.value
+            self.payload["status_message"] = self.state.status_message
+            self.selected_cell_detail = self._build_selected_cell_detail_model()
 
         self.is_loading = False
 
     def _load_convergence_data(self):
         """Load convergence data for selected cell using convergence analysis queries."""
+        if self.convergence_queries is None:
+            self.logger.warning("Convergence analysis queries unavailable, skipping convergence data loading")
+            return
         if not hasattr(self, 'convergence_panel') or self.convergence_panel is None:
             self.logger.warning("Convergence panel not initialized, skipping convergence data loading")
             return
@@ -348,6 +415,72 @@ class AoFBrowserPanel:
             self.state.clear_selected_cell()
             self.state.status_message = "Selected cell cleared after context refresh"
             self._load_convergence_data()  # Update convergence plot back to position-level
+
+    def _build_loading_payload(self, context: Dict[str, Any] | None) -> Dict[str, Any]:
+        """Build a placeholder payload used while waiting for database results."""
+        loading_cells = []
+        for row in range(13):
+            for col in range(13):
+                loading_cells.append({
+                    "row": row,
+                    "col": col,
+                    "hand_key": self.provider._matrix_keys[row][col],  # pylint: disable=protected-access
+                    "value": None,
+                    "status": PanelState.LOADING.value,
+                    "display": "-",
+                })
+
+        return {
+            "context": dict(context or {}),
+            "cells": loading_cells,
+            "status": PanelState.LOADING.value,
+            "status_message": "Loading...",
+        }
+
+    def _build_error_payload(self, context: Dict[str, Any] | None, message: str) -> Dict[str, Any]:
+        error_cells = []
+        for row in range(13):
+            for col in range(13):
+                error_cells.append({
+                    "row": row,
+                    "col": col,
+                    "hand_key": self.provider._matrix_keys[row][col],
+                    "value": None,
+                    "status": PanelState.ERROR.value,
+                    "display": "-",
+                })
+
+        return {
+            "context": dict(context or {}),
+            "cells": error_cells,
+            "status": PanelState.ERROR.value,
+            "status_message": message,
+        }
+
+    @property
+    def panel_state(self) -> str:
+        if self._last_error:
+            return PanelState.ERROR.value
+        if self.is_loading:
+            return PanelState.LOADING.value
+
+        payload_status = str(self.payload.get("status", "")).upper()
+        if payload_status == PanelState.NO_CONTEST.value:
+            return PanelState.NO_CONTEST.value
+        if payload_status == PanelState.MISSING.value:
+            return PanelState.MISSING.value
+        if payload_status == PanelState.AVAILABLE.value:
+            return PanelState.AVAILABLE.value
+
+        return PanelState.LOADING.value
+
+    @property
+    def active_scenario_context(self) -> str:
+        return (
+            f"{self.state.selected_position}"
+            f" / {self.state.get_position_action(self.state.selected_position)}"
+            f" / {self.state.selected_metric.replace('_', ' ')}"
+        )
 
     def _find_payload_cell(self, row: int, col: int) -> dict | None:
         index = int(row) * 13 + int(col)
@@ -479,7 +612,14 @@ class AoFBrowserPanel:
                 from hopilot.models import Simulation
                 latest_sim = session.query(Simulation).order_by(Simulation.created_at.desc()).first()
                 if latest_sim:
-                    params = json.loads(latest_sim.parameters)
+                    params = latest_sim.parameters
+                    if isinstance(params, str):
+                        params = json.loads(params)
+                    elif not isinstance(params, dict):
+                        try:
+                            params = dict(params)
+                        except Exception:
+                            params = {}
                     position = params.get("position")
                     action = params.get("action")  # This might be the action for the selected position
                     metric = params.get("metric", "WIN_LOSE_PROBABILITY")
@@ -504,6 +644,11 @@ class AoFBrowserPanel:
         )
 
     def _start_precompute(self) -> None:
+        if self.runner is None:
+            self.logger.error("Cannot start precompute: runner is not initialized")
+            return
+
+        self._last_error = None
         self.precompute_context = self._build_current_context()
         fingerprint = self.runner.build_scenario_fingerprint(self.precompute_context)
         self.precompute_session = self.runner.create_gui_session(
@@ -539,24 +684,34 @@ class AoFBrowserPanel:
             self.precompute_executor = ThreadPoolExecutor(max_workers=self.precompute_max_workers, thread_name_prefix="aof-precompute")
         self._cancel_pending_precompute_futures()
         self.precompute_payload_persisted = False
+
+        start_from_available = (
+            self.payload.get("status") == PanelState.AVAILABLE.value
+            and self.payload.get("context") == self.precompute_context
+        )
+
+        cells = self.payload.get("cells", []) if start_from_available else [
+            {
+                "row": row,
+                "col": col,
+                "hand_key": self.provider._matrix_keys[row][col],  # pylint: disable=protected-access
+                "value": None,
+                "status": "MISSING",
+                "display": "-",
+            }
+            for row in range(13)
+            for col in range(13)
+        ]
+
+        self._rerun_in_progress = start_from_available
         self.payload = {
             "context": dict(self.precompute_context),
-            "cells": [
-                {
-                    "row": row,
-                    "col": col,
-                    "hand_key": self.provider._matrix_keys[row][col],  # pylint: disable=protected-access
-                    "value": None,
-                    "status": "MISSING",
-                    "display": "-",
-                }
-                for row in range(13)
-                for col in range(13)
-            ],
-            "status_message": "Precompute started",
+            "cells": cells,
+            "status": PanelState.AVAILABLE.value if start_from_available else "MISSING",
+            "status_message": "Recomputing available scenario..." if start_from_available else "Precompute started",
         }
         self.selected_cell_detail = self._build_selected_cell_detail_model()
-        self.state.status_message = "Precompute started"
+        self.state.status_message = self.payload["status_message"]
 
     def _persist_completed_precompute_payload(self) -> None:
         """Phase 4: Cache persistence removed. Precompute results are in database."""
@@ -633,9 +788,19 @@ class AoFBrowserPanel:
             self._persist_completed_precompute_payload()
             if self.state_machine_controller:
                 self.state_machine_controller.mark_completed()
+            if self._rerun_in_progress:
+                self._rerun_in_progress = False
+                self._refresh()
             return
 
         if self.precompute_session.run_state == GuiRunState.FAILED:
+            self._cancel_pending_precompute_futures()
+            self._rerun_in_progress = False
+            error_message = getattr(self.precompute_session, 'status_message', None) or 'Precompute failed'
+            self._last_error = str(error_message)
+            self.state.status_message = str(error_message)
+            self.payload = self._build_error_payload(self.precompute_context, self.state.status_message)
+            self.selected_cell_detail = self._build_selected_cell_detail_model()
             if self.state_machine_controller:
                 self.state_machine_controller.mark_failed()
             return
@@ -967,8 +1132,12 @@ class AoFBrowserPanel:
         self._reflow_layout()
         self._tick_precompute()
 
-        title = self.font.render("AoF GTO Solution Browser", True, (245, 245, 245))
+        title_text = f"AoF GTO Solution Browser [{self.panel_state}]"
+        title = self.font.render(title_text, True, (245, 245, 245))
         screen.blit(title, title.get_rect(center=(self.width // 2, 14)))
+
+        subtitle = self.small_font.render(self.active_scenario_context, True, (220, 220, 220))
+        screen.blit(subtitle, (self.outer_margin, title.get_rect(center=(self.width // 2, 14)).bottom + 4))
 
         self.action_selector.draw(
             screen,
@@ -979,6 +1148,12 @@ class AoFBrowserPanel:
         self.metric_dropdown.draw(screen, self.font, self.state.selected_metric)
 
         self.matrix.draw(screen, self.small_font, self.payload["cells"], self.state.selected_metric)
+
+        available_cells = sum(1 for cell in self.payload.get("cells", []) if cell.get("status") == PanelState.AVAILABLE.value)
+        if 0 < available_cells < 169:
+            partial_label = self.small_font.render(f"{available_cells} / 169 AVAILABLE", True, (220, 220, 220))
+            screen.blit(partial_label, (self.matrix.x, self.matrix.y - 34))
+
         self.cell_detail_panel.draw(screen, self.small_font, self.selected_cell_detail)
         if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
             self.convergence_panel.draw(screen)
@@ -1152,3 +1327,10 @@ class AoFBrowserPanel:
             pygame.draw.rect(screen, (90, 90, 90), rect, 1, border_radius=4)
             label = self.small_font.render(name.upper(), True, (240, 240, 240))
             screen.blit(label, label.get_rect(center=rect.center))
+
+        if self._rerun_in_progress and self.precompute_session and self.precompute_session.run_state == GuiRunState.RUNNING:
+            overlay = pygame.Surface((self.matrix.width, self.matrix.height), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 140))
+            screen.blit(overlay, (self.matrix.x, self.matrix.y))
+            rerun_text = self.font.render("Recomputing available scenario...", True, (255, 255, 255))
+            screen.blit(rerun_text, (self.matrix.x + 12, self.matrix.y + 12))
