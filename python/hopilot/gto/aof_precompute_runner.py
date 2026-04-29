@@ -11,6 +11,8 @@ from typing import Any
 from hopilot.gto.aof_hand_matrix import format_metric_value
 from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.matrix_sweep_contract import MatrixSweepContractError
+from hopilot.gto.precompute_job_persistence import PrecomputeJobPersistenceService
+from hopilot.gto.precompute_orchestration import PrecomputeOrchestrationService
 from hopilot.logging_config import get_logger
 from hopilot.performance_monitor import performance_monitor
 from hopilot.poker_analyzer import PokerAnalyzer
@@ -122,6 +124,15 @@ class AoFPrecomputeRunner:
         if database_url is None:
             raise ValueError("database_url is required")
         self.database_repository = DatabaseRepository(database_url=database_url)
+        self.precompute_orchestration_service = PrecomputeOrchestrationService(
+            provider=self.provider,
+            database_repository=self.database_repository,
+            logger=self.logger,
+        )
+        self.precompute_job_persistence_service = PrecomputeJobPersistenceService(
+            self.database_repository,
+            logger=self.logger,
+        )
         
         # Initialize solver directly to avoid provider dependency
         self._solver = None
@@ -1161,7 +1172,9 @@ class AoFPrecomputeRunner:
             self.logger.warning("Resume semantics for run_id are not supported in this migration path; starting a new job")
             run_id = None
 
-        job_session_id = self.database_repository.create_precompute_job_session(
+        self.precompute_orchestration_service.provider = self.provider
+
+        job_session_id = self.precompute_job_persistence_service.create_job_session(
             scenario_fingerprint=self.build_job_fingerprint(profile),
             requested_scenarios=len(scenarios),
         )
@@ -1177,7 +1190,7 @@ class AoFPrecomputeRunner:
                 break
 
             scenario_key = scenario["scenario_key"]
-            scenario_link_id = self.database_repository.create_scenario_run_link(
+            scenario_link_id = self.precompute_job_persistence_service.create_scenario_link(
                 job_session_id=job_session_id,
                 scenario_index=idx,
                 scenario_key=scenario_key,
@@ -1185,58 +1198,30 @@ class AoFPrecomputeRunner:
                 status="PENDING",
             )
             try:
-                self.database_repository.update_scenario_run_link(
-                    scenario_link_id,
-                    status="RUNNING",
+                self.precompute_job_persistence_service.mark_link_running(scenario_link_id)
+
+                context = self.precompute_orchestration_service.resolve_scenario_context(
+                    scenario
                 )
 
-                context = None
-                payload = None
-                if self.provider is not None and hasattr(self.provider, "_build_context"):
-                    context = self.provider._build_context(  # pylint: disable=protected-access
-                        position=scenario["position"],
-                        metric=scenario["metric"],
-                        position_actions=scenario["position_actions"],
-                        strict_current_action=scenario["strict_current_action"],
-                    )
-
-                if (
-                    context is None
-                    or not isinstance(context, dict)
-                    or "action" not in context
-                    or "position_actions" not in context
-                ) and self.provider is not None and hasattr(self.provider, "get_matrix_payload"):
-                    payload = self.provider.get_matrix_payload(
-                        position=scenario["position"],
-                        metric=scenario["metric"],
-                        position_actions=scenario["position_actions"],
-                        strict_current_action=scenario["strict_current_action"],
-                    )
-                    if isinstance(payload, dict):
-                        context = payload.get("context")
-
-                if context is None:
-                    raise ValueError("Failed to build scenario context from provider")
-
-                contract = self._build_matrix_sweep_contract(
+                contract = self.precompute_orchestration_service.build_matrix_sweep_contract(
                     context=context,
                     profile=profile,
                     job_session_id=job_session_id,
                     scenario_key=scenario_key,
                 )
-                self.database_repository.update_scenario_run_link(
+                self.precompute_job_persistence_service.update_scenario_contract(
                     scenario_link_id,
                     scenario_contract=contract,
                 )
             except Exception as exc:
-                self.database_repository.update_scenario_run_link(
+                self.precompute_job_persistence_service.mark_link_failed(
                     scenario_link_id,
-                    status="FAILED",
                     failure_boundary="orchestration",
                     failure_reason=str(exc),
                 )
                 failed += 1
-                self.database_repository.update_precompute_job_session(
+                self.precompute_job_persistence_service.update_job_progress(
                     job_session_id,
                     completed_scenarios=completed,
                     failed_scenarios=failed,
@@ -1246,59 +1231,54 @@ class AoFPrecomputeRunner:
 
             try:
                 sweep_result = self._execute_matrix_sweep(contract)
-                self.database_repository.update_scenario_run_link(
+                self.precompute_job_persistence_service.mark_link_completed(
                     scenario_link_id,
-                    status="COMPLETED",
                     simulation_id=sweep_result["simulation_id"],
                     matrix_id=sweep_result["matrix_id"],
                 )
                 completed += 1
             except MatrixSweepContractError as exc:
-                self.database_repository.update_scenario_run_link(
+                self.precompute_job_persistence_service.mark_link_failed(
                     scenario_link_id,
-                    status="FAILED",
                     failure_boundary="orchestration",
                     failure_reason=str(exc),
                 )
                 failed += 1
                 self.logger.error("Scenario %s failed during orchestration: %s", scenario_key, exc)
             except MatrixSweepAggregationError as exc:
-                self.database_repository.update_scenario_run_link(
+                self.precompute_job_persistence_service.mark_link_failed(
                     scenario_link_id,
-                    status="FAILED",
                     failure_boundary="aggregation",
                     failure_reason=str(exc),
                 )
                 failed += 1
                 self.logger.error("Scenario %s failed during aggregation: %s", scenario_key, exc)
             except Exception as exc:
-                self.database_repository.update_scenario_run_link(
+                self.precompute_job_persistence_service.mark_link_failed(
                     scenario_link_id,
-                    status="FAILED",
                     failure_boundary="solver_write",
                     failure_reason=str(exc),
                 )
                 failed += 1
                 self.logger.error("Scenario %s failed during sweep execution: %s", scenario_key, exc)
             finally:
-                self.database_repository.update_precompute_job_session(
+                self.precompute_job_persistence_service.update_job_progress(
                     job_session_id,
                     completed_scenarios=completed,
                     failed_scenarios=failed,
                 )
 
-        job_session = self.database_repository.get_precompute_job_session(job_session_id)
+        job_session = self.precompute_job_persistence_service.get_job_session(job_session_id)
         if job_session and job_session.run_state == "STOPPING":
             final_state = "CANCELED"
         else:
             final_state = "FAILED" if failed > 0 else "COMPLETED"
 
-        self.database_repository.update_precompute_job_session(
+        self.precompute_job_persistence_service.finalize_job(
             job_session_id,
-            run_state=final_state,
             completed_scenarios=completed,
             failed_scenarios=failed,
-            finished_at=datetime.now(UTC),
+            canceled=(job_session and job_session.run_state == "STOPPING"),
         )
 
         self.logger.info(

@@ -114,6 +114,32 @@ class TestPrecomputeRunnerIntegration:
             f"Should have built at least one scenario context, got {mock_provider._build_context.call_count}"
         )
 
+    def test_precompute_runner_uses_persistence_service_for_job_and_link_updates(self, temp_db_path, mock_provider):
+        """Integration test: job and link updates are delegated to persistence service."""
+        runner = AoFPrecomputeRunner(database_url=temp_db_path)
+        runner.provider = mock_provider
+
+        original_service = runner.precompute_job_persistence_service
+        wrapped_service = MagicMock(wraps=original_service)
+        runner.precompute_job_persistence_service = wrapped_service
+
+        profile = PrecomputeProfile(
+            positions=("UTG",),
+            metrics=("EV",),
+            strict_modes=(False,),
+            simulations_per_cell=1,
+        )
+
+        result = runner.run(profile, max_scenarios=1)
+        assert result == 0, "Run should complete successfully"
+
+        assert wrapped_service.create_job_session.called, "Should create a precompute job session through the persistence service"
+        assert wrapped_service.create_scenario_link.called, "Should create a scenario link through the persistence service"
+        assert wrapped_service.mark_link_running.called, "Should mark the scenario as running through the persistence service"
+        assert wrapped_service.mark_link_completed.called, "Should mark completed scenarios through the persistence service"
+        assert wrapped_service.update_job_progress.called, "Should update job progress through the persistence service"
+        assert wrapped_service.finalize_job.called, "Should finalize the job through the persistence service"
+
     def test_precompute_runner_persists_simulation_and_hand_matrix_outputs(self):
         """Integration test: delegated sweep output is persisted into normalized schema."""
         fixture = create_matrix_sweep_db_fixture(use_temp=True)

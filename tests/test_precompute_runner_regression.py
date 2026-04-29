@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 import pytest
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, PrecomputeProfile
 from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.precompute_orchestration import PrecomputeOrchestrationService
 
 
 @pytest.fixture
@@ -214,6 +215,9 @@ class TestPrecomputeRunNoKeyError:
             provider=mock_provider,
             database_url="sqlite:///:memory:"
         )
+        runner.precompute_orchestration_service.resolve_scenario_context = MagicMock(
+            side_effect=runner.precompute_orchestration_service.resolve_scenario_context
+        )
         
         # Run should successfully access scenario_key for logging and processing
         result = runner.run(profile, max_scenarios=1)
@@ -223,6 +227,9 @@ class TestPrecomputeRunNoKeyError:
         # Verify provider context builder was used to orchestrate the run.
         assert mock_provider._build_context.called, (
             "Provider _build_context should have been called during run()"
+        )
+        assert runner.precompute_orchestration_service.resolve_scenario_context.called, (
+            "Runner should delegate context resolution to PrecomputeOrchestrationService"
         )
 
 
