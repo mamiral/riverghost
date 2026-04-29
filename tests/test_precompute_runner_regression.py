@@ -201,6 +201,29 @@ class TestPrecomputeRunNoKeyError:
         
         # Should complete without error
         assert result == 0, f"Run should return 0, got {result}"
+
+    def test_run_does_not_invoke_payload_contract_during_orchestration(self, temp_db, mock_provider):
+        """Regression: orchestration should not invoke provider payload retrieval."""
+        mock_provider.get_matrix_payload.side_effect = AssertionError(
+            "Payload contract should not be called during orchestration"
+        )
+
+        runner = AoFPrecomputeRunner(
+            provider=mock_provider,
+            database_url="sqlite:///:memory:"
+        )
+
+        profile = PrecomputeProfile(
+            positions=["UTG"],
+            metrics=["WinRate"],
+            strict_modes=[True],
+            simulations_per_cell=1,
+        )
+
+        result = runner.run(profile, max_scenarios=1)
+
+        assert result == 0
+        assert not mock_provider.get_matrix_payload.called
     
     def test_run_accesses_scenario_key_without_error(self, temp_db, mock_provider):
         """Verify the run() method can access scenario_key from enumerated scenarios."""

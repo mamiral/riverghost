@@ -1269,6 +1269,17 @@ class AoFPrecomputeRunner:
                 )
 
         job_session = self.precompute_job_persistence_service.get_job_session(job_session_id)
+        canceled = job_session is not None and job_session.run_state == "STOPPING"
+
+        # Mandatory final reconciliation pass: recompute completed/failed counts
+        # from persisted scenario links before terminal job finalization.
+        reconciliation_result = self.precompute_job_persistence_service.reconcile_job_session(
+            job_session_id,
+            canceled=canceled,
+        )
+        completed = reconciliation_result.completed_scenarios
+        failed = reconciliation_result.failed_scenarios
+
         if job_session and job_session.run_state == "STOPPING":
             final_state = "CANCELED"
         else:
@@ -1278,7 +1289,7 @@ class AoFPrecomputeRunner:
             job_session_id,
             completed_scenarios=completed,
             failed_scenarios=failed,
-            canceled=(job_session and job_session.run_state == "STOPPING"),
+            canceled=canceled,
         )
 
         self.logger.info(

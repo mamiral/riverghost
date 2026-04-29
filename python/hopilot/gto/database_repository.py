@@ -1065,6 +1065,11 @@ class DatabaseRepository:
             if end_timestamp is not None:
                 simulation.end_timestamp = end_timestamp
 
+    # ===== PRECOMPUTE JOB/TRACKING STORAGE METHODS =====
+    # These methods manage durable job/session lifecycle and scenario-link tracking.
+    # Raw sweep persistence methods elsewhere in this repository should remain
+    # isolated from job/session tracking updates, preserving the split between
+    # raw output writes and tracking lifecycle state.
     def create_precompute_job_session(
         self,
         *,

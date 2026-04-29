@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 # Add the python directory to the path so we can import hopilot modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "python"))
 
-from hopilot.gto.browser_database_provider import BrowserDatabaseProvider, STATUS_AVAILABLE, STATUS_MISSING
+from hopilot.gto.browser_database_provider import BrowserDatabaseProvider, STATUS_AVAILABLE, STATUS_MISSING, STATUS_NO_CONTEST
 from hopilot.gto.aof_hand_matrix import build_matrix_keys
 from hopilot.models import Simulation, HandMatrix, MatrixCell, AggregatedMetric
 
@@ -229,6 +229,32 @@ class TestBrowserDatabaseProviderIntegration:
         assert abs(aa_cell["value"] - 0.75) < 1e-6
         assert aa_cell["sample_count"] == 400
         assert payload["status"] == STATUS_AVAILABLE
+
+    def test_get_matrix_payload_returns_missing_when_no_aggregated_run_exists(self, temp_db_path):
+        provider = BrowserDatabaseProvider(database_url=temp_db_path)
+
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+        )
+
+        assert payload["status"] == STATUS_MISSING
+        assert len(payload["cells"]) == 169
+        assert all(cell["status"] == STATUS_MISSING for cell in payload["cells"])
+
+    def test_get_matrix_payload_returns_no_contest_when_all_others_fold(self, temp_db_path):
+        provider = BrowserDatabaseProvider(database_url=temp_db_path)
+
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "ALL_IN", "BTN": "FOLD", "SB": "FOLD", "BB": "FOLD"},
+        )
+
+        assert payload["status"] == STATUS_NO_CONTEST
+        assert len(payload["cells"]) == 169
+        assert all(cell["status"] == STATUS_NO_CONTEST for cell in payload["cells"])
 
     def test_get_matrix_payload_aggregates_tied_runs_by_sample_count(self, temp_db_path):
         """Integration test: provider should aggregate tied runs using sample_count weights."""

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hopilot.gto.matrix_sweep_contract import validate_scenario_contract
 from hopilot.logging_config import get_logger
 
 
@@ -11,8 +12,19 @@ class PrecomputeOrchestrationService:
         self.database_repository = database_repository
         self.logger = logger or get_logger(__name__)
 
+        # This service is responsible for orchestration-only behavior.
+        # It must not use browser payload retrieval paths for context resolution.
+
+    @staticmethod
+    def supports_direct_context_contract(provider: Any) -> bool:
+        return provider is not None and callable(getattr(provider, "_build_context", None))
+
+    @staticmethod
+    def supports_payload_contract(provider: Any) -> bool:
+        return provider is not None and callable(getattr(provider, "get_matrix_payload", None))
+
     def resolve_scenario_context(self, scenario: dict[str, Any]) -> dict[str, Any]:
-        if self.provider is None or not hasattr(self.provider, "_build_context"):
+        if not self.supports_direct_context_contract(self.provider):
             raise ValueError("Provider does not support direct context construction")
 
         context = self.provider._build_context(
@@ -59,6 +71,9 @@ class PrecomputeOrchestrationService:
             contract["precompute_job_session_id"] = job_session_id
         if scenario_key is not None:
             contract["scenario_key"] = scenario_key
+
+        # Validate the produced matrix sweep contract before dispatch
+        validate_scenario_contract(contract)
         return contract
 
     def record_orchestration_failure(

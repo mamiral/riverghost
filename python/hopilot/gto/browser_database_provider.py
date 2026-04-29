@@ -14,6 +14,7 @@ from hopilot.gto.database_repository import DatabaseConnectionError, DatabaseRep
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 from hopilot.gto.aof_browser_state import POSITIONS, normalize_position_actions, METRICS, build_browser_context
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
+from hopilot.gto.matrix_sweep_contract import validate_scenario_contract
 from hopilot.logging_config import get_logger
 
 STATUS_AVAILABLE = "AVAILABLE"
@@ -189,7 +190,7 @@ class BrowserDatabaseProvider:
             pos for pos, action in context["position_actions"].items() if action != "FOLD"
         ]
 
-        return {
+        contract = {
             "selected_position": context["position"],
             "hero_action": context["action"],
             "position_actions": context["position_actions"],
@@ -203,6 +204,7 @@ class BrowserDatabaseProvider:
             "game_type": "cash",
             "run_kind": "matrix_sweep",
         }
+        return validate_scenario_contract(contract)
 
     def _build_missing_payload(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Return the explicit missing scenario payload according to the spec."""

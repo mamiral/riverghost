@@ -302,6 +302,57 @@ class TestPrecomputeRunnerIntegration:
             assert links[1][1] == "orchestration"
             assert "invalid contract" in links[1][2]
 
+    def test_precompute_runner_reconciles_stale_job_counts_after_run(self, temp_db_path, mock_provider):
+        runner = AoFPrecomputeRunner(database_url=temp_db_path)
+        runner.provider = mock_provider
+
+        original_update_progress = runner.precompute_job_persistence_service.update_job_progress
+        runner.precompute_job_persistence_service.update_job_progress = MagicMock(side_effect=lambda *args, **kwargs: None)
+
+        success_result = {
+            "simulation_id": 1,
+            "matrix_id": 1,
+            "raw_game_states_written": 0,
+            "raw_players_written": 0,
+            "matrix_cells_written": 169,
+            "aggregated_metrics_written": 169,
+            "failed_combinations": 0,
+            "unmapped_hero_records": 0,
+            "status": "aggregated",
+        }
+
+        runner._execute_matrix_sweep = MagicMock(side_effect=[
+            success_result,
+            MatrixSweepContractError("invalid contract"),
+        ])
+
+        profile = PrecomputeProfile(
+            positions=("UTG", "BTN"),
+            metrics=("EV",),
+            strict_modes=(False,),
+            simulations_per_cell=1,
+        )
+
+        result = runner.run(profile=profile, max_scenarios=2)
+
+        assert result == 0
+        assert runner._execute_matrix_sweep.call_count == 2
+        assert runner.precompute_job_persistence_service.update_job_progress.called
+
+        with runner.database_repository.connection.session_scope() as session:
+            job = session.execute(text("SELECT run_state, completed_scenarios, failed_scenarios FROM precompute_job_sessions")).first()
+            assert job is not None
+            assert job[0] == "FAILED"
+            assert job[1] == 1
+            assert job[2] == 1
+
+            links = session.execute(text("SELECT status FROM scenario_run_links ORDER BY scenario_index")).fetchall()
+            assert len(links) == 2
+            assert links[0][0] == "COMPLETED"
+            assert links[1][0] == "FAILED"
+
+        runner.precompute_job_persistence_service.update_job_progress = original_update_progress
+
     def test_precompute_runner_stops_dispatching_after_cancellation_request(self, temp_db_path, mock_provider):
         """Integration test: cooperative cancellation stops dispatching new scenarios."""
         runner = AoFPrecomputeRunner(database_url=temp_db_path)
