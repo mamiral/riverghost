@@ -66,7 +66,7 @@ class TestAoFBrowserPanelInitialization:
 class TestAoFBrowserPanelDatabaseLoading:
     """Tests for matrix loading from database."""
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_panel_loads_matrix_from_database(self, mock_db_class, database_url_fixture):
         """Test that panel loads matrix data from database during initialization."""
         # Mock database to return valid payload
@@ -105,7 +105,7 @@ class TestAoFBrowserPanelDatabaseLoading:
         assert panel.payload is not None
         assert "cells" in panel.payload or "context" in panel.payload
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_panel_handles_database_connection_error(self, mock_db_class, database_url_fixture):
         """Test that panel gracefully handles database connection errors."""
         # Mock database to raise exception
@@ -364,7 +364,7 @@ class TestAoFBrowserPanelStateDerivation:
 class TestAoFBrowserPanelErrorHandling:
     """Tests for error handling in database operations."""
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_panel_continues_on_partial_database_failure(self, mock_db_class, database_url_fixture):
         """Test that panel continues functioning even if database query fails partway."""
         mock_db = MagicMock()

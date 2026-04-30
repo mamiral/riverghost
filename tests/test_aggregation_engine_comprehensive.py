@@ -18,8 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from hopilot.database import DatabaseConnection
 from hopilot.gto.aggregation_engine import AggregationEngine
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.gto.aof_hand_matrix import hand_key_from_index
 
 
@@ -45,7 +46,7 @@ def test_db(tmp_path):
     conn = DatabaseConnection(db_url)
     conn.create_tables()
 
-    yield db_url
+    yield conn
 
     try:
         conn.close()
@@ -55,12 +56,13 @@ def test_db(tmp_path):
 
 @pytest.fixture
 def populated_test_db(test_db):
-    repo = DatabaseRepository(test_db)
-    derivation_engine = MatrixCellsDerivationEngine(test_db)
+    sim_repo = SimulationRepository(test_db)
+    gs_repo = GameStateRepository(test_db)
+    derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
 
     sim_params = '{"num_simulations": 1000, "matrix_size": "13x13", "game_type": "NLHE"}'
-    sim_id = repo.create_simulation(sim_params)
-    matrix_id = repo.create_hand_matrix(sim_id)
+    sim_id = sim_repo.create_simulation(sim_params)
+    matrix_id = sim_repo.create_hand_matrix(sim_id)
 
     test_data = []
     hand_combinations = [
@@ -76,21 +78,21 @@ def populated_test_db(test_db):
 
         for i in range(num_samples):
             outcome = 'win' if i % 3 == 0 else ('loss' if i % 3 == 1 else 'tie')
-            gs_id = repo.create_game_state({
+            gs_id = gs_repo.create_game_state({
                 'pot_size': 1000 + (i * 100),
                 'board_cards_str': 'As,Ks,Qs,Js,Ts',
                 'round': 'preflop',
                 'outcome': outcome,
             })
 
-            repo.create_player({
+            gs_repo.create_player({
                 'game_state_id': gs_id,
                 'position': 'UTG',
                 'hole_cards': hero_hole_cards,
                 'stack_size': 10000,
                 'is_hero': True,
             })
-            repo.create_player({
+            gs_repo.create_player({
                 'game_state_id': gs_id,
                 'position': 'BTN',
                 'hole_cards': 'KdKh',
@@ -114,7 +116,7 @@ class TestAggregationEngine:
     """Comprehensive tests for the AggregationEngine."""
 
     def test_basic_aggregation_single_cell(self, test_db, populated_test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
         test_case = populated_test_db[0]
 
         result = engine.compute_matrix_cell_from_game_states(
@@ -130,7 +132,7 @@ class TestAggregationEngine:
         assert isinstance(result['ev'], float)
 
     def test_aggregation_insufficient_samples(self, test_db, populated_test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
         test_case = populated_test_db[3]
 
         result = engine.compute_matrix_cell_from_game_states(
@@ -143,13 +145,13 @@ class TestAggregationEngine:
         assert result is None
 
     def test_aggregation_nonexistent_cell(self, test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
 
         result = engine.compute_matrix_cell_from_game_states(999, 0, 0, min_samples=1)
         assert result is None
 
     def test_aggregation_mathematical_correctness(self, test_db, populated_test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
         test_case = populated_test_db[0]
 
         result = engine.compute_matrix_cell_from_game_states(
@@ -163,7 +165,7 @@ class TestAggregationEngine:
         assert abs(result['equity'] - expected_equity) < 0.01
 
     def test_aggregation_performance_small_dataset(self, test_db, populated_test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
         start_time = time.time()
 
         for test_case in populated_test_db:
@@ -179,32 +181,33 @@ class TestAggregationEngine:
         assert time.time() - start_time < 1.0
 
     def test_aggregation_with_jackpots(self, test_db):
-        repo = DatabaseRepository(test_db)
-        engine = AggregationEngine(test_db)
-        derivation_engine = MatrixCellsDerivationEngine(test_db)
+        sim_repo = SimulationRepository(test_db)
+        gs_repo = GameStateRepository(test_db)
+        engine = AggregationEngine(test_db.database_url)
+        derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
 
         sim_params = '{"num_simulations": 100, "matrix_size": "13x13", "game_type": "NLHE"}'
-        sim_id = repo.create_simulation(sim_params)
-        matrix_id = repo.create_hand_matrix(sim_id)
+        sim_id = sim_repo.create_simulation(sim_params)
+        matrix_id = sim_repo.create_hand_matrix(sim_id)
 
         hero_hole_cards = generate_hero_hole_cards(0, 0)
         derivation_engine._ensure_matrix_cell_exists(matrix_id, 0, 0, "AA vs KK")
 
-        gs_id = repo.create_game_state({
+        gs_id = gs_repo.create_game_state({
             'pot_size': 1000,
             'board_cards_str': 'As,Ks,Qs,Js,Ts',
             'round': 'preflop',
             'outcome': 'jackpot_win',
         })
 
-        hero_player_id = repo.create_player({
+        hero_player_id = gs_repo.create_player({
             'game_state_id': gs_id,
             'position': 'UTG',
             'hole_cards': hero_hole_cards,
             'stack_size': 10000,
             'is_hero': True,
         })
-        repo.create_player({
+        gs_repo.create_player({
             'game_state_id': gs_id,
             'position': 'BTN',
             'hole_cards': 'KdKh',
@@ -212,7 +215,7 @@ class TestAggregationEngine:
             'is_hero': False,
         })
 
-        repo.create_jackpot({
+        gs_repo.create_jackpot({
             'game_state_id': gs_id,
             'player_id': hero_player_id,
             'jackpot_type': 'ROYAL_FLUSH',
@@ -226,12 +229,12 @@ class TestAggregationEngine:
         assert result['total_games'] == 1
 
     def test_aggregation_edge_cases(self, test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
         assert engine.compute_matrix_cell_from_game_states(-1, 0, 0, min_samples=1) is None
         assert engine.compute_matrix_cell_from_game_states(1, 999, 999, min_samples=1) is None
 
     def test_aggregation_data_consistency(self, test_db, populated_test_db):
-        engine = AggregationEngine(test_db)
+        engine = AggregationEngine(test_db.database_url)
         test_case = populated_test_db[0]
 
         results = [
@@ -255,7 +258,7 @@ class TestAggregationIntegration:
     """Integration tests for the aggregation system."""
 
     def test_full_aggregation_pipeline(self, test_db, populated_test_db):
-        derivation_engine = MatrixCellsDerivationEngine(test_db)
+        derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
 
         test_case = populated_test_db[0]
         result = derivation_engine.derive_matrix_cells_from_aggregations(
@@ -266,8 +269,8 @@ class TestAggregationIntegration:
         assert result['created_cells'] >= 1
 
     def test_aggregation_with_matrix_derivation(self, test_db, populated_test_db):
-        derivation_engine = MatrixCellsDerivationEngine(test_db)
-        aggregation_engine = AggregationEngine(test_db)
+        derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
+        aggregation_engine = AggregationEngine(test_db.database_url)
 
         test_case = populated_test_db[0]
         derivation_result = derivation_engine.derive_matrix_cells_from_aggregations(

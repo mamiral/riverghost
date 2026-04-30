@@ -13,7 +13,6 @@ from statistics import mean, median, stdev
 import json
 
 from hopilot.logging_config import get_logger
-from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.performance_monitor import QueryPerformanceMonitor
 
 logger = get_logger(__name__)
@@ -24,7 +23,7 @@ class PerformanceTestSuite:
     Comprehensive performance testing suite for database operations.
     """
 
-    def __init__(self, repository: DatabaseRepository):
+    def __init__(self, repository: Any):
         self.repository = repository
         self.monitor = QueryPerformanceMonitor("sqlite:///performance_test.db")
         self.results = []

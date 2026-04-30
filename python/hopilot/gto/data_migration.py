@@ -13,7 +13,6 @@ from datetime import datetime
 from pathlib import Path
 
 from hopilot.logging_config import get_logger
-from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.normalized_db_provider import NormalizedDatabaseProvider
 
 logger = get_logger(__name__)

@@ -10,23 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 import pytest
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, PrecomputeProfile
-from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.precompute_orchestration import PrecomputeOrchestrationService
-
-
-@pytest.fixture
-def temp_db():
-    """Create a temporary in-memory database for testing."""
-    # Use in-memory SQLite to avoid file locking issues
-    repo = DatabaseRepository(database_url="sqlite:///:memory:")
-    
-    yield repo
-    
-    # Cleanup - close connection
-    try:
-        repo.connection.close()
-    except Exception:
-        pass  # Ignore cleanup errors
 
 
 @pytest.fixture
@@ -182,7 +166,7 @@ class TestEnumerateScenariosRegression:
 class TestPrecomputeRunNoKeyError:
     """Test that precompute run() doesn't crash with KeyError on scenario_key."""
     
-    def test_run_with_small_profile_completes(self, temp_db, mock_provider):
+    def test_run_with_small_profile_completes(self, mock_provider):
         """Bug: run() would crash with KeyError: 'scenario_key' before fix."""
         profile = PrecomputeProfile(
             positions=["UTG"],
@@ -202,7 +186,7 @@ class TestPrecomputeRunNoKeyError:
         # Should complete without error
         assert result == 0, f"Run should return 0, got {result}"
 
-    def test_run_does_not_invoke_payload_contract_during_orchestration(self, temp_db, mock_provider):
+    def test_run_does_not_invoke_payload_contract_during_orchestration(self, mock_provider):
         """Regression: orchestration should not invoke provider payload retrieval."""
         mock_provider.get_matrix_payload.side_effect = AssertionError(
             "Payload contract should not be called during orchestration"
@@ -225,7 +209,7 @@ class TestPrecomputeRunNoKeyError:
         assert result == 0
         assert not mock_provider.get_matrix_payload.called
     
-    def test_run_accesses_scenario_key_without_error(self, temp_db, mock_provider):
+    def test_run_accesses_scenario_key_without_error(self, mock_provider):
         """Verify the run() method can access scenario_key from enumerated scenarios."""
         profile = PrecomputeProfile(
             positions=["BTN"],
@@ -259,7 +243,7 @@ class TestPrecomputeRunNoKeyError:
 class TestDataPersistenceAfterFix:
     """Test that data is actually persisted to database after bug fixes."""
     
-    def test_scenarios_persist_simulation_record(self, temp_db, mock_provider):
+    def test_scenarios_persist_simulation_record(self, mock_provider):
         """After fixes, simulations should be persisted to database."""
         profile = PrecomputeProfile(
             positions=["SB"],
@@ -288,7 +272,7 @@ class TestDataPersistenceAfterFix:
                 "After run(), database should have simulation records"
             )
     
-    def test_scenarios_persist_hand_matrices(self, temp_db, mock_provider):
+    def test_scenarios_persist_hand_matrices(self, mock_provider):
         """After fixes, hand matrices should be persisted."""
         profile = PrecomputeProfile(
             positions=["BB"],
@@ -315,7 +299,7 @@ class TestDataPersistenceAfterFix:
                 "After run(), database should have hand_matrix records"
             )
     
-    def test_scenarios_persist_matrix_cells_with_equity(self, temp_db, mock_provider):
+    def test_scenarios_persist_matrix_cells_with_equity(self, mock_provider):
         """After fixes, matrix cells should be persisted with equity data."""
         profile = PrecomputeProfile(
             positions=["UTG"],

@@ -64,7 +64,8 @@ class MatrixSweepAggregationService:
         matrix_id = self.repository.get_or_create_hand_matrix_for_simulation(simulation_id)
         timestamp = datetime.now(timezone.utc).isoformat()
 
-        with self.repository.connection.session_scope() as session:
+        session = self.repository.get_session()
+        try:
             for row_index, col_index, hand_key in iter_canonical_matrix_cells():
                 cell = MatrixCell(
                     matrix_id=matrix_id,
@@ -95,6 +96,9 @@ class MatrixSweepAggregationService:
                         last_updated=timestamp,
                     )
                 )
+            session.commit()
+        finally:
+            session.close()
 
         updated_parameters = mark_aggregation_complete(
             parameters,

@@ -6,7 +6,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.database import DatabaseConnection
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.gto.matrix_sweep_aggregation_service import MatrixSweepAggregationService
 from hopilot.models import AggregatedMetric, GameState, HandMatrix, MatrixCell, Simulation
 from tests.integration.matrix_sweep_db_utils import create_matrix_sweep_db_fixture, seed_matrix_sweep_raw_run
@@ -15,13 +16,15 @@ from tests.integration.matrix_sweep_db_utils import create_matrix_sweep_db_fixtu
 def test_aggregate_run_writes_one_simulation_one_matrix_and_169_cell_summaries() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         seed = seed_matrix_sweep_raw_run(repository)
         service = MatrixSweepAggregationService(repository)
 
         result = service.aggregate_run(seed["simulation_id"])
 
-        with repository.connection.session_scope() as session:
+        with repository.db_connection.session_scope() as session:
             assert session.query(Simulation).count() == 1
             assert session.query(HandMatrix).count() == 1
             assert session.query(MatrixCell).count() == 169
@@ -39,7 +42,9 @@ def test_aggregate_run_writes_one_simulation_one_matrix_and_169_cell_summaries()
 def test_rerun_aggregation_replaces_only_selected_run_summaries_and_keeps_raw_rows() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         seed = seed_matrix_sweep_raw_run(repository)
         service = MatrixSweepAggregationService(repository)
 
@@ -53,7 +58,7 @@ def test_rerun_aggregation_replaces_only_selected_run_summaries_and_keeps_raw_ro
         rerun_cell_ids = [cell.id for cell in rerun_summary["matrix_cells"]]
         rerun_metric_ids = [metric.id for metric in rerun_summary["aggregated_metrics"]]
 
-        with repository.connection.session_scope() as session:
+        with repository.db_connection.session_scope() as session:
             assert session.query(GameState).count() == seed["raw_counts"]["raw_game_states"]
             assert session.query(MatrixCell).count() == 169
             assert session.query(AggregatedMetric).count() == 169
@@ -71,7 +76,9 @@ def test_rerun_aggregation_replaces_only_selected_run_summaries_and_keeps_raw_ro
 def test_aggregate_run_excludes_unmappable_hero_records_and_reports_them() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         seed = seed_matrix_sweep_raw_run(repository, include_unmapped_hero_record=True)
         service = MatrixSweepAggregationService(repository)
 

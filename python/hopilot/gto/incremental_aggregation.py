@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from hopilot.database import DatabaseConnection
 from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards
-from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.aggregation_engine import AggregationEngine
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
 from hopilot.models import GameState, MatrixCell, AggregatedMetric, HandMatrix
@@ -40,7 +39,6 @@ class IncrementalAggregationEngine:
         """
         self.database_url = database_url
         self.db_connection = DatabaseConnection(database_url)
-        self.repo = DatabaseRepository(database_url)
         self.aggregation_engine = AggregationEngine(database_url)
         self.derivation_engine = MatrixCellsDerivationEngine(database_url)
         self.performance_monitor = PerformanceMonitor()

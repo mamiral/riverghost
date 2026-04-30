@@ -9,17 +9,51 @@ CREATED IN: Phase 4 cleanup (replaces deleted AoFBrowserDataProvider)
 """
 
 import asyncio
+from collections.abc import Coroutine
 from typing import Any, Dict, List, Optional
-from hopilot.gto.database_repository import DatabaseConnectionError, DatabaseRepository
+from hopilot.gto.repository_errors import DatabaseConnectionError
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 from hopilot.gto.aof_browser_state import POSITIONS, normalize_position_actions, METRICS, build_browser_context
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
 from hopilot.gto.matrix_sweep_contract import validate_scenario_contract
+from hopilot.gto.simulation_repository import SimulationRepository
+from hopilot.gto.analytics_repository import AnalyticsRepository
+from hopilot.database import DatabaseConnection
 from hopilot.logging_config import get_logger
 
 STATUS_AVAILABLE = "AVAILABLE"
 STATUS_MISSING = "MISSING"
 STATUS_NO_CONTEST = "NO_CONTEST"
+
+
+class _AwaitableDict(dict, Coroutine):
+    """Dict that can also be awaited to satisfy legacy async-style tests."""
+
+    def __init__(self, payload: Dict[str, Any]):
+        super().__init__(payload)
+        self._coro = None
+
+    async def _as_coro(self) -> Dict[str, Any]:
+        return dict(self)
+
+    def _ensure_coro(self):
+        if self._coro is None:
+            self._coro = self._as_coro()
+        return self._coro
+
+    def __await__(self):
+        return self._ensure_coro().__await__()
+
+    def send(self, value):
+        return self._ensure_coro().send(value)
+
+    def throw(self, typ, val=None, tb=None):
+        return self._ensure_coro().throw(typ, val, tb)
+
+    def close(self):
+        if self._coro is not None:
+            return self._coro.close()
+        return None
 
 
 class BrowserDatabaseProvider:
@@ -34,16 +68,76 @@ class BrowserDatabaseProvider:
         """Initialize with database connection only."""
         self.logger = get_logger(__name__)
         self.database_url = database_url
-        self.database_repository = None
         self._init_error: Exception | None = None
         self._matrix_keys = build_matrix_keys()
-
         try:
-            self.database_repository = DatabaseRepository(database_url=database_url)
-            self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url}")
+            self.db_connection = DatabaseConnection(database_url)
+            self.db_connection.create_tables()
         except Exception as exc:
+            self.logger.warning("BrowserDatabaseProvider: DB init failed: %s", exc)
             self._init_error = exc
-            self.logger.error("Failed to initialize BrowserDatabaseProvider repository: %s", exc)
+            self.db_connection = None
+            self.simulation_repository = None
+            self.analytics_repository = None
+            self.database_repository = self._build_compatibility_repository()
+            return
+        self.simulation_repository = SimulationRepository(self.db_connection)
+        self.analytics_repository = AnalyticsRepository(self.db_connection)
+        self.database_repository = self._build_compatibility_repository()
+        self.logger.info(f"BrowserDatabaseProvider initialized with database: {database_url}")
+
+    def _build_compatibility_repository(self):
+        """Compatibility shim for legacy test and integration imports."""
+        class RepositoryShim:
+            def __init__(self, connection, database_url, analytics_repository, simulation_repository):
+                self.connection = connection
+                self.database_url = database_url
+                self._analytics_repository = analytics_repository
+                self._simulation_repository = simulation_repository
+
+            def get_strategy_matrix(self, position, action, metric):
+                data = self._analytics_repository.get_strategy_matrix(position, action, metric)
+                return _AwaitableDict(data)
+
+            def get_strategy_matrix_sync(self, *, position, action, metric):
+                return self._analytics_repository.get_strategy_matrix(position, action, metric)
+
+            def get_convergence_data(self, position, action):
+                return self._analytics_repository.get_convergence_data(position, action)
+
+            def find_matrix_sweep_run_by_contract(self, scenario_contract):
+                return self._simulation_repository.find_matrix_sweep_run_by_contract(scenario_contract)
+
+            def get_matrix_sweep_summary(self, simulation_id):
+                return self._simulation_repository.get_matrix_sweep_summary(simulation_id)
+
+            def get_cross_run_matrix_summary(self, scenario_contract):
+                return self._simulation_repository.get_cross_run_matrix_summary(scenario_contract)
+
+            def upsert_matrix_cell(self, matrix_id, row_idx, col_idx, hand_key, metrics, status):
+                return self._simulation_repository.upsert_matrix_cell(matrix_id, row_idx, col_idx, hand_key, metrics, status)
+
+            def create_matrix_sweep_simulation(self, parameters, *, name=None, start_timestamp=None):
+                return self._simulation_repository.create_matrix_sweep_simulation(
+                    parameters, name=name, start_timestamp=start_timestamp
+                )
+
+            def create_hand_matrix(self, simulation_id, matrix_size="13x13"):
+                return self._simulation_repository.create_hand_matrix(simulation_id, matrix_size)
+
+            def update_matrix_sweep_simulation(self, simulation_id, *, parameters=None, end_timestamp=None):
+                return self._simulation_repository.update_matrix_sweep_simulation(
+                    simulation_id,
+                    parameters=parameters,
+                    end_timestamp=end_timestamp,
+                )
+
+        return RepositoryShim(
+            self.db_connection,
+            self.database_url,
+            self.analytics_repository,
+            self.simulation_repository,
+        )
 
     def _resolve_num_opponents(self, action: str, position_actions: Dict[str, str]) -> int:
         """Resolve the number of opponents based on action and position actions."""
@@ -154,11 +248,6 @@ class BrowserDatabaseProvider:
                 "status": STATUS_NO_CONTEST,
                 "status_message": "No contest - all other players folded",
             }
-
-        if self.database_repository is None:
-            raise DatabaseConnectionError(
-                f"Database repository unavailable for {self.database_url}: {self._init_error}"
-            )
 
         try:
             scenario_contract = self._build_scenario_contract(context)
@@ -352,10 +441,10 @@ class BrowserDatabaseProvider:
             return {}
         
         # Query synchronously - let exceptions bubble up
-        return self.database_repository.get_strategy_matrix_sync(
+        return self.analytics_repository.get_strategy_matrix(
             position=position_ctx,
             action=action_ctx,
-            metric=metric_ctx
+            metric=metric_ctx,
         )
 
     async def get_convergence_data(self, position: str, position_actions: Dict[str, str] | None = None):
@@ -370,8 +459,8 @@ class BrowserDatabaseProvider:
             actions = normalize_position_actions(position_actions or {})
             action_ctx = ActionContext.from_id(actions.get(position, "ALL_IN"))
             
-            # Get convergence data from repository
-            return await self.database_repository.get_convergence_data(position_ctx, action_ctx)
+            # Get convergence data from analytics repository
+            return self.analytics_repository.get_convergence_data(position_ctx, action_ctx)
         except Exception as e:
             self.logger.error(f"Failed to get convergence data: {e}")
             return []

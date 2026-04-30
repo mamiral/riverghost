@@ -12,8 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from hopilot.database import DatabaseConnection
 from hopilot.gto.convergence_analysis_queries import ConvergenceAnalysisQueries
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
+from hopilot.gto.simulation_repository import SimulationRepository
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def test_db(tmp_path):
     conn = DatabaseConnection(db_url)
     conn.create_tables()
 
-    yield db_url
+    yield conn
 
     # Cleanup
     try:
@@ -39,13 +40,14 @@ def test_db(tmp_path):
 @pytest.fixture
 def populated_test_db_with_series(test_db):
     """Create a test database with time-series data for convergence testing."""
-    repo = DatabaseRepository(test_db)
-    derivation_engine = MatrixCellsDerivationEngine(test_db)
+    sim_repo = SimulationRepository(test_db)
+    gs_repo = GameStateRepository(test_db)
+    derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
 
     # Create simulation and matrix
     sim_params = '{"num_simulations": 2000, "matrix_size": "13x13", "game_type": "NLHE"}'
-    sim_id = repo.create_simulation(sim_params)
-    matrix_id = repo.create_hand_matrix(sim_id)
+    sim_id = sim_repo.create_simulation(sim_params)
+    matrix_id = sim_repo.create_hand_matrix(sim_id)
 
     # Create MatrixCell
     hand_combo = "AA vs AK"
@@ -89,7 +91,7 @@ def populated_test_db_with_series(test_db):
             'outcome': outcome,
             'players': [dict(player) for player in player_template]
         }
-        gs_id = repo.create_game_state(gs_data)
+        gs_id = gs_repo.create_game_state(gs_data)
         game_states.append(gs_id)
 
     # Phase 2: More balanced (next 500 samples)
@@ -109,7 +111,7 @@ def populated_test_db_with_series(test_db):
             'outcome': outcome,
             'players': [dict(player) for player in player_template]
         }
-        gs_id = repo.create_game_state(gs_data)
+        gs_id = gs_repo.create_game_state(gs_data)
         game_states.append(gs_id)
 
     # Phase 3: Stabilized (final 500 samples)
@@ -129,7 +131,7 @@ def populated_test_db_with_series(test_db):
             'outcome': outcome,
             'players': [dict(player) for player in player_template]
         }
-        gs_id = repo.create_game_state(gs_data)
+        gs_id = gs_repo.create_game_state(gs_data)
         game_states.append(gs_id)
 
     return {
@@ -145,7 +147,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_equity_convergence_series_basic(self, test_db, populated_test_db_with_series):
         """Test basic equity convergence series functionality."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
         test_data = populated_test_db_with_series
 
         result = engine.get_equity_convergence_series(
@@ -178,7 +180,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_equity_convergence_series_insufficient_data(self, test_db):
         """Test convergence series with insufficient data."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
 
         result = engine.get_equity_convergence_series(
             999, 0, 0,  # Non-existent matrix/cell
@@ -189,7 +191,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_convergence_statistics(self, test_db, populated_test_db_with_series):
         """Test convergence statistics for a matrix."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
         test_data = populated_test_db_with_series
 
         result = engine.get_convergence_statistics(test_data['matrix_id'], min_samples=1000)
@@ -221,7 +223,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_convergence_stability_analysis(self, test_db, populated_test_db_with_series):
         """Test convergence stability analysis."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
         test_data = populated_test_db_with_series
 
         result = engine.analyze_convergence_stability(
@@ -247,7 +249,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_convergence_stability_insufficient_data(self, test_db):
         """Test stability analysis with insufficient data."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
 
         result = engine.analyze_convergence_stability(999, 0, 0, window_size=200)
 
@@ -255,7 +257,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_convergence_status_assessment(self, test_db, populated_test_db_with_series):
         """Test convergence status assessment logic."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
 
         # Test different scenarios
         assert engine._assess_convergence_status(0.005, 15000) == 'converged'
@@ -266,7 +268,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_equity_calculation_accuracy(self, test_db):
         """Test that equity calculations are mathematically accurate."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
 
         # Create mock GameState objects for testing
         class MockGameState:
@@ -287,7 +289,7 @@ class TestConvergenceAnalysisQueries:
 
     def test_empty_convergence_data_handling(self, test_db):
         """Test handling of empty convergence data."""
-        engine = ConvergenceAnalysisQueries(test_db)
+        engine = ConvergenceAnalysisQueries(test_db.database_url)
 
         summary = engine._calculate_convergence_summary([])
         assert summary == {}

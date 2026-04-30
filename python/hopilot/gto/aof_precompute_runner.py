@@ -9,10 +9,13 @@ import time
 from typing import Any
 
 from hopilot.gto.aof_hand_matrix import format_metric_value
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.database import DatabaseConnection
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.matrix_sweep_contract import MatrixSweepContractError
 from hopilot.gto.precompute_job_persistence import PrecomputeJobPersistenceService
+from hopilot.gto.precompute_job_repository import PrecomputeJobRepository
 from hopilot.gto.precompute_orchestration import PrecomputeOrchestrationService
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.logging_config import get_logger
 from hopilot.performance_monitor import performance_monitor
 from hopilot.poker_analyzer import PokerAnalyzer
@@ -49,6 +52,157 @@ class RunnerPhase(str, Enum):
 
 class MatrixSweepAggregationError(Exception):
     """Raised when matrix sweep aggregation fails."""
+
+
+class AofRepositoryShim:
+    def __init__(self, db_connection: DatabaseConnection):
+        self.connection = db_connection
+        self.game_state_repository = GameStateRepository(db_connection)
+        self.simulation_repository = SimulationRepository(db_connection)
+        self.precompute_job_repository = PrecomputeJobRepository(db_connection)
+
+    def create_game_state(self, game_state_data: dict[str, Any]) -> int:
+        return self.game_state_repository.create_game_state(game_state_data)
+
+    def create_player(self, player_data: dict[str, Any]) -> int:
+        return self.game_state_repository.create_player(player_data)
+
+    def create_bet(self, bet_data: dict[str, Any]) -> int:
+        return self.game_state_repository.create_bet(bet_data)
+
+    def create_jackpot(self, jackpot_data: dict[str, Any]) -> int:
+        return self.game_state_repository.create_jackpot(jackpot_data)
+
+    def create_simulation(self, parameters: dict[str, Any]) -> int:
+        return self.simulation_repository.create_simulation(parameters)
+
+    def create_hand_matrix(self, simulation_id: int, *, matrix_size: str = "13x13") -> int:
+        return self.simulation_repository.create_hand_matrix(simulation_id, matrix_size=matrix_size)
+
+    def get_max_simulation_id(self) -> int:
+        return self.simulation_repository.get_max_simulation_id()
+
+    def get_max_matrix_id(self) -> int:
+        return self.simulation_repository.get_max_matrix_id()
+
+    def get_latest_game_state_id(self) -> int:
+        return self.simulation_repository.get_latest_game_state_id()
+
+    def get_run_raw_counts(self, raw_game_state_id_start: int, raw_game_state_id_end: int) -> dict[str, int]:
+        return self.simulation_repository.get_run_raw_counts(raw_game_state_id_start, raw_game_state_id_end)
+
+    def get_session(self):
+        return self.simulation_repository.get_session()
+
+    def create_matrix_sweep_simulation(
+        self,
+        parameters: dict[str, Any],
+        *,
+        name: str | None = None,
+        start_timestamp: datetime | None = None,
+    ) -> int:
+        return self.simulation_repository.create_matrix_sweep_simulation(
+            parameters,
+            name=name,
+            start_timestamp=start_timestamp,
+        )
+
+    def update_matrix_sweep_simulation(
+        self,
+        simulation_id: int,
+        *,
+        parameters: dict[str, Any] | None = None,
+        end_timestamp: datetime | None = None,
+    ) -> None:
+        return self.simulation_repository.update_matrix_sweep_simulation(
+            simulation_id,
+            parameters=parameters,
+            end_timestamp=end_timestamp,
+        )
+
+    def get_simulation_record(self, simulation_id: int):
+        return self.simulation_repository.get_simulation_record(simulation_id)
+
+    def get_simulation_for_hand_matrix(self, hand_matrix_id: int):
+        return self.simulation_repository.get_simulation_for_hand_matrix(hand_matrix_id)
+
+    def get_run_game_states(self, raw_game_state_id_start: int, raw_game_state_id_end: int):
+        return self.simulation_repository.get_run_game_states(raw_game_state_id_start, raw_game_state_id_end)
+
+    def get_or_create_hand_matrix_for_simulation(
+        self,
+        simulation_id: int,
+        *,
+        matrix_size: str = "13x13",
+    ) -> int:
+        return self.simulation_repository.get_or_create_hand_matrix_for_simulation(
+            simulation_id,
+            matrix_size=matrix_size,
+        )
+
+    def delete_matrix_summaries(self, matrix_id: int) -> None:
+        return self.simulation_repository.delete_matrix_summaries(matrix_id)
+
+    def get_matrix_sweep_summary(self, simulation_id: int):
+        return self.simulation_repository.get_matrix_sweep_summary(simulation_id)
+
+    def get_cross_run_matrix_summary(self, scenario_contract: dict[str, Any]):
+        return self.simulation_repository.get_cross_run_matrix_summary(scenario_contract)
+
+    def find_matrix_sweep_run_by_contract(self, scenario_contract: dict[str, Any]):
+        return self.simulation_repository.find_matrix_sweep_run_by_contract(scenario_contract)
+
+    def list_matrix_sweep_runs_by_contract(self, scenario_contract: dict[str, Any]):
+        return self.simulation_repository.list_matrix_sweep_runs_by_contract(scenario_contract)
+
+    def upsert_matrix_cell(
+        self,
+        matrix_id: int,
+        row_idx: int,
+        col_idx: int,
+        hand_key: str,
+        metrics: dict[str, float],
+        status: str,
+    ) -> int:
+        return self.simulation_repository.upsert_matrix_cell(
+            matrix_id,
+            row_idx=row_idx,
+            col_idx=col_idx,
+            hand_key=hand_key,
+            metrics=metrics,
+            status=status,
+        )
+
+    def create_precompute_job_session(self, scenario_fingerprint: str, requested_scenarios: int) -> int:
+        return self.precompute_job_repository.create_precompute_job_session(scenario_fingerprint, requested_scenarios)
+
+    def update_precompute_job_session(self, job_session_id: int, **updates: Any) -> None:
+        return self.precompute_job_repository.update_precompute_job_session(job_session_id, **updates)
+
+    def get_precompute_job_session(self, job_session_id: int):
+        return self.precompute_job_repository.get_precompute_job_session(job_session_id)
+
+    def create_scenario_run_link(
+        self,
+        job_session_id: int,
+        scenario_index: int,
+        scenario_key: str,
+        scenario_contract: dict[str, Any],
+        status: str = "PENDING",
+    ) -> int:
+        return self.precompute_job_repository.create_scenario_run_link(
+            job_session_id,
+            scenario_index,
+            scenario_key,
+            scenario_contract,
+            status=status,
+        )
+
+    def update_scenario_run_link(self, scenario_link_id: int, **updates: Any) -> None:
+        return self.precompute_job_repository.update_scenario_run_link(scenario_link_id, **updates)
+
+    def get_scenario_run_links_for_job(self, job_session_id: int):
+        return self.precompute_job_repository.get_scenario_run_links_for_job(job_session_id)
 
 
 _GUI_TRANSITIONS: dict[GuiRunState, set[GuiRunState]] = {
@@ -123,14 +277,17 @@ class AoFPrecomputeRunner:
         self.store = None  # Phase 4: Store removed, always None
         if database_url is None:
             raise ValueError("database_url is required")
-        self.database_repository = DatabaseRepository(database_url=database_url)
+        self.db_connection = DatabaseConnection(database_url)
+        self.db_connection.create_tables()
+        self.database_repository = AofRepositoryShim(self.db_connection)
         self.precompute_orchestration_service = PrecomputeOrchestrationService(
             provider=self.provider,
             database_repository=self.database_repository,
             logger=self.logger,
         )
+        self.precompute_job_repository = PrecomputeJobRepository(self.db_connection)
         self.precompute_job_persistence_service = PrecomputeJobPersistenceService(
-            self.database_repository,
+            self.precompute_job_repository,
             logger=self.logger,
         )
         
@@ -165,8 +322,9 @@ class AoFPrecomputeRunner:
         from hopilot.gto.matrix_sweep_service import MatrixSweepService
         from hopilot.poker_analyzer import PokerAnalyzer
 
+        simulation_repository = SimulationRepository(self.db_connection)
         service = MatrixSweepService(
-            self.database_repository,
+            simulation_repository,
             PokerAnalyzer(),
             DatabasePersistenceStrategy,
         )

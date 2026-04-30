@@ -6,9 +6,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
+from hopilot.database import DatabaseConnection
 from hopilot.database.persistence import DatabasePersistenceStrategy
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.gto.matrix_sweep_service import MatrixSweepService
 from hopilot.models import Simulation
 from hopilot.poker_analyzer import PokerAnalyzer
@@ -18,7 +19,9 @@ from tests.integration.matrix_sweep_db_utils import build_matrix_sweep_contract,
 def test_find_run_by_contract_returns_only_selected_run_summary() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
 
         first_contract = build_matrix_sweep_contract(
@@ -56,7 +59,9 @@ def test_find_run_by_contract_returns_only_selected_run_summary() -> None:
 def test_find_run_by_contract_prefers_newest_completed_run() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
 
         contract = build_matrix_sweep_contract(
@@ -79,7 +84,9 @@ def test_find_run_by_contract_prefers_newest_completed_run() -> None:
 def test_find_run_by_contract_prefers_higher_id_on_tie() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
 
         contract = build_matrix_sweep_contract(
@@ -103,7 +110,9 @@ def test_find_run_by_contract_prefers_higher_id_on_tie() -> None:
 def test_completed_run_persists_required_contract_fields() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
 
         contract = build_matrix_sweep_contract(
@@ -115,7 +124,7 @@ def test_completed_run_persists_required_contract_fields() -> None:
         )
         run_result = service.run_sweep(contract)
 
-        with repository.connection.session_scope() as session:
+        with repository.db_connection.session_scope() as session:
             simulation = session.query(Simulation).filter(Simulation.id == run_result["simulation_id"]).first()
 
         assert simulation is not None
@@ -142,7 +151,9 @@ def test_completed_run_persists_required_contract_fields() -> None:
 def test_new_run_appends_without_mutating_existing_run_summaries() -> None:
     fixture = create_matrix_sweep_db_fixture(use_temp=True)
     try:
-        repository = DatabaseRepository(fixture.database_url)
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
         service = MatrixSweepService(repository, PokerAnalyzer(), DatabasePersistenceStrategy)
 
         first_contract = build_matrix_sweep_contract(selected_position="UTG")
@@ -160,7 +171,7 @@ def test_new_run_appends_without_mutating_existing_run_summaries() -> None:
         second_run = service.run_sweep(second_contract)
         first_summary_after = service.get_run_summary(first_run["simulation_id"])
 
-        with repository.connection.session_scope() as session:
+        with repository.db_connection.session_scope() as session:
             assert session.query(Simulation).count() == 2
 
         assert second_run["simulation_id"] != first_run["simulation_id"]

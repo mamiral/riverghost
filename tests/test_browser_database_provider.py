@@ -132,7 +132,7 @@ class TestBrowserDatabaseProviderValidation:
 class TestBrowserDatabaseProviderDatabaseIntegration:
     """Tests for database query integration."""
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_get_matrix_payload_valid_context_queries_database(self, mock_db_class):
         """Test that valid context triggers aggregated run lookup."""
         mock_db = MagicMock()
@@ -160,7 +160,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         assert len(payload["cells"]) == 169
         assert payload["cells"][0]["status"] == STATUS_AVAILABLE
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_get_matrix_payload_builds_canonical_scenario_contract(self, mock_db_class):
         """Test that the provider builds the correct scenario contract for repository lookup."""
         from hopilot.gto.aof_hand_matrix import build_matrix_keys
@@ -200,7 +200,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         assert called_contract["num_opponents"] == 1
         assert called_contract["run_kind"] == "matrix_sweep"
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_get_matrix_payload_database_failure_returns_missing(self, mock_db_class):
         """Test that repository failures return graceful MISSING payload."""
         mock_db = MagicMock()
@@ -218,7 +218,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         assert all(cell["status"] == STATUS_MISSING for cell in payload["cells"])
         assert "Database error" in payload.get("status_message", "")
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_get_matrix_payload_preserves_context_on_error(self, mock_db_class):
         """Test that error payload includes context for debugging."""
         mock_db = MagicMock()
@@ -281,7 +281,7 @@ class TestBrowserDatabaseProviderStatusPayloads:
 class TestBrowserDatabaseProviderCallbacks:
     """Tests for callback handling in database queries."""
 
-    @patch('hopilot.gto.browser_database_provider.DatabaseRepository')
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_get_matrix_payload_invokes_callback_for_each_cell(self, mock_db_class):
         """Test that get_matrix_payload invokes the cell completion callback."""
         mock_db = MagicMock()

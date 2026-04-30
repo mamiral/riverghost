@@ -56,7 +56,7 @@ def seed_matrix_sweep_raw_run(
     base_timestamp = datetime(2026, 4, 26, tzinfo=timezone.utc)
     outcome_cycle = ("WIN", "TIE", "LOSS")
 
-    with repository.connection.session_scope() as session:
+    with repository.db_connection.session_scope() as session:
         for index, (_, _, hand_key) in enumerate(iter_canonical_matrix_cells()):
             game_state = GameState(
                 timestamp=base_timestamp + timedelta(seconds=index),

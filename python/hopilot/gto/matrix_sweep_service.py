@@ -26,11 +26,10 @@ class MatrixSweepService:
         self.persistence_factory = persistence_factory
 
     def _capture_append_baseline(self):
-        with self.repository.connection.session_scope() as session:
-            return {
-                "max_simulation_id": int(session.query(func.max(Simulation.id)).scalar() or 0),
-                "max_matrix_id": int(session.query(func.max(HandMatrix.id)).scalar() or 0),
-            }
+        return {
+            "max_simulation_id": self.repository.get_max_simulation_id(),
+            "max_matrix_id": self.repository.get_max_matrix_id(),
+        }
 
     def _validate_append_only_run(self, baseline, result):
         if result["simulation_id"] <= baseline["max_simulation_id"]:
@@ -50,7 +49,7 @@ class MatrixSweepService:
             start_timestamp=datetime.now(timezone.utc),
         )
 
-        session = self.repository.connection.get_session()
+        session = self.repository.get_session()
         persistence = self.persistence_factory(session)
         failed_combinations = 0
 

@@ -12,8 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from hopilot.database import DatabaseConnection
 from hopilot.gto.jackpot_frequency_queries import JackpotFrequencyQueries
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
+from hopilot.gto.simulation_repository import SimulationRepository
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def test_db(tmp_path):
     conn = DatabaseConnection(db_url)
     conn.create_tables()
 
-    yield db_url
+    yield conn
 
     # Cleanup
     try:
@@ -37,13 +38,14 @@ def test_db(tmp_path):
 @pytest.fixture
 def populated_test_db_with_jackpots(test_db):
     """Create a test database with jackpot data for analysis."""
-    repo = DatabaseRepository(test_db)
-    derivation_engine = MatrixCellsDerivationEngine(test_db)
+    sim_repo = SimulationRepository(test_db)
+    gs_repo = GameStateRepository(test_db)
+    derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
 
     # Create simulation and matrix
     sim_params = '{"num_simulations": 2000, "matrix_size": "13x13", "game_type": "NLHE"}'
-    sim_id = repo.create_simulation(sim_params)
-    matrix_id = repo.create_hand_matrix(sim_id)
+    sim_id = sim_repo.create_simulation(sim_params)
+    matrix_id = sim_repo.create_hand_matrix(sim_id)
 
     # Create MatrixCell for an AKs hero hand coordinate.
     hand_combo = "AKs vs AA"
@@ -61,7 +63,7 @@ def populated_test_db_with_jackpots(test_db):
             'round': 'preflop',
             'outcome': 'win'  # All games win for simplicity
         }
-        gs_id = repo.create_game_state(gs_data)
+        gs_id = gs_repo.create_game_state(gs_data)
 
         # Create a hero player for this game state so matrix mapping works.
         hero_player_data = {
@@ -71,10 +73,10 @@ def populated_test_db_with_jackpots(test_db):
             'stack_size': 10000,
             'is_hero': True
         }
-        hero_player_id = repo.create_player(hero_player_data)
+        hero_player_id = gs_repo.create_player(hero_player_data)
 
         # Create a second player for realism.
-        repo.create_player({
+        gs_repo.create_player({
             'game_state_id': gs_id,
             'position': 'villain',
             'hole_cards': 'KsKd',
@@ -92,7 +94,7 @@ def populated_test_db_with_jackpots(test_db):
                 'qualifying_cards': ['As', 'Ks', 'Qs', 'Js', 'Ts'] if i % 40 == 0 else ['As', 'Ks', 'Qs', 'Js', '9s'],
                 'payout_multiplier': 500 if i % 40 == 0 else 100
             }
-            repo.create_jackpot(jackpot_data)
+            gs_repo.create_jackpot(jackpot_data)
             jackpot_games += 1
 
     return {
@@ -109,7 +111,7 @@ class TestJackpotFrequencyQueries:
 
     def test_jackpot_frequency_analysis_basic(self, test_db, populated_test_db_with_jackpots):
         """Test basic jackpot frequency analysis functionality."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
         test_data = populated_test_db_with_jackpots
 
         result = engine.get_jackpot_frequency_analysis(test_data['matrix_id'])
@@ -135,7 +137,7 @@ class TestJackpotFrequencyQueries:
 
     def test_jackpot_frequency_analysis_insufficient_data(self, test_db):
         """Test jackpot frequency analysis with insufficient data."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
 
         result = engine.get_jackpot_frequency_analysis(999, min_samples=10000)
 
@@ -143,7 +145,7 @@ class TestJackpotFrequencyQueries:
 
     def test_jackpot_ev_impact_by_hand(self, test_db, populated_test_db_with_jackpots):
         """Test EV impact analysis by hand combination."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
         test_data = populated_test_db_with_jackpots
 
         result = engine.get_jackpot_ev_impact_by_hand(test_data['matrix_id'])
@@ -173,7 +175,7 @@ class TestJackpotFrequencyQueries:
 
     def test_jackpot_temporal_analysis(self, test_db, populated_test_db_with_jackpots):
         """Test temporal analysis of jackpot frequency."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
         test_data = populated_test_db_with_jackpots
 
         result = engine.get_jackpot_temporal_analysis(test_data['matrix_id'])
@@ -200,7 +202,7 @@ class TestJackpotFrequencyQueries:
 
     def test_jackpot_ev_summary_calculation(self, test_db, populated_test_db_with_jackpots):
         """Test that EV summary calculations are correct."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
         test_data = populated_test_db_with_jackpots
 
         result = engine.get_jackpot_ev_impact_by_hand(test_data['matrix_id'])
@@ -227,7 +229,7 @@ class TestJackpotFrequencyQueries:
 
     def test_jackpot_frequency_mathematical_accuracy(self, test_db, populated_test_db_with_jackpots):
         """Test mathematical accuracy of jackpot frequency calculations."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
         test_data = populated_test_db_with_jackpots
 
         # Test frequency analysis
@@ -246,15 +248,16 @@ class TestJackpotFrequencyQueries:
 
     def test_empty_jackpot_analysis(self, test_db):
         """Test analysis with no jackpot data."""
-        engine = JackpotFrequencyQueries(test_db)
+        engine = JackpotFrequencyQueries(test_db.database_url)
 
         # Create a matrix with no jackpots
-        repo = DatabaseRepository(test_db)
-        derivation_engine = MatrixCellsDerivationEngine(test_db)
+        sim_repo = SimulationRepository(test_db)
+        gs_repo = GameStateRepository(test_db)
+        derivation_engine = MatrixCellsDerivationEngine(test_db.database_url)
 
         sim_params = '{"num_simulations": 100, "matrix_size": "13x13", "game_type": "NLHE"}'
-        sim_id = repo.create_simulation(sim_params)
-        matrix_id = repo.create_hand_matrix(sim_id)
+        sim_id = sim_repo.create_simulation(sim_params)
+        matrix_id = sim_repo.create_hand_matrix(sim_id)
 
         hand_combo = "22 vs 33"
         cell_id = derivation_engine._ensure_matrix_cell_exists(matrix_id, 0, 1, hand_combo)
@@ -268,8 +271,8 @@ class TestJackpotFrequencyQueries:
                 'round': 'preflop',
                 'outcome': 'loss'
             }
-            gs_id = repo.create_game_state(gs_data)
-            repo.create_player({
+            gs_id = gs_repo.create_game_state(gs_data)
+            gs_repo.create_player({
                 'game_state_id': gs_id,
                 'position': 'hero',
                 'hole_cards': 'AsKs',

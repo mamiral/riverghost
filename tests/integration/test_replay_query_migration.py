@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
 from hopilot.database import DatabaseConnection
-from hopilot.gto.database_repository import DatabaseRepository
+
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.replay_query_service import ReplayQueryService
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.models import (
     AggregatedMetric,
     GameState,
@@ -20,8 +22,8 @@ from hopilot.models import (
 )
 
 
-def _seed_raw_run_with_aggregation(repo: DatabaseRepository, run_name: str, parameters: dict):
-    with repo.connection.session_scope() as session:
+def _seed_raw_run_with_aggregation(conn: DatabaseConnection, run_name: str, parameters: dict):
+    with conn.session_scope() as session:
         simulation = Simulation(
             name=run_name,
             parameters=dict(parameters),
@@ -94,8 +96,12 @@ class TestReplayQueryMigration:
         try:
             conn = DatabaseConnection(db_url)
             conn.create_tables()
-            repo = DatabaseRepository(db_url)
-            service = ReplayQueryService(repo)
+
+            service = ReplayQueryService(
+                db_connection=conn,
+                simulation_repository=SimulationRepository(conn),
+                game_state_repository=GameStateRepository(conn),
+            )
 
             scenario_contract = {
                 'selected_position': 'UTG',
@@ -114,8 +120,8 @@ class TestReplayQueryMigration:
                 'raw_game_state_id_end': None,
             }
 
-            _seed_raw_run_with_aggregation(repo, 'raw_run_1', scenario_contract)
-            _seed_raw_run_with_aggregation(repo, 'raw_run_2', scenario_contract)
+            _seed_raw_run_with_aggregation(conn, 'raw_run_1', scenario_contract)
+            _seed_raw_run_with_aggregation(conn, 'raw_run_2', scenario_contract)
 
             result = service.query_raw_run(scenario_contract=scenario_contract)
 
@@ -124,10 +130,6 @@ class TestReplayQueryMigration:
             assert len(result['matched_runs']) == 2
             assert all('simulation_id' in run for run in result['matched_runs'])
         finally:
-            try:
-                repo.connection.close()
-            except Exception:
-                pass
             try:
                 conn.close()
             except Exception:
@@ -142,8 +144,12 @@ class TestReplayQueryMigration:
         try:
             conn = DatabaseConnection(db_url)
             conn.create_tables()
-            repo = DatabaseRepository(db_url)
-            service = ReplayQueryService(repo)
+
+            service = ReplayQueryService(
+                db_connection=conn,
+                simulation_repository=SimulationRepository(conn),
+                game_state_repository=GameStateRepository(conn),
+            )
 
             scenario_contract = {
                 'selected_position': 'UTG',
@@ -162,8 +168,8 @@ class TestReplayQueryMigration:
                 'raw_game_state_id_end': None,
             }
 
-            simulation_a, _ = _seed_raw_run_with_aggregation(repo, 'raw_run_3', scenario_contract)
-            simulation_b, _ = _seed_raw_run_with_aggregation(repo, 'raw_run_4', scenario_contract)
+            simulation_a, _ = _seed_raw_run_with_aggregation(conn, 'raw_run_3', scenario_contract)
+            simulation_b, _ = _seed_raw_run_with_aggregation(conn, 'raw_run_4', scenario_contract)
 
             assert simulation_a.id != simulation_b.id
 
@@ -176,10 +182,6 @@ class TestReplayQueryMigration:
             assert len(result['game_states']) == 1
             assert result['matched_runs'][0]['simulation_id'] == simulation_b.id
         finally:
-            try:
-                repo.connection.close()
-            except Exception:
-                pass
             try:
                 conn.close()
             except Exception:
@@ -194,8 +196,12 @@ class TestReplayQueryMigration:
         try:
             conn = DatabaseConnection(db_url)
             conn.create_tables()
-            repo = DatabaseRepository(db_url)
-            service = ReplayQueryService(repo)
+
+            service = ReplayQueryService(
+                db_connection=conn,
+                simulation_repository=SimulationRepository(conn),
+                game_state_repository=GameStateRepository(conn),
+            )
 
             scenario_contract = {
                 'selected_position': 'UTG',
@@ -214,8 +220,8 @@ class TestReplayQueryMigration:
                 'raw_game_state_id_end': None,
             }
 
-            simulation, _ = _seed_raw_run_with_aggregation(repo, 'raw_run_5', scenario_contract)
-            summary = repo.get_matrix_sweep_summary(simulation.id)
+            simulation, _ = _seed_raw_run_with_aggregation(conn, 'raw_run_5', scenario_contract)
+            summary = SimulationRepository(conn).get_matrix_sweep_summary(simulation.id)
 
             direct_result = service.query_raw_run(simulation_id=simulation.id)
             summary_result = service.query_raw_run_from_summary(summary)
@@ -224,10 +230,6 @@ class TestReplayQueryMigration:
             assert summary_result['matched_runs'] == direct_result['matched_runs']
             assert summary_result['game_states'] == direct_result['game_states']
         finally:
-            try:
-                repo.connection.close()
-            except Exception:
-                pass
             try:
                 conn.close()
             except Exception:

@@ -6,8 +6,11 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import selectinload
 
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.database import DatabaseConnection
+from hopilot.gto.game_state_repository import GameStateRepository
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.gto.aof_hand_matrix import hand_key_from_hole_cards
+from hopilot.gto.matrix_sweep_contract import normalize_scenario_contract
 from hopilot.models import GameState, Player, Simulation
 from hopilot.logging_config import get_logger
 
@@ -55,12 +58,19 @@ class ReplayView:
 class ReplayQueryService:
     """Service for truthful replay and run-scoped raw-hand queries."""
 
-    def __init__(self, repository: DatabaseRepository):
-        self.repository = repository
+    def __init__(
+        self,
+        db_connection: DatabaseConnection,
+        simulation_repository: SimulationRepository,
+        game_state_repository: GameStateRepository,
+    ):
+        self.db_connection = db_connection
+        self.simulation_repository = simulation_repository
+        self.game_state_repository = game_state_repository
 
     def replay_game_state(self, game_state_id: int) -> Dict[str, Any]:
         """Return a truthful replay view for one persisted GameState."""
-        with self.repository.connection.session_scope() as session:
+        with self.db_connection.session_scope() as session:
             game_state = (
                 session.query(GameState)
                 .options(selectinload(GameState.players))
@@ -88,18 +98,18 @@ class ReplayQueryService:
         matches: List[Simulation] = []
 
         if simulation_id is not None:
-            selected_run = self.repository.get_simulation_record(simulation_id)
+            selected_run = self.simulation_repository.get_simulation_record(simulation_id)
             matches = [selected_run] if selected_run is not None else []
         elif hand_matrix_id is not None:
-            selected_run = self.repository.get_simulation_for_hand_matrix(hand_matrix_id)
+            selected_run = self.simulation_repository.get_simulation_for_hand_matrix(hand_matrix_id)
             matches = [selected_run] if selected_run is not None else []
         elif scenario_contract is not None:
-            selected_run, matches = self.repository.resolve_scenario_run_selection(
+            selected_run, matches = self._resolve_scenario_run_selection(
                 scenario_contract,
                 explicit_run_id=explicit_run_id,
             )
         else:
-            return self.repository.build_empty_scope_result(
+            return self._build_empty_scope_result(
                 STATUS_NOT_FOUND,
                 "No run selection criteria provided.",
                 [],
@@ -108,32 +118,32 @@ class ReplayQueryService:
         if selected_run is None:
             if not matches:
                 if simulation_id is not None or hand_matrix_id is not None:
-                    return self.repository.build_empty_scope_result(
+                    return self._build_empty_scope_result(
                         STATUS_NOT_FOUND,
                         "No persisted run matches the requested run identifier.",
                         [],
                     )
-                return self.repository.build_empty_scope_result(
+                return self._build_empty_scope_result(
                     STATUS_NOT_FOUND,
                     "No persisted run matches the requested scenario contract.",
                     [],
                 )
 
             if explicit_run_id is not None or scenario_contract is not None:
-                return self.repository.build_empty_scope_result(
+                return self._build_empty_scope_result(
                     STATUS_DISAMBIGUATION_REQUIRED,
                     f"{len(matches)} candidate runs matched the exact scenario contract; explicit run selection is required.",
                     matches,
                 )
 
-            return self.repository.build_empty_scope_result(
+            return self._build_empty_scope_result(
                 STATUS_NOT_FOUND,
                 "No matching candidate runs were found.",
                 matches,
             )
 
-        if not self.repository.is_run_boundary_readable(selected_run):
-            return self.repository.build_empty_scope_result(
+        if not self._is_run_boundary_readable(selected_run):
+            return self._build_empty_scope_result(
                 STATUS_EMPTY_SCOPE,
                 "Run boundary is unreadable or incomplete for raw-hand inspection.",
                 [selected_run],
@@ -142,17 +152,17 @@ class ReplayQueryService:
         raw_start = selected_run.parameters.get("raw_game_state_id_start")
         raw_end = selected_run.parameters.get("raw_game_state_id_end")
         if raw_start is None or raw_end is None:
-            return self.repository.build_empty_scope_result(
+            return self._build_empty_scope_result(
                 STATUS_EMPTY_SCOPE,
                 "Run boundary is missing raw_game_state_id_start or raw_game_state_id_end.",
                 [selected_run],
             )
 
-        game_states = self.repository.get_run_raw_projection(raw_start, raw_end)
+        game_states = self.game_state_repository.get_run_raw_projection(raw_start, raw_end)
         return {
             "status": STATUS_AVAILABLE,
             "status_message": "Run available for raw-hand inspection.",
-            "matched_runs": [self.repository._serialize_run_reference(selected_run)],
+            "matched_runs": [self._serialize_run_reference(selected_run)],
             "game_states": game_states,
         }
 
@@ -177,11 +187,58 @@ class ReplayQueryService:
                 explicit_run_id=explicit_run_id,
             )
 
-        return self.repository.build_empty_scope_result(
+        return self._build_empty_scope_result(
             STATUS_NOT_FOUND,
             "Unable to resolve raw run from aggregated summary context.",
             [],
         )
+
+    def _build_empty_scope_result(
+        self,
+        status: str,
+        status_message: str,
+        matched_runs: List[Simulation],
+    ) -> Dict[str, Any]:
+        return {
+            "status": status,
+            "status_message": status_message,
+            "matched_runs": [self._serialize_run_reference(run) for run in matched_runs] if matched_runs else [],
+            "game_states": [],
+        }
+
+    def _serialize_run_reference(self, simulation: Simulation) -> Dict[str, Any]:
+        return {
+            "simulation_id": simulation.id,
+            "name": simulation.name,
+            "raw_game_state_id_start": simulation.parameters.get("raw_game_state_id_start"),
+            "raw_game_state_id_end": simulation.parameters.get("raw_game_state_id_end"),
+        }
+
+    def _is_run_boundary_readable(self, simulation: Simulation) -> bool:
+        try:
+            parameters = normalize_scenario_contract(simulation.parameters)
+        except Exception:
+            return False
+
+        return (
+            parameters.get("raw_game_state_id_start") is not None
+            and parameters.get("raw_game_state_id_end") is not None
+        )
+
+    def _resolve_scenario_run_selection(
+        self,
+        scenario_contract: Dict[str, Any],
+        explicit_run_id: Optional[int] = None,
+    ) -> tuple[Optional[Simulation], List[Simulation]]:
+        matches = self.simulation_repository.list_matrix_sweep_runs_by_contract(scenario_contract)
+        if explicit_run_id is not None:
+            selected = next((run for run in matches if run.id == explicit_run_id), None)
+            return selected, matches
+
+        if len(matches) == 1:
+            return matches[0], matches
+
+        return None, matches
 
     def _build_replay_view(self, game_state: GameState) -> Dict[str, Any]:
         board_cards = self._parse_board_cards(game_state.board_cards_str)

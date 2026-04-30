@@ -15,7 +15,7 @@ import tempfile
 import pytest
 
 from hopilot.database import DatabaseConnection
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.models import Simulation, HandMatrix, MatrixCell
 
 
@@ -29,17 +29,16 @@ class TestDatabaseRepositoryWrites:
         db_path = os.path.join(temp_dir, "test.db")
         db_url = f"sqlite:///{db_path}"
         
-        # Create and initialize database
-        connection = DatabaseConnection(db_url)
-        connection.create_tables()
-        connection.close()
+        conn = DatabaseConnection(db_url)
+        conn.create_tables()
         
-        yield db_url
+        yield conn
         
         # Cleanup - safely remove file
         try:
             import gc
             gc.collect()  # Force garbage collection to release file handles
+            conn.close()
             if os.path.exists(db_path):
                 os.remove(db_path)
             os.rmdir(temp_dir)
@@ -56,7 +55,7 @@ class TestDatabaseRepositoryWrites:
         Then: Simulation record created with returned ID, parameters stored
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         test_parameters = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         
         # Act
@@ -68,8 +67,8 @@ class TestDatabaseRepositoryWrites:
         assert simulation_id > 0
         
         # Assert - Simulation actually created in database
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             sim = session.query(Simulation).filter_by(id=simulation_id).first()
             assert sim is not None
             assert sim.parameters == json.loads(test_parameters)
@@ -83,15 +82,15 @@ class TestDatabaseRepositoryWrites:
         Then: Parameters stored as JSON in database, not stringified
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         test_parameters = '{"num_simulations": 5000, "matrix_size": 13, "game_type": "PLO"}'
         
         # Act
         simulation_id = repo.create_simulation(test_parameters)
         
         # Assert - Parameters persisted correctly
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             sim = session.query(Simulation).filter_by(id=simulation_id).first()
             assert sim.parameters == json.loads(test_parameters)
             assert sim.parameters['num_simulations'] == 5000
@@ -105,7 +104,7 @@ class TestDatabaseRepositoryWrites:
         Then: HandMatrix record created with correct simulation_id
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         sim_params = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(sim_params)
         
@@ -113,8 +112,8 @@ class TestDatabaseRepositoryWrites:
         matrix_id = repo.create_hand_matrix(simulation_id, matrix_size="13x13")
         
         # Assert - Matrix linked correctly
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             matrix = session.query(HandMatrix).filter_by(id=matrix_id).first()
             assert matrix is not None
             assert matrix.simulation_id == simulation_id
@@ -129,7 +128,7 @@ class TestDatabaseRepositoryWrites:
         Then: Valid matrix ID returned and usable
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         sim_params = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(sim_params)
         
@@ -142,8 +141,8 @@ class TestDatabaseRepositoryWrites:
         assert matrix_id > 0
         
         # Assert - Can retrieve with ID
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             matrix = session.query(HandMatrix).filter_by(id=matrix_id).first()
             assert matrix is not None
 
@@ -156,7 +155,7 @@ class TestDatabaseRepositoryWrites:
         Then: MatrixCell created with hand combination
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         sim_params = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(sim_params)
         matrix_id = repo.create_hand_matrix(simulation_id)
@@ -172,8 +171,8 @@ class TestDatabaseRepositoryWrites:
         )
         
         # Assert - Cell created with hand combination
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             cell = session.query(MatrixCell).filter(
                 MatrixCell.matrix_id == matrix_id,
                 MatrixCell.row_index == 0,
@@ -191,7 +190,7 @@ class TestDatabaseRepositoryWrites:
         Then: Cell updated with new hand combination
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         sim_params = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(sim_params)
         matrix_id = repo.create_hand_matrix(simulation_id)
@@ -203,8 +202,8 @@ class TestDatabaseRepositoryWrites:
         )
         
         # Get original ID
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             cell_v1 = session.query(MatrixCell).filter(
                 MatrixCell.matrix_id == matrix_id,
                 MatrixCell.row_index == 1,
@@ -219,7 +218,7 @@ class TestDatabaseRepositoryWrites:
         )
         
         # Assert - Same cell updated
-        with db_conn.session_scope() as session:
+        with test_db.session_scope() as session:
             cell_v2 = session.query(MatrixCell).filter(
                 MatrixCell.matrix_id == matrix_id,
                 MatrixCell.row_index == 1,
@@ -237,7 +236,7 @@ class TestDatabaseRepositoryWrites:
         Then: All cells persisted with correct hand combinations
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         sim_params = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(sim_params)
         matrix_id = repo.create_hand_matrix(simulation_id)
@@ -261,8 +260,8 @@ class TestDatabaseRepositoryWrites:
             )
         
         # Assert - All cells stored correctly
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             for test_case in test_cases:
                 cell = session.query(MatrixCell).filter(
                     MatrixCell.matrix_id == matrix_id,

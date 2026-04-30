@@ -24,9 +24,10 @@ from hopilot.database import DatabaseConnection
 from hopilot.gto.game_replay_queries import GameReplayQueryEngine
 from hopilot.gto.convergence_analysis_queries import ConvergenceAnalysisQueries
 from hopilot.gto.jackpot_frequency_queries import JackpotFrequencyQueries
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.matrix_cells_derivation import MatrixCellsDerivationEngine
 from hopilot.gto.replay_query_service import ReplayQueryService
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.gto.query_builder import PredefinedQueries
 from hopilot.models import (
     AggregatedMetric,
@@ -49,13 +50,14 @@ def comprehensive_test_db(tmp_path):
     conn = DatabaseConnection(db_url)
     conn.create_tables()
 
-    repo = DatabaseRepository(db_url)
+    sim_repo = SimulationRepository(conn)
+    gs_repo = GameStateRepository(conn)
     derivation_engine = MatrixCellsDerivationEngine(db_url)
 
     # Create simulation and matrix
     sim_params = '{"num_simulations": 10000, "matrix_size": "13x13", "game_type": "NLHE"}'
-    sim_id = repo.create_simulation(sim_params)
-    matrix_id = repo.create_hand_matrix(sim_id)
+    sim_id = sim_repo.create_simulation(sim_params)
+    matrix_id = sim_repo.create_hand_matrix(sim_id)
 
     # Create multiple MatrixCells for comprehensive testing
     cells_data = []
@@ -85,7 +87,7 @@ def comprehensive_test_db(tmp_path):
             'round': 'preflop',
             'outcome': outcome
         }
-        gs_id = repo.create_game_state(gs_data)
+        gs_id = gs_repo.create_game_state(gs_data)
         if game_idx == 0:
             sample_game_state_id = gs_id
             sample_outcome = outcome
@@ -99,7 +101,7 @@ def comprehensive_test_db(tmp_path):
                 'stack_size': 10000,
                 'is_hero': player_idx == 0
             }
-            player_id = repo.create_player(player_data)
+            player_id = gs_repo.create_player(player_data)
 
             # Create some bets
             if game_idx % 3 == 0:  # Some games have bets
@@ -110,7 +112,7 @@ def comprehensive_test_db(tmp_path):
                     'action_type': 'raise',
                     'round': 'preflop'
                 }
-                repo.create_bet(bet_data)
+                gs_repo.create_bet(bet_data)
 
             # Create jackpots for some games
             if game_idx % 30 == 0:  # ~3% jackpot rate
@@ -122,15 +124,13 @@ def comprehensive_test_db(tmp_path):
                     'qualifying_cards': ['As', 'Ks', 'Qs', 'Js', 'Ts'] if game_idx % 60 == 0 else ['As', 'Ks', 'Qs', 'Js', '9s'],
                     'payout_multiplier': 500 if game_idx % 60 == 0 else 100
                 }
-                repo.create_jackpot(jackpot_data)
+                gs_repo.create_jackpot(jackpot_data)
                 jackpot_games += 1
 
     yield db_url, matrix_id, cells_data, total_games, jackpot_games, sample_game_state_id, sample_outcome
 
     # Cleanup
     try:
-        repo.connection.close()
-        repo.aggregation_engine.db_connection.close()
         conn.close()
     except Exception:
         pass
@@ -144,12 +144,12 @@ def comprehensive_test_db(tmp_path):
 
 
 def _create_raw_run(
-    repo: DatabaseRepository,
+    conn: DatabaseConnection,
     run_name: str,
     parameters: dict,
     game_state_rows: list[dict],
 ):
-    with repo.connection.session_scope() as session:
+    with conn.session_scope() as session:
         simulation = Simulation(
             name=run_name,
             parameters=dict(parameters),
@@ -217,8 +217,8 @@ class TestAnalyticalQueryIntegration:
         assert replay_result['hand_combination'] is not None
 
         # Guard: analytical pipeline should operate from raw GameState rows, not legacy board_cards_id or cell_id.
-        repo = DatabaseRepository(db_url)
-        raw_state = repo.get_game_state(sample_game_state_id)
+        
+        raw_state = GameStateRepository(DatabaseConnection(db_url)).get_game_state(sample_game_state_id)
         assert raw_state is not None
         assert raw_state['board_cards_str'] == 'As,Ks,Qs,Js,Ts'
         assert 'board_cards_id' not in raw_state
@@ -281,7 +281,7 @@ class TestAnalyticalQueryIntegration:
                 assert isinstance(cell_data['equity_change'], (int, float))
 
         # Guard: analytical pipeline should operate from raw GameState rows, not legacy board_cards_id or cell_id.
-        raw_state = repo.get_game_state(sample_game_state_id)
+        raw_state = GameStateRepository(DatabaseConnection(db_url)).get_game_state(sample_game_state_id)
         assert raw_state is not None
         assert raw_state['board_cards_str'] == 'As,Ks,Qs,Js,Ts'
         assert 'board_cards_id' not in raw_state
@@ -297,8 +297,12 @@ class TestAnalyticalQueryIntegration:
                 db_path.unlink()
             conn = DatabaseConnection(db_url)
             conn.create_tables()
-            repo = DatabaseRepository(db_url)
-            service = ReplayQueryService(repo)
+            
+            service = ReplayQueryService(
+                db_connection=conn,
+                simulation_repository=SimulationRepository(conn),
+                game_state_repository=GameStateRepository(conn),
+            )
 
             parameters = {
                 "selected_position": "UTG",
@@ -315,7 +319,7 @@ class TestAnalyticalQueryIntegration:
             }
 
             simulation, game_states = _create_raw_run(
-                repo,
+                conn,
                 run_name="raw_run_boundary",
                 parameters=parameters,
                 game_state_rows=[
@@ -351,7 +355,7 @@ class TestAnalyticalQueryIntegration:
             assert [row['game_state_id'] for row in raw_result['game_states']] == [state.id for state in game_states]
             assert raw_result['matched_runs'][0]['simulation_id'] == simulation.id
 
-            matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation.id)
+            matrix_id = SimulationRepository(conn).get_or_create_hand_matrix_for_simulation(simulation.id)
             matrix_result = service.query_raw_run(hand_matrix_id=matrix_id)
             assert matrix_result['status'] == 'AVAILABLE'
             assert matrix_result['matched_runs'][0]['simulation_id'] == simulation.id
@@ -377,8 +381,12 @@ class TestAnalyticalQueryIntegration:
                 db_path.unlink()
             conn = DatabaseConnection(db_url)
             conn.create_tables()
-            repo = DatabaseRepository(db_url)
-            service = ReplayQueryService(repo)
+            
+            service = ReplayQueryService(
+                db_connection=conn,
+                simulation_repository=SimulationRepository(conn),
+                game_state_repository=GameStateRepository(conn),
+            )
 
             parameters = {
                 "selected_position": "UTG",
@@ -395,7 +403,7 @@ class TestAnalyticalQueryIntegration:
             }
 
             simulation, game_states = _create_raw_run(
-                repo,
+                conn,
                 run_name="raw_run_contract",
                 parameters=parameters,
                 game_state_rows=[
@@ -412,8 +420,8 @@ class TestAnalyticalQueryIntegration:
                 ],
             )
 
-            matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation.id)
-            with repo.connection.session_scope() as session:
+            matrix_id = SimulationRepository(conn).get_or_create_hand_matrix_for_simulation(simulation.id)
+            with conn.session_scope() as session:
                 cell = MatrixCell(matrix_id=matrix_id, row_index=0, col_index=0, hand_combination="AA vs KK")
                 session.add(cell)
                 session.flush()
@@ -455,8 +463,12 @@ class TestAnalyticalQueryIntegration:
                 db_path.unlink()
             conn = DatabaseConnection(db_url)
             conn.create_tables()
-            repo = DatabaseRepository(db_url)
-            service = ReplayQueryService(repo)
+            
+            service = ReplayQueryService(
+                db_connection=conn,
+                simulation_repository=SimulationRepository(conn),
+                game_state_repository=GameStateRepository(conn),
+            )
 
             parameters = {
                 "selected_position": "UTG",
@@ -474,7 +486,7 @@ class TestAnalyticalQueryIntegration:
                 "raw_game_state_id_end": None,
             }
 
-            with repo.connection.session_scope() as session:
+            with conn.session_scope() as session:
                 simulation = Simulation(
                     name="raw_run_missing_boundaries",
                     parameters=dict(parameters),

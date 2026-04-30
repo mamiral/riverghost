@@ -8,9 +8,11 @@ with the normalized database schema via DatabaseRepository.
 from typing import Any, Callable, Dict, List, Optional
 import asyncio
 
-from hopilot.gto.database_repository import DatabaseRepository, DatabaseConnectionError, InvalidContextError
+from hopilot.gto.repository_errors import DatabaseConnectionError, InvalidContextError
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
 from hopilot.gto.aof_hand_matrix import format_metric_value
+from hopilot.gto.analytics_repository import AnalyticsRepository
+from hopilot.database import DatabaseConnection
 from hopilot.logging_config import get_logger
 
 
@@ -33,7 +35,9 @@ class NormalizedDatabaseProvider:
             database_url: SQLAlchemy database URL for the normalized database
         """
         self.database_url = database_url
-        self.repository = DatabaseRepository(database_url)
+        self.db_connection = DatabaseConnection(database_url)
+        self.db_connection.create_tables()
+        self.repository = AnalyticsRepository(self.db_connection)
         logger.info(f"NormalizedDatabaseProvider initialized with: {database_url}")
 
     def get_matrix_payload(

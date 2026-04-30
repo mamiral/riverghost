@@ -10,8 +10,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from hopilot.database import DatabaseConnection
 from hopilot.gto.game_replay_queries import GameReplayQueryEngine
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.replay_query_service import ReplayQueryService
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.models import GameState, Player, Simulation, HandMatrix, MatrixCell
 
 def _tmp_db_path(tmp_path, prefix: str):
@@ -30,11 +31,10 @@ def test_game_replay_queries(tmp_path):
         # Initialize
         conn = DatabaseConnection(db_url)
         conn.create_tables()
-        repo = DatabaseRepository(db_url)
         replay_engine = GameReplayQueryEngine(db_url)
 
         # Create raw GameState and players for replay
-        with repo.connection.session_scope() as session:
+        with conn.session_scope() as session:
             game_state = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round='preflop',
@@ -108,10 +108,14 @@ def test_replay_query_service_statuses(tmp_path):
     try:
         conn = DatabaseConnection(db_url)
         conn.create_tables()
-        repo = DatabaseRepository(db_url)
-        service = ReplayQueryService(repo)
 
-        with repo.connection.session_scope() as session:
+        service = ReplayQueryService(
+            db_connection=conn,
+            simulation_repository=SimulationRepository(conn),
+            game_state_repository=GameStateRepository(conn),
+        )
+
+        with conn.session_scope() as session:
             game_state = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round='preflop',
@@ -145,7 +149,7 @@ def test_replay_query_service_statuses(tmp_path):
         not_found = service.replay_game_state(game_state.id + 1)
         assert not_found['status'] == 'NOT_FOUND'
 
-        with repo.connection.session_scope() as session:
+        with conn.session_scope() as session:
             missing_players = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round='preflop',
@@ -179,10 +183,14 @@ def test_replay_query_service_empty_board_cards_str(tmp_path):
     try:
         conn = DatabaseConnection(db_url)
         conn.create_tables()
-        repo = DatabaseRepository(db_url)
-        service = ReplayQueryService(repo)
 
-        with repo.connection.session_scope() as session:
+        service = ReplayQueryService(
+            db_connection=conn,
+            simulation_repository=SimulationRepository(conn),
+            game_state_repository=GameStateRepository(conn),
+        )
+
+        with conn.session_scope() as session:
             game_state = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round='preflop',
@@ -231,10 +239,10 @@ def test_game_replay_engine_delegates_to_truthful_service(tmp_path):
     try:
         conn = DatabaseConnection(db_url)
         conn.create_tables()
-        repo = DatabaseRepository(db_url)
+
         engine = GameReplayQueryEngine(db_url)
 
-        with repo.connection.session_scope() as session:
+        with conn.session_scope() as session:
             game_state = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round='preflop',
@@ -284,10 +292,10 @@ def test_replay_games_by_hand_combination_does_not_require_cell_id(tmp_path):
     try:
         conn = DatabaseConnection(db_url)
         conn.create_tables()
-        repo = DatabaseRepository(db_url)
+
         engine = GameReplayQueryEngine(db_url)
 
-        with repo.connection.session_scope() as session:
+        with conn.session_scope() as session:
             simulation = Simulation(
                 name='hand_combination_test',
                 parameters={
@@ -366,10 +374,10 @@ def test_replay_query_engine_does_not_expose_legacy_schema_fields(tmp_path):
     try:
         conn = DatabaseConnection(db_url)
         conn.create_tables()
-        repo = DatabaseRepository(db_url)
+
         engine = GameReplayQueryEngine(db_url)
 
-        with repo.connection.session_scope() as session:
+        with conn.session_scope() as session:
             game_state = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round='preflop',

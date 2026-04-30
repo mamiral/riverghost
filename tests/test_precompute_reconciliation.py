@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.database import DatabaseConnection
+from hopilot.gto.precompute_job_repository import PrecomputeJobRepository
 from hopilot.gto.precompute_job_persistence import PrecomputeJobPersistenceService
 from hopilot.gto.precompute_reconciliation import reconcile_job_tracking, PrecomputeJobReconciliationResult
 
@@ -75,7 +76,9 @@ class TestPrecomputeReconciliation:
 
     def test_reconcile_job_session_updates_session_counts(self, tmp_path):
         db_url = f"sqlite:///{tmp_path / 'jobs.db'}"
-        repository = DatabaseRepository(database_url=db_url)
+        conn = DatabaseConnection(db_url)
+        conn.create_tables()
+        repository = PrecomputeJobRepository(conn)
         persistence = PrecomputeJobPersistenceService(repository)
 
         job_session_id = repository.create_precompute_job_session(
@@ -122,7 +125,9 @@ class TestPrecomputeReconciliation:
 
     def test_reconcile_job_session_no_correction_when_counts_match(self, tmp_path):
         db_url = f"sqlite:///{tmp_path / 'jobs.db'}"
-        repository = DatabaseRepository(database_url=db_url)
+        conn = DatabaseConnection(db_url)
+        conn.create_tables()
+        repository = PrecomputeJobRepository(conn)
         persistence = PrecomputeJobPersistenceService(repository)
 
         job_session_id = repository.create_precompute_job_session(

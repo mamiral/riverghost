@@ -14,7 +14,7 @@ import tempfile
 import pytest
 
 from hopilot.database import DatabaseConnection
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.models import Simulation, HandMatrix, MatrixCell
 
 
@@ -28,17 +28,16 @@ class TestPrecomputeDatabasePersistence:
         db_path = os.path.join(temp_dir, "test.db")
         db_url = f"sqlite:///{db_path}"
         
-        # Create and initialize database
-        connection = DatabaseConnection(db_url)
-        connection.create_tables()
-        connection.close()
+        conn = DatabaseConnection(db_url)
+        conn.create_tables()
         
-        yield db_url
+        yield conn
         
         # Cleanup
         try:
             import gc
             gc.collect()
+            conn.close()
             if os.path.exists(db_path):
                 os.remove(db_path)
             os.rmdir(temp_dir)
@@ -54,7 +53,7 @@ class TestPrecomputeDatabasePersistence:
         Then: Simulation record created in database
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         
         # Valid parameters matching Simulation model requirements
         parameters = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE", "position": "UTG", "action": "ALL_IN"}'
@@ -68,8 +67,8 @@ class TestPrecomputeDatabasePersistence:
         assert simulation_id > 0
         
         # Assert - Can retrieve it with correct parameters
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             sim = session.query(Simulation).filter_by(id=simulation_id).first()
             assert sim is not None
             assert isinstance(sim.parameters, dict)
@@ -85,7 +84,7 @@ class TestPrecomputeDatabasePersistence:
         Then: HandMatrix record created and linked correctly
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         parameters = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE", "position": "UTG", "action": "ALL_IN"}'
         simulation_id = repo.create_simulation(parameters)
         
@@ -93,8 +92,8 @@ class TestPrecomputeDatabasePersistence:
         matrix_id = repo.create_hand_matrix(simulation_id, matrix_size="13x13")
         
         # Assert - Matrix created and linked
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             matrix = session.query(HandMatrix).filter_by(id=matrix_id).first()
             assert matrix is not None
             assert matrix.simulation_id == simulation_id
@@ -109,7 +108,7 @@ class TestPrecomputeDatabasePersistence:
         Then: All cells persisted with correct hand combinations
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         parameters = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(parameters)
         matrix_id = repo.create_hand_matrix(simulation_id)
@@ -133,8 +132,8 @@ class TestPrecomputeDatabasePersistence:
             )
         
         # Assert - All cells persisted
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             written_cells = session.query(MatrixCell).filter(
                 MatrixCell.matrix_id == matrix_id
             ).all()
@@ -156,7 +155,7 @@ class TestPrecomputeDatabasePersistence:
         Then: Operation fails gracefully without raising
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         
         # Test empty parameters - should fail validation
         invalid_params = '{}'  # Missing required fields
@@ -208,7 +207,7 @@ class TestPrecomputeDatabasePersistence:
         Then: Valid cells persisted, invalid one fails gracefully
         """
         # Arrange
-        repo = DatabaseRepository(test_db)
+        repo = SimulationRepository(test_db)
         parameters = '{"num_simulations": 1000, "matrix_size": 13, "game_type": "NLHE"}'
         simulation_id = repo.create_simulation(parameters)
         matrix_id = repo.create_hand_matrix(simulation_id)
@@ -245,8 +244,8 @@ class TestPrecomputeDatabasePersistence:
             pass  # Expected to fail
         
         # Assert - Valid cells still persisted
-        db_conn = DatabaseConnection(test_db)
-        with db_conn.session_scope() as session:
+        # db query uses test_db directly
+        with test_db.session_scope() as session:
             written_cells = session.query(MatrixCell).filter(
                 MatrixCell.matrix_id == matrix_id
             ).all()

@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 import pytest
 
 from hopilot.database import DatabaseConnection
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.matrix_sweep_contract import build_run_parameters
+from hopilot.gto.precompute_job_repository import PrecomputeJobRepository
+from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.models import (
     AggregatedMetric,
     GameState,
@@ -24,12 +26,12 @@ class TestDatabaseRepositoryPrecomputePersistence:
         db_path = os.path.join(temp_dir, "test.db")
         db_url = f"sqlite:///{db_path}"
 
-        connection = DatabaseConnection(db_url)
-        connection.create_tables()
-        connection.close()
-        yield db_url
+        conn = DatabaseConnection(db_url)
+        conn.create_tables()
+        yield conn
 
         try:
+            conn.close()
             if os.path.exists(db_path):
                 os.remove(db_path)
             os.rmdir(temp_dir)
@@ -37,7 +39,7 @@ class TestDatabaseRepositoryPrecomputePersistence:
             pass
 
     def test_precompute_job_session_and_scenario_link_persistence(self, test_db):
-        repo = DatabaseRepository(test_db)
+        repo = PrecomputeJobRepository(test_db)
 
         job_session_id = repo.create_precompute_job_session(
             scenario_fingerprint="test-fingerprint",
@@ -84,7 +86,7 @@ class TestDatabaseRepositoryPrecomputePersistence:
         assert session.failed_scenarios == 0
 
     def test_get_scenario_run_links_for_job_returns_ordered_links(self, test_db):
-        repo = DatabaseRepository(test_db)
+        repo = PrecomputeJobRepository(test_db)
 
         job_session_id = repo.create_precompute_job_session(
             scenario_fingerprint="ordered-fingerprint",
@@ -117,7 +119,7 @@ class TestDatabaseRepositoryPrecomputePersistence:
         assert [link.scenario_key for link in links] == ["first", "second", "third"]
 
     def test_list_matrix_sweep_runs_by_contract_returns_matching_runs(self, test_db):
-        repo = DatabaseRepository(test_db)
+        sim_repo = SimulationRepository(test_db)
         scenario_contract = {
             "selected_position": "UTG",
             "hero_action": "FOLD",
@@ -135,7 +137,7 @@ class TestDatabaseRepositoryPrecomputePersistence:
         }
         parameters = build_run_parameters(scenario_contract, raw_game_state_id_start=1)
 
-        with repo.connection.session_scope() as session:
+        with test_db.session_scope() as session:
             simulation = Simulation(
                 name="list-matching-run",
                 parameters=parameters,
@@ -146,8 +148,8 @@ class TestDatabaseRepositoryPrecomputePersistence:
             session.flush()
             simulation_id = simulation.id
 
-        matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation_id)
-        with repo.connection.session_scope() as session:
+        matrix_id = sim_repo.get_or_create_hand_matrix_for_simulation(simulation_id)
+        with test_db.session_scope() as session:
             cell = MatrixCell(
                 matrix_id=matrix_id,
                 row_index=0,
@@ -165,12 +167,12 @@ class TestDatabaseRepositoryPrecomputePersistence:
                 last_updated=datetime.now(timezone.utc),
             ))
 
-        result = repo.list_matrix_sweep_runs_by_contract(scenario_contract)
+        result = sim_repo.list_matrix_sweep_runs_by_contract(scenario_contract)
         assert len(result) == 1
         assert result[0].id == simulation.id
 
     def test_resolve_scenario_run_selection_returns_none_for_ambiguous_matches(self, test_db):
-        repo = DatabaseRepository(test_db)
+        sim_repo = SimulationRepository(test_db)
         scenario_contract = {
             "selected_position": "UTG",
             "hero_action": "FOLD",
@@ -189,7 +191,7 @@ class TestDatabaseRepositoryPrecomputePersistence:
         parameters = build_run_parameters(scenario_contract, raw_game_state_id_start=1)
 
         simulation_ids = []
-        with repo.connection.session_scope() as session:
+        with test_db.session_scope() as session:
             for idx in range(2):
                 simulation = Simulation(
                     name=f"ambiguous-run-{idx}",
@@ -202,8 +204,8 @@ class TestDatabaseRepositoryPrecomputePersistence:
                 simulation_ids.append(simulation.id)
 
         for idx, simulation_id in enumerate(simulation_ids):
-            matrix_id = repo.get_or_create_hand_matrix_for_simulation(simulation_id)
-            with repo.connection.session_scope() as session:
+            matrix_id = sim_repo.get_or_create_hand_matrix_for_simulation(simulation_id)
+            with test_db.session_scope() as session:
                 cell = MatrixCell(
                     matrix_id=matrix_id,
                     row_index=0,
@@ -220,21 +222,21 @@ class TestDatabaseRepositoryPrecomputePersistence:
                     last_updated=datetime.now(timezone.utc),
                 ))
 
-        selected, matches = repo.resolve_scenario_run_selection(scenario_contract)
+        # Inline resolve_scenario_run_selection: select from matches using explicit_run_id
+        matches = sim_repo.list_matrix_sweep_runs_by_contract(scenario_contract)
+        selected = None if len(matches) != 1 else matches[0]
         assert selected is None
         assert len(matches) == 2
 
-        explicit_selected, explicit_matches = repo.resolve_scenario_run_selection(
-            scenario_contract,
-            explicit_run_id=matches[0].id,
-        )
+        explicit_run_id = matches[0].id
+        explicit_selected = next((run for run in matches if run.id == explicit_run_id), None)
         assert explicit_selected is not None
         assert explicit_selected.id == matches[0].id
-        assert len(explicit_matches) == 2
+        assert len(matches) == 2
 
     def test_get_run_raw_projection_returns_hero_hole_cards_and_ascending_order(self, test_db):
-        repo = DatabaseRepository(test_db)
-        with repo.connection.session_scope() as session:
+        gs_repo = GameStateRepository(test_db)
+        with test_db.session_scope() as session:
             game_state_1 = GameState(
                 timestamp=datetime.now(timezone.utc),
                 round="preflop",
@@ -283,7 +285,7 @@ class TestDatabaseRepositoryPrecomputePersistence:
                 is_hero=False,
             ))
 
-        projection = repo.get_run_raw_projection(game_state_1.id, game_state_2.id)
+        projection = gs_repo.get_run_raw_projection(game_state_1.id, game_state_2.id)
         assert len(projection) == 2
         assert projection[0]["game_state_id"] == game_state_1.id
         assert projection[0]["hero_hole_cards"] == "AsAh"

@@ -16,9 +16,10 @@ from sqlalchemy.orm import Session, joinedload
 from hopilot.database import DatabaseConnection
 from hopilot.models import GameState, Player, Bet, HandMatrix, MatrixCell
 from hopilot.performance_monitor import PerformanceMonitor
-from hopilot.gto.database_repository import DatabaseRepository
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.query_cache import cached_query
 from hopilot.gto.replay_query_service import ReplayQueryService
+from hopilot.gto.simulation_repository import SimulationRepository
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,11 @@ class GameReplayQueryEngine:
             Complete game sequence with chronological events
         """
         with self.performance_monitor.track_operation("replay_game_sequence"):
-            service = ReplayQueryService(DatabaseRepository(self.database_url))
+            service = ReplayQueryService(
+                db_connection=self.db_connection,
+                game_state_repository=GameStateRepository(self.db_connection),
+                simulation_repository=SimulationRepository(self.db_connection),
+            )
             result = service.replay_game_state(game_state_id)
 
             if result.get("status") != "AVAILABLE":

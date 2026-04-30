@@ -10,7 +10,6 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 
 from hopilot.database import DatabaseConnection
-from hopilot.gto.database_repository import DatabaseRepository
 from hopilot.gto.aggregation_engine import AggregationEngine
 from hopilot.models import MatrixCell, AggregatedMetric, HandMatrix
 from hopilot.performance_monitor import PerformanceMonitor
@@ -52,7 +51,6 @@ class MatrixCellsDerivationEngine:
         """
         self.database_url = database_url
         self.db_connection = DatabaseConnection(database_url)
-        self.repo = DatabaseRepository(database_url)
         self.aggregation_engine = AggregationEngine(database_url)
         self.performance_monitor = PerformanceMonitor()
 
