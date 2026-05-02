@@ -681,38 +681,14 @@ class AoFPrecomputeRunner:
         # Extract individual outcomes from solver result
         individual_outcomes = solved.get("individual_outcomes", [])
         
-        # If no individual outcomes but we have aggregated results, create fake outcomes
-        if not individual_outcomes and solved_status == "AVAILABLE":
-            # Create fake individual outcomes based on aggregated results
-            equity = solved.get("equity", 0.5)
-            ev = solved.get("ev", 0.0)
-            num_simulations = solved.get("sampled_combos", 100) * 5  # Estimate total simulations
-            
-            wins = int(equity * num_simulations)
-            losses = num_simulations - wins
-            
-            individual_outcomes = []
-            for i in range(wins):
-                individual_outcomes.append({
-                    'hero_hand': hand_key,
-                    'villain_hand': 'RANDOM',
-                    'outcome': 'WIN',
-                    'hero_equity': 1.0,
-                    'ev_chips': pot_size,
-                    'board_cards': ''
-                })
-            for i in range(losses):
-                individual_outcomes.append({
-                    'hero_hand': hand_key,
-                    'villain_hand': 'RANDOM',
-                    'outcome': 'LOSS',
-                    'hero_equity': 0.0,
-                    'ev_chips': -bet_amount,
-                    'board_cards': ''
-                })
-        
+        # If the solver says AVAILABLE but provides no individual outcomes,
+        # do not fabricate data for GameState persistence.
         if not individual_outcomes:
-            return None, solved_status
+            self.logger.warning(
+                "Solver returned AVAILABLE without individual outcomes for hand_key=%s; skipping GameState storage",
+                hand_key,
+            )
+            return None, "NO_INDIVIDUAL_OUTCOMES"
 
         return individual_outcomes, solved_status
 
@@ -727,6 +703,12 @@ class AoFPrecomputeRunner:
         status = str(cell.get("status"))
         hand_key = str(cell.get("hand_key"))
         cell_index = int(cell.get("row", 0)) * 13 + int(cell.get("col", 0))
+
+        individual_outcomes = cell.get("individual_outcomes", [])
+        if status == "AVAILABLE" and not individual_outcomes:
+            raise ValueError(
+                f"Cannot persist AVAILABLE cell {hand_key} without individual_outcomes"
+            )
 
         # Store cell results in database
         if session.sim_id is not None and session.matrix_id is not None:
@@ -890,20 +872,21 @@ class AoFPrecomputeRunner:
                 for outcome in individual_outcomes:
                     # Build board card storage values
                     raw_board_cards = outcome.get("board_cards", "")
-                    if not raw_board_cards.strip():
-                        cards = ['??', '??', '??', '??', '??']
-                    else:
-                        cards = [card.strip() for card in raw_board_cards.replace(',', ' ').split() if card.strip()]
+                    cards = [card.strip() for card in raw_board_cards.replace(',', ' ').split() if card.strip()]
+                    if cards:
                         cards.extend(['??'] * max(0, 5 - len(cards)))
                         cards = cards[:5]
+                        board_cards_str = ",".join(cards)
+                    else:
+                        cards = []
+                        board_cards_str = ""
 
-                    board_cards_str = ",".join(cards)
                     board_card_data = {
-                        'flop1': cards[0],
-                        'flop2': cards[1],
-                        'flop3': cards[2],
-                        'turn': cards[3],
-                        'river': cards[4],
+                        'flop1': cards[0] if len(cards) > 0 else '',
+                        'flop2': cards[1] if len(cards) > 1 else '',
+                        'flop3': cards[2] if len(cards) > 2 else '',
+                        'turn': cards[3] if len(cards) > 3 else '',
+                        'river': cards[4] if len(cards) > 4 else '',
                     }
 
                     # Use GameStates-first storage and avoid legacy BoardCard IDs
@@ -918,7 +901,7 @@ class AoFPrecomputeRunner:
                         game_state_id = self.database_repository.create_game_state(game_state_data)
 
                     hero_hand = self._normalize_hole_cards_for_storage(outcome.get('hero_hand', 'AA'))
-                    villain_hand = self._normalize_hole_cards_for_storage(outcome.get('villain_hand', 'RANDOM'))
+                    villain_hand = self._normalize_hole_cards_for_storage(outcome.get('villain_hand', 'NONE'))
 
                     if hero_hand is None:
                         self.logger.warning(
@@ -939,7 +922,6 @@ class AoFPrecomputeRunner:
                     with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=True):
                         hero_id = self.database_repository.create_player(hero_data)
 
-                    # Villain player (if we have a concrete hand)
                     villain_id = None
                     if villain_hand is not None:
                         villain_data = {
@@ -979,15 +961,6 @@ class AoFPrecomputeRunner:
 
                     # Check for jackpots
                     with performance_monitor.track_operation("check_jackpots", game_state_id=game_state_id):
-                        self._check_and_create_jackpots_for_game_state(
-                            game_state_id=game_state_id,
-                            hero_hand=hero_hand,
-                            villain_hand=villain_hand if villain_hand is not None else 'NONE',
-                            board_cards=board_card_data,
-                            pot_size=pot_size,
-                            hero_id=hero_id,
-                            villain_id=villain_id
-                        )
                         self._check_and_create_jackpots_for_game_state(
                             game_state_id=game_state_id,
                             hero_hand=hero_hand,
@@ -1048,9 +1021,10 @@ class AoFPrecomputeRunner:
                 board_cards['flop1'], board_cards['flop2'], board_cards['flop3'],
                 board_cards['turn'], board_cards['river']
             ]
+            board_cards_list = [card for card in board_cards_list if card and card != '??']
             
             # Check hero hand for jackpots
-            if hero_hand and hero_hand != '??':
+            if hero_hand and hero_hand != '????':
                 hero_cards = [hero_hand[:2], hero_hand[2:]]  # Split hole cards
                 hero_result = detector.detect_jackpot(hero_cards, board_cards_list, pot_size)
                 if hero_result and hero_result.jackpot_type != 'high_card':
@@ -1063,8 +1037,8 @@ class AoFPrecomputeRunner:
                     }
                     self.database_repository.create_jackpot(jackpot_data)
             
-            # Check villain hand for jackpots (if specific hand, not random)
-            if villain_id and villain_hand and villain_hand not in ('RANDOM', '??', 'NONE'):
+            # Check villain hand for jackpots (if specific hand, not random or placeholder)
+            if villain_id and villain_hand and villain_hand != '????':
                 villain_cards = [villain_hand[:2], villain_hand[2:]]  # Split hole cards
                 villain_result = detector.detect_jackpot(villain_cards, board_cards_list, pot_size)
                 if villain_result and villain_result.jackpot_type != 'high_card':

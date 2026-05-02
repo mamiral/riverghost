@@ -85,7 +85,10 @@ class PokerAnalyzer:
         num_simulations: int,
         opponent_holes: Optional[List[List[PokerkitCard]]] = None,
         num_random_opponents: int = 0,
-        persistence=None
+        persistence=None,
+        return_individual_outcomes: bool = False,
+        pot_size: float = 0.0,
+        bet_amount: float = 0.0,
     ) -> Optional[Dict[str, float]]:
         """
         Core Monte Carlo simulation method.
@@ -108,6 +111,7 @@ class PokerAnalyzer:
         wins = 0
         ties = 0
         valid_simulations = 0
+        individual_outcomes: list[Dict[str, Any]] = []
         
         for _ in range(num_simulations):
             # Create fresh deck for each simulation
@@ -150,6 +154,33 @@ class PokerAnalyzer:
                     wins += 1
                 elif hero_ties_all:
                     ties += 1
+
+                if return_individual_outcomes:
+                    hero_equity = 1.0 if hero_better_than_all else (0.5 if hero_ties_all else 0.0)
+                    if pot_size or bet_amount:
+                        if hero_better_than_all:
+                            ev_chips = pot_size
+                        elif hero_ties_all:
+                            ev_chips = pot_size / 2.0 - bet_amount / 2.0
+                        else:
+                            ev_chips = -bet_amount
+                    else:
+                        ev_chips = hero_equity
+
+                    villain_hand = None
+                    if current_opponent_holes:
+                        villain_hand = ''.join(
+                            self.pokerkit_to_card_name(c) for c in current_opponent_holes[0]
+                        )
+
+                    individual_outcomes.append({
+                        'hero_hand': ''.join(self.pokerkit_to_card_name(c) for c in hero_hole),
+                        'villain_hand': villain_hand if villain_hand is not None else 'NONE',
+                        'outcome': 'WIN' if hero_better_than_all else ('TIE' if hero_ties_all else 'LOSS'),
+                        'hero_equity': hero_equity,
+                        'ev_chips': ev_chips,
+                        'board_cards': ','.join(self.pokerkit_to_card_name(c) for c in full_board)
+                    })
 
                 if persistence is not None:
                     iteration_outcome = 'WIN' if hero_better_than_all else ('TIE' if hero_ties_all else 'LOSS')
@@ -196,7 +227,8 @@ class PokerAnalyzer:
             'loss_probability': loss_prob,
             'valid_simulations': valid_simulations,
             'wins': wins,
-            'ties': ties
+            'ties': ties,
+            'individual_outcomes': individual_outcomes if return_individual_outcomes else []
         }
         
         return result
@@ -207,7 +239,10 @@ class PokerAnalyzer:
         board_cards: List[str],
         num_opponents: int,
         num_simulations: int = 10000,
-        persistence=None
+        persistence=None,
+        return_individual_outcomes: bool = False,
+        pot_size: float = 0.0,
+        bet_amount: float = 0.0,
     ) -> Optional[Dict[str, float]]:
         """
         Calculate odds against random opponent hands.
@@ -248,7 +283,10 @@ class PokerAnalyzer:
             num_simulations=num_simulations,
             opponent_holes=None,
             num_random_opponents=num_opponents,
-            persistence=persistence
+            persistence=persistence,
+            return_individual_outcomes=return_individual_outcomes,
+            pot_size=pot_size,
+            bet_amount=bet_amount,
         )
         
         if result:

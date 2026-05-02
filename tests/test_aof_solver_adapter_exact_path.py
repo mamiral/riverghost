@@ -47,3 +47,36 @@ def test_exact_path_uses_combo_cache_on_repeated_request():
 
     assert result1["status"] == "AVAILABLE"
     assert result2["status"] == "AVAILABLE"
+
+
+def test_exact_path_returns_concrete_villain_hands():
+    analyzer = PokerAnalyzer()
+    persistence = MockPersistenceStrategy()
+    solver = AllInFoldGTOSolver(analyzer, persistence)
+
+    result = solver.evaluate_hand_key("KQs", num_opponents=1, pot_size=20.0, bet_amount=10.0, timeout_ms=900)
+
+    assert result["status"] == "AVAILABLE"
+    assert result["individual_outcomes"]
+    assert all(
+        outcome["villain_hand"] not in {"RANDOM", "NONE"}
+        for outcome in result["individual_outcomes"]
+    )
+
+
+def test_exact_path_returns_individual_outcomes_in_evaluation_mode():
+    analyzer = PokerAnalyzer()
+    persistence = MockPersistenceStrategy()
+    solver = AllInFoldGTOSolver(analyzer, persistence)
+
+    result = solver.evaluate_hand_key("AKs", num_opponents=2, pot_size=20.0, bet_amount=10.0, timeout_ms=900)
+
+    assert result["status"] == "AVAILABLE"
+    assert result["individual_outcomes"]
+    assert all(
+        "hero_hand" in outcome and
+        "villain_hand" in outcome and
+        "outcome" in outcome and
+        "ev_chips" in outcome
+        for outcome in result["individual_outcomes"]
+    )

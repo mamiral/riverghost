@@ -350,13 +350,13 @@ class TestDataPersistenceAfterFix:
         assert runner._normalize_hole_cards_for_storage("NONE") is None
         assert runner._normalize_hole_cards_for_storage("??") is None
 
-    def test_store_individual_outcomes_skips_invalid_villain_random_hand(self):
-        """Regression: individual outcomes should store valid hero rows and skip RANDOM villain."""
+    def test_store_individual_outcomes_skips_placeholder_villain_rows(self):
+        """Regression: outcomes with no concrete villain hole cards should not persist placeholder villain rows."""
         runner = AoFPrecomputeRunner(provider=Mock(), database_url="sqlite:///:memory:")
 
         outcome = {
             "hero_hand": "AA",
-            "villain_hand": "RANDOM",
+            "villain_hand": "NONE",
             "outcome": "WIN",
             "hero_equity": 0.68,
             "ev_chips": 1.2,
@@ -374,15 +374,20 @@ class TestDataPersistenceAfterFix:
 
         with runner.database_repository.connection.session_scope() as session:
             player_count = session.execute(text("SELECT COUNT(*) FROM players")).scalar()
-            assert player_count == 1, "Only the hero player should be stored for RANDOM villain outcomes"
+            assert player_count == 1, "Only hero player should be persisted when villain cards are absent"
 
             villain_count = session.execute(
                 text("SELECT COUNT(*) FROM players WHERE position = 'villain'")
             ).scalar()
-            assert villain_count == 0, "RANDOM villain should not be persisted as a Player row"
+            assert villain_count == 0, "No placeholder villain row should be persisted"
 
-            hole_cards = session.execute(text("SELECT hole_cards FROM players WHERE position = 'hero'")).scalar()
-            assert hole_cards == "AhAd"
+            hero_cards = session.execute(
+                text("SELECT hole_cards FROM players WHERE position = 'hero'")
+            ).scalar()
+            assert hero_cards == "AhAd"
+
+            board_cards_str = session.execute(text("SELECT board_cards_str FROM game_states")).scalar()
+            assert board_cards_str == "", "Blank board cards should be stored as an empty string, not placeholders"
 
 
 class TestScenarioStructureConsistency:

@@ -86,6 +86,9 @@ class Player(BaseModel):
     @staticmethod
     def _is_valid_hole_cards(cards: str) -> bool:
         """Validate hole cards format (e.g., 'AsKh')."""
+        if cards == "????":
+            return True
+
         if len(cards) != 4:  # Should be 4 characters: rank suit rank suit
             return False
 

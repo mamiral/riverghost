@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -172,18 +171,8 @@ class AoFSolverAdapter:
             ev = solver_result["ev"]
             win_prob = equity  # Approximation for win probability
 
-            # Create dummy individual outcomes for compatibility
-            individual_outcomes = [
-                {
-                    'hero_hand': hand_key,
-                    'villain_hand': 'RANDOM',
-                    'outcome': 'WIN' if random.random() < win_prob else 'LOSS',
-                    'hero_equity': equity,
-                    'ev_chips': ev,
-                    'board_cards': ''
-                }
-                for _ in range(max(100, int(self.runtime.num_simulations)))
-            ]
+            # Use actual individual outcomes returned by the solver, if available.
+            individual_outcomes = solver_result.get("individual_outcomes", [])
 
         except Exception as exc:
             self.logger.warning("AoF combo solve failed for %s (%s): %s", hand_key, combo, exc)

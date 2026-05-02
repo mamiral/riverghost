@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
@@ -22,6 +24,11 @@ class _TimeoutOnFirstSolver:
         if self.calls == 1:
             return {"status": "TIMEOUT"}
         return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91, "individual_outcomes": [{"hero_hand": hand_key, "villain_hand": "RANDOM", "outcome": "WIN", "hero_equity": 0.62, "ev_chips": 0.91, "board_cards": ""}]}
+
+
+class _NoOutcomesSolver:
+    def evaluate_hand_key(self, *args, **kwargs):
+        return {"status": "AVAILABLE", "win_probability": 0.62, "equity": 0.59, "ev": 0.91, "individual_outcomes": []}
 
 
 def _build_context(provider: BrowserDatabaseProvider) -> dict:
@@ -132,3 +139,20 @@ def test_timeout_and_error_paths_increment_failures_and_continue():
     assert session.failed_cells == 1
     assert session.completed_cells == 4
     assert session.next_cell_index == 5
+
+    def test_available_cell_without_individual_outcomes_raises_guard():
+        database_url = "sqlite:///:memory:"
+        provider = BrowserDatabaseProvider(database_url=database_url)
+        runner = AoFPrecomputeRunner(provider=provider, database_url=database_url)
+        runner._solver = _NoOutcomesSolver()
+
+        context = _build_context(provider)
+        session = runner.create_gui_session(
+            simulations_per_cell=1000,
+            scenario_fingerprint=runner.build_scenario_fingerprint(context),
+            total_cells=1,
+        )
+        runner.transition_session_state(session, GuiRunState.RUNNING)
+
+        with pytest.raises(ValueError, match=r"Cannot persist AVAILABLE cell"):
+            runner.run_gui_cell(session=session, context=context)

@@ -15,11 +15,37 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
-from specs.jackpot_detection_rules import (
-    JACKPOT_RULES,
-    JACKPOT_PRIORITY_ORDER,
-    PLATFORM_RULES
-)
+# Local jackpot rule definitions; specs package is not importable in production.
+JACKPOT_RULES = {
+    'royal_flush': {'payout_multiplier': 500},
+    'straight_flush': {'payout_multiplier': 100},
+    'four_of_a_kind': {'payout_multiplier': 50},
+    'full_house': {'payout_multiplier': 10},
+    'flush': {'payout_multiplier': 5},
+    'straight': {'payout_multiplier': 4},
+    'three_of_a_kind': {'payout_multiplier': 3},
+    'two_pair': {'payout_multiplier': 2},
+    'one_pair': {'payout_multiplier': 1},
+}
+
+JACKPOT_PRIORITY_ORDER = [
+    'royal_flush',
+    'straight_flush',
+    'four_of_a_kind',
+    'full_house',
+    'flush',
+    'straight',
+    'three_of_a_kind',
+    'two_pair',
+    'one_pair',
+    'high_card',
+]
+
+PLATFORM_RULES = {
+    'ggpoker': {
+        'jackpot_enabled': True,
+    }
+}
 
 logger = logging.getLogger(__name__)
 

@@ -303,6 +303,7 @@ class AllInFoldGTOSolver:
         simulation_id = hash(f"{hole_cards}_{num_opponents}_{num_simulations}_{datetime.now().isoformat()}")
         
         for sim_num in range(num_simulations):
+            total_simulations += 1
             # Create game state for this simulation
             timestamp = datetime.now().isoformat()
             game_state_id = self.persistence.store_game_state(
@@ -694,13 +695,14 @@ class AllInFoldGTOSolver:
             hole_cards = [combo[0], combo[1]]
             
             if eval_mode:
-                # Run analysis without storing GameStates
+                # Run analysis without storing GameStates, but still capture individual outcomes
                 result = self._analyze_hand_without_storage(
                     hole_cards=hole_cards,
                     num_opponents=num_opponents,
                     pot_size=pot_size,
                     bet_amount=bet_amount,
-                    num_simulations=500
+                    num_simulations=500,
+                    return_individual_outcomes=True,
                 )
             else:
                 # Normal analysis with GameState storage
@@ -721,9 +723,10 @@ class AllInFoldGTOSolver:
                 "ev": result["ev"],
                 "hand_key": hand_key,
                 "hole_cards": hole_cards,
-                "individual_outcomes": []  # We don't track individual outcomes in the new architecture
+                "individual_outcomes": result.get("individual_outcomes", [])
             }
             combo_results.append(combo_result)
+            all_individual_outcomes.extend(result.get("individual_outcomes", []))
 
         if not combo_results:
             return {
@@ -739,33 +742,6 @@ class AllInFoldGTOSolver:
         equity = sum(float(r["equity"]) for r in combo_results) / len(combo_results)
         ev = sum(float(r["ev"]) for r in combo_results) / len(combo_results)
 
-        # Create fake individual outcomes for precompute compatibility
-        # Since we don't store individual outcomes in evaluation mode,
-        # create synthetic ones based on the aggregated results
-        total_simulations = len(combo_results) * 500  # Estimate based on combos * sims per combo
-        wins = int(win_prob * total_simulations)
-        losses = total_simulations - wins
-        
-        fake_outcomes = []
-        for i in range(wins):
-            fake_outcomes.append({
-                'hero_hand': hand_key,
-                'villain_hand': 'RANDOM',
-                'outcome': 'WIN',
-                'hero_equity': 1.0,
-                'ev_chips': pot_size,
-                'board_cards': ''
-            })
-        for i in range(losses):
-            fake_outcomes.append({
-                'hero_hand': hand_key,
-                'villain_hand': 'RANDOM',
-                'outcome': 'LOSS',
-                'hero_equity': 0.0,
-                'ev_chips': -bet_amount,
-                'board_cards': ''
-            })
-
         return {
             "status": "AVAILABLE",
             "win_probability": round(win_prob, 4),
@@ -775,7 +751,7 @@ class AllInFoldGTOSolver:
             "sampled_combos": len(sampled_combos),
             "total_combos": len(combos),
             "combo_results": combo_results,
-            "individual_outcomes": fake_outcomes,  # Fake outcomes for precompute compatibility
+            "individual_outcomes": all_individual_outcomes,
         }
 
     def _analyze_hand_without_storage(
@@ -784,7 +760,8 @@ class AllInFoldGTOSolver:
         num_opponents: int,
         pot_size: float,
         bet_amount: float,
-        num_simulations: int
+        num_simulations: int,
+        return_individual_outcomes: bool = False,
     ) -> Dict[str, Any]:
         """
         Analyze a hand without storing GameStates in the database.
@@ -797,7 +774,8 @@ class AllInFoldGTOSolver:
             hero_hole_cards=hole_cards,
             board_cards=[],  # Preflop
             num_opponents=num_opponents,
-            num_simulations=num_simulations
+            num_simulations=num_simulations,
+            return_individual_outcomes=return_individual_outcomes,
         )
         
         if not equity_result:
@@ -805,7 +783,8 @@ class AllInFoldGTOSolver:
                 "equity": 0.0,
                 "ev": -bet_amount,
                 "win_probability": 0.0,
-                "simulations_run": 0
+                "simulations_run": 0,
+                "individual_outcomes": []
             }
         
         equity = equity_result['win_probability']
@@ -816,5 +795,6 @@ class AllInFoldGTOSolver:
             "equity": equity,
             "ev": ev,
             "win_probability": equity,
-            "simulations_run": equity_result.get('valid_simulations', num_simulations)
+            "simulations_run": equity_result.get('valid_simulations', num_simulations),
+            "individual_outcomes": equity_result.get('individual_outcomes', [])
         }
