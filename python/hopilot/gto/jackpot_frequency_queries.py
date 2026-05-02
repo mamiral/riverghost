@@ -41,6 +41,7 @@ class JackpotFrequencyQueries:
         self.db_connection = DatabaseConnection(database_url)
         self.performance_monitor = PerformanceMonitor()
 
+    @cached_query(ttl=600)
     def get_jackpot_frequency_analysis(
         self,
         matrix_id: Optional[int] = None,
@@ -120,6 +121,7 @@ class JackpotFrequencyQueries:
                     'analysis_timestamp': datetime.now().isoformat()
                 }
 
+    @cached_query(ttl=600)
     def get_jackpot_ev_impact_by_hand(
         self,
         matrix_id: int,
