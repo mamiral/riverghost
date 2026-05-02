@@ -11,10 +11,11 @@ PHASE 5: P0 - CRITICAL
 
 import json
 import os
-import tempfile
 import pytest
+from sqlalchemy import text
 
 from hopilot.database import DatabaseConnection
+from hopilot.gto.game_state_repository import GameStateRepository
 from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.models import Simulation, HandMatrix, MatrixCell
 
@@ -24,27 +25,11 @@ class TestDatabaseRepositoryWrites:
 
     @pytest.fixture(scope="function")
     def test_db(self):
-        """Create a temporary file-based SQLite database for testing."""
-        temp_dir = tempfile.mkdtemp()
-        db_path = os.path.join(temp_dir, "test.db")
-        db_url = f"sqlite:///{db_path}"
-        
-        conn = DatabaseConnection(db_url)
+        """Create an in-memory SQLite database for write tests."""
+        conn = DatabaseConnection("sqlite:///:memory:")
         conn.create_tables()
-        
         yield conn
-        
-        # Cleanup - safely remove file
-        try:
-            import gc
-            gc.collect()  # Force garbage collection to release file handles
-            conn.close()
-            if os.path.exists(db_path):
-                os.remove(db_path)
-            os.rmdir(temp_dir)
-        except Exception:
-            # Silently ignore cleanup errors on Windows with locked files
-            pass
+        conn.close()
 
     def test_create_simulation_basic(self, test_db):
         """
@@ -270,3 +255,95 @@ class TestDatabaseRepositoryWrites:
                 ).first()
                 assert cell is not None
                 assert cell.hand_combination == test_case["hand"]
+
+    def test_game_state_players_bets_jackpots_in_memory(self, test_db):
+        """Verify GameState, Player, Bet, and Jackpot writes on an in-memory database."""
+        repository = GameStateRepository(test_db)
+
+        game_state_id = repository.create_game_state(
+            {
+                "pot_size": 150.0,
+                "board_cards_str": "As,Kd,5c,??,??",
+                "outcome": "hero_win",
+                "players": [
+                    {
+                        "position": "hero",
+                        "hole_cards": "AsKh",
+                        "stack_size": 200.0,
+                        "is_hero": True,
+                    },
+                    {
+                        "position": "villain",
+                        "hole_cards": "KdQh",
+                        "stack_size": 200.0,
+                        "is_hero": False,
+                    },
+                ],
+            }
+        )
+
+        state = repository.get_game_state(game_state_id)
+        assert state is not None
+        assert state["pot_size"] == 150.0
+        assert state["board_cards_str"] == "As,Kd,5c,??,??"
+        assert state["outcome"] == "hero_win"
+        assert len(state["players"]) == 2
+
+        hero_player = next(p for p in state["players"] if p["position"] == "hero")
+        villain_player = next(p for p in state["players"] if p["position"] == "villain")
+
+        assert hero_player["hole_cards"] == "AsKh"
+        assert hero_player["stack_size"] == 200.0
+        assert hero_player["is_hero"] is True
+
+        assert villain_player["hole_cards"] == "KdQh"
+        assert villain_player["stack_size"] == 200.0
+        assert villain_player["is_hero"] is False
+
+        hero_bet_id = repository.create_bet(
+            {
+                "game_state_id": game_state_id,
+                "player_id": hero_player["id"],
+                "amount": 150.0,
+                "action_type": "raise",
+                "round": "preflop",
+            }
+        )
+        assert hero_bet_id > 0
+
+        jackpot_id = repository.create_jackpot(
+            {
+                "game_state_id": game_state_id,
+                "player_id": hero_player["id"],
+                "jackpot_type": "royal_flush",
+                "payout_amount": 500.0,
+                "qualifying_cards": ["As", "Kh"],
+            }
+        )
+        assert jackpot_id > 0
+
+        state = repository.get_game_state(game_state_id)
+        assert len(state["bets"]) == 1
+        assert len(state["jackpots"]) == 1
+
+        bet = state["bets"][0]
+        assert bet["player_id"] == hero_player["id"]
+        assert bet["amount"] == 150.0
+        assert bet["action_type"] == "raise"
+        assert bet["round"] == "preflop"
+
+        jackpot = state["jackpots"][0]
+        assert jackpot["jackpot_type"] == "royal_flush"
+        assert jackpot["payout_amount"] == 500.0
+        assert jackpot["qualifying_cards"] == ["As", "Kh"]
+
+        with test_db.session_scope() as session:
+            game_state_count = session.execute(text("SELECT COUNT(*) FROM game_states")).scalar()
+            player_count = session.execute(text("SELECT COUNT(*) FROM players")).scalar()
+            bet_count = session.execute(text("SELECT COUNT(*) FROM bets")).scalar()
+            jackpot_count = session.execute(text("SELECT COUNT(*) FROM jackpots")).scalar()
+
+        assert game_state_count == 1
+        assert player_count == 2
+        assert bet_count == 1
+        assert jackpot_count == 1

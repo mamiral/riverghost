@@ -338,6 +338,52 @@ class TestDataPersistenceAfterFix:
                 "All aggregated metrics should have equity values"
             )
 
+    def test_normalize_hole_cards_for_storage_handles_shorthand_and_random(self):
+        """Regression: shorthand hero hands and RANDOM villain should normalize cleanly."""
+        runner = AoFPrecomputeRunner(provider=Mock(), database_url="sqlite:///:memory:")
+
+        assert runner._normalize_hole_cards_for_storage("AA") == "AhAd"
+        assert runner._normalize_hole_cards_for_storage("AKs") == "AhKh"
+        assert runner._normalize_hole_cards_for_storage("AKo") == "AhKd"
+        assert runner._normalize_hole_cards_for_storage("AsKh") == "AsKh"
+        assert runner._normalize_hole_cards_for_storage("RANDOM") is None
+        assert runner._normalize_hole_cards_for_storage("NONE") is None
+        assert runner._normalize_hole_cards_for_storage("??") is None
+
+    def test_store_individual_outcomes_skips_invalid_villain_random_hand(self):
+        """Regression: individual outcomes should store valid hero rows and skip RANDOM villain."""
+        runner = AoFPrecomputeRunner(provider=Mock(), database_url="sqlite:///:memory:")
+
+        outcome = {
+            "hero_hand": "AA",
+            "villain_hand": "RANDOM",
+            "outcome": "WIN",
+            "hero_equity": 0.68,
+            "ev_chips": 1.2,
+            "board_cards": "",
+        }
+        context = {"pot_size": 100.0, "bet_amount": 100.0}
+
+        runner._store_individual_outcomes_as_game_states(
+            cell_id=1,
+            individual_outcomes=[outcome],
+            context=context,
+        )
+
+        from sqlalchemy import text
+
+        with runner.database_repository.connection.session_scope() as session:
+            player_count = session.execute(text("SELECT COUNT(*) FROM players")).scalar()
+            assert player_count == 1, "Only the hero player should be stored for RANDOM villain outcomes"
+
+            villain_count = session.execute(
+                text("SELECT COUNT(*) FROM players WHERE position = 'villain'")
+            ).scalar()
+            assert villain_count == 0, "RANDOM villain should not be persisted as a Player row"
+
+            hole_cards = session.execute(text("SELECT hole_cards FROM players WHERE position = 'hero'")).scalar()
+            assert hole_cards == "AhAd"
+
 
 class TestScenarioStructureConsistency:
     """Test that scenario structure remains consistent across different profiles."""

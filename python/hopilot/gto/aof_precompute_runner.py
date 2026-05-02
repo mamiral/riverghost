@@ -823,6 +823,48 @@ class AoFPrecomputeRunner:
         encoded = json.dumps(scenario_data, sort_keys=True)
         return hashlib.sha1(encoded.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _normalize_hole_cards_for_storage(hole_cards: str | None) -> str | None:
+        """Normalize solver output to a valid 4-character hole card string."""
+        if not hole_cards or not isinstance(hole_cards, str):
+            return None
+
+        normalized = hole_cards.strip()
+        if normalized.upper() in ("RANDOM", "NONE", "??"):
+            return None
+
+        # Valid 4-char card string requires rank+suit + rank+suit.
+        if len(normalized) == 4:
+            rank1, suit1, rank2, suit2 = normalized[0].upper(), normalized[1].lower(), normalized[2].upper(), normalized[3].lower()
+            valid_ranks = "23456789TJQKA"
+            valid_suits = "shdc"
+            if rank1 in valid_ranks and suit1 in valid_suits and rank2 in valid_ranks and suit2 in valid_suits:
+                return f"{rank1}{suit1}{rank2}{suit2}"
+            return None
+
+        if len(normalized) == 2:
+            rank1, rank2 = normalized[0].upper(), normalized[1].upper()
+            valid_ranks = "23456789TJQKA"
+            if rank1 in valid_ranks and rank2 in valid_ranks:
+                suit1 = "h"
+                suit2 = "d"
+                return f"{rank1}{suit1}{rank2}{suit2}"
+            return None
+
+        if len(normalized) == 3:
+            rank1, rank2, suit_flag = normalized[0].upper(), normalized[1].upper(), normalized[2].lower()
+            valid_ranks = "23456789TJQKA"
+            if rank1 not in valid_ranks or rank2 not in valid_ranks:
+                return None
+
+            if suit_flag == "s":
+                return f"{rank1}h{rank2}h"
+            if suit_flag == "o":
+                return f"{rank1}h{rank2}d"
+            return None
+
+        return None
+
     def _store_individual_outcomes_as_game_states(
         self,
         *,
@@ -846,14 +888,23 @@ class AoFPrecomputeRunner:
                 bet_amount = float(context.get("bet_amount", pot_size))
                 
                 for outcome in individual_outcomes:
-                    # Create board cards string for GameState storage
+                    # Build board card storage values
                     raw_board_cards = outcome.get("board_cards", "")
                     if not raw_board_cards.strip():
-                        board_cards_str = ",".join(['??'] * 5)
+                        cards = ['??', '??', '??', '??', '??']
                     else:
                         cards = [card.strip() for card in raw_board_cards.replace(',', ' ').split() if card.strip()]
                         cards.extend(['??'] * max(0, 5 - len(cards)))
-                        board_cards_str = ",".join(cards[:5])
+                        cards = cards[:5]
+
+                    board_cards_str = ",".join(cards)
+                    board_card_data = {
+                        'flop1': cards[0],
+                        'flop2': cards[1],
+                        'flop3': cards[2],
+                        'turn': cards[3],
+                        'river': cards[4],
+                    }
 
                     # Use GameStates-first storage and avoid legacy BoardCard IDs
                     game_state_data = {
@@ -865,39 +916,44 @@ class AoFPrecomputeRunner:
 
                     with performance_monitor.track_operation("create_game_state", cell_id=cell_id):
                         game_state_id = self.database_repository.create_game_state(game_state_data)
-                
-                    # Create Players
-                    hero_hand = outcome.get('hero_hand', 'AA')
-                    villain_hand = outcome.get('villain_hand', 'RANDOM')
-                
+
+                    hero_hand = self._normalize_hole_cards_for_storage(outcome.get('hero_hand', 'AA'))
+                    villain_hand = self._normalize_hole_cards_for_storage(outcome.get('villain_hand', 'RANDOM'))
+
+                    if hero_hand is None:
+                        self.logger.warning(
+                            "Skipping individual outcome because hero_hand is not a valid hole card string: %s",
+                            outcome.get('hero_hand')
+                        )
+                        continue
+
                     # Hero player
                     hero_data = {
                         'game_state_id': game_state_id,
                         'position': 'hero',
                         'hole_cards': hero_hand,
-                        'stack_size': pot_size,  # All-in scenario
+                        'stack_size': pot_size,
                         'is_hero': True
                     }
-                    
+
                     with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=True):
                         hero_id = self.database_repository.create_player(hero_data)
-                
-                    # Villain player (if not uncontested)
+
+                    # Villain player (if we have a concrete hand)
                     villain_id = None
-                    if villain_hand != 'NONE':
+                    if villain_hand is not None:
                         villain_data = {
                             'game_state_id': game_state_id,
                             'position': 'villain',
-                            'hole_cards': villain_hand if villain_hand != 'RANDOM' else '??',
-                            'stack_size': pot_size,  # All-in scenario
+                            'hole_cards': villain_hand,
+                            'stack_size': pot_size,
                             'is_hero': False
                         }
-                        
+
                         with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=False):
                             villain_id = self.database_repository.create_player(villain_data)
-                    
+
                     # Create Bets (all-in raises)
-                    # Hero bet
                     hero_bet_data = {
                         'game_state_id': game_state_id,
                         'player_id': hero_id,
@@ -905,11 +961,10 @@ class AoFPrecomputeRunner:
                         'action_type': 'raise',
                         'round': 'preflop'
                     }
-                    
+
                     with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=hero_id):
                         self.database_repository.create_bet(hero_bet_data)
-                    
-                    # Villain bet (if exists)
+
                     if villain_id:
                         villain_bet_data = {
                             'game_state_id': game_state_id,
@@ -918,16 +973,16 @@ class AoFPrecomputeRunner:
                             'action_type': 'raise',
                             'round': 'preflop'
                         }
-                        
+
                         with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=villain_id):
                             self.database_repository.create_bet(villain_bet_data)
-                    
+
                     # Check for jackpots
                     with performance_monitor.track_operation("check_jackpots", game_state_id=game_state_id):
                         self._check_and_create_jackpots_for_game_state(
                             game_state_id=game_state_id,
                             hero_hand=hero_hand,
-                            villain_hand=villain_hand,
+                            villain_hand=villain_hand if villain_hand is not None else 'NONE',
                             board_cards=board_card_data,
                             pot_size=pot_size,
                             hero_id=hero_id,
@@ -936,13 +991,13 @@ class AoFPrecomputeRunner:
                         self._check_and_create_jackpots_for_game_state(
                             game_state_id=game_state_id,
                             hero_hand=hero_hand,
-                            villain_hand=villain_hand,
+                            villain_hand=villain_hand if villain_hand is not None else 'NONE',
                             board_cards=board_card_data,
                             pot_size=pot_size,
                             hero_id=hero_id,
                             villain_id=villain_id
                         )
-                
+
             except Exception as exc:
                 self.logger.warning("Failed to store individual outcomes as GameStates: %s", exc)
             # Don't fail the entire cell processing for GameState storage issues
