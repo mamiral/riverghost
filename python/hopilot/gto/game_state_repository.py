@@ -15,6 +15,7 @@ from hopilot.gto.repository_validation import (
 )
 from hopilot.logging_config import get_logger
 from hopilot.models import Bet, GameState, Jackpot, Player
+from hopilot.models.player import HandClass
 
 logger = get_logger(__name__)
 
@@ -70,12 +71,23 @@ class GameStateRepository(GameStateRepositoryInterface):
                 game_state_id = game_state.id
                 for player_data in game_state_data.get("players", []):
                     self._validate_player_payload(player_data, game_state_id)
+                    hand_class_value = player_data.get("hand_class")
+                    final_strength = player_data.get("final_strength")
+                    hand_class_enum = None
+                    if hand_class_value is not None:
+                        hand_class_enum = (
+                            hand_class_value
+                            if isinstance(hand_class_value, HandClass)
+                            else HandClass(str(hand_class_value).lower())
+                        )
                     player = Player(
                         game_state_id=game_state_id,
                         position=player_data["position"],
                         hole_cards=player_data["hole_cards"],
                         stack_size=player_data["stack_size"],
                         is_hero=player_data.get("is_hero", False),
+                        hand_class=hand_class_enum,
+                        final_strength=final_strength,
                     )
                     session.add(player)
                     session.flush()
@@ -190,12 +202,23 @@ class GameStateRepository(GameStateRepositoryInterface):
         try:
             with self._session_scope() as session:
                 validate_player_data(player_data, session)
+                hand_class_value = player_data.get("hand_class")
+                final_strength = player_data.get("final_strength")
+                hand_class_enum = None
+                if hand_class_value is not None:
+                    hand_class_enum = (
+                        hand_class_value
+                        if isinstance(hand_class_value, HandClass)
+                        else HandClass(str(hand_class_value).lower())
+                    )
                 player = Player(
                     game_state_id=player_data["game_state_id"],
                     position=player_data["position"],
                     hole_cards=player_data["hole_cards"],
                     stack_size=player_data["stack_size"],
                     is_hero=player_data.get("is_hero", False),
+                    hand_class=hand_class_enum,
+                    final_strength=final_strength,
                 )
                 session.add(player)
                 session.flush()

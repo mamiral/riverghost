@@ -80,3 +80,18 @@ def test_exact_path_returns_individual_outcomes_in_evaluation_mode():
         "ev_chips" in outcome
         for outcome in result["individual_outcomes"]
     )
+
+
+def test_exact_path_returns_villain_hands_for_multi_opponent_scenarios():
+    analyzer = PokerAnalyzer()
+    persistence = MockPersistenceStrategy()
+    solver = AllInFoldGTOSolver(analyzer, persistence)
+
+    result = solver.evaluate_hand_key("AKs", num_opponents=2, pot_size=20.0, bet_amount=10.0, timeout_ms=900)
+
+    assert result["status"] == "AVAILABLE"
+    assert result["individual_outcomes"]
+    assert all(
+        isinstance(outcome.get("villain_hands"), list) and len(outcome["villain_hands"]) == 2
+        for outcome in result["individual_outcomes"]
+    )

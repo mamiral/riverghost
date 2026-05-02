@@ -34,6 +34,14 @@ class TestSolverPersistenceIntegration:
             ('Ac', 'Kc'): 90,   # Opponent 4 - better than hero
             ('Td', '9d'): 250,  # Opponent 5
         }.get(tuple(hole_cards), 500)  # Default weak hand
+        analyzer.get_hand_class_value.side_effect = lambda hole_cards, board_cards: {
+            ('As', 'Kh'): 'pair',
+            ('Qd', 'Jd'): 'pair',
+            ('7s', '8s'): 'high_card',
+            ('2h', '3h'): 'high_card',
+            ('Ac', 'Kc'): 'pair',
+            ('Td', '9d'): 'high_card',
+        }.get(tuple(hole_cards), 'high_card')
         return analyzer
 
     @pytest.fixture
@@ -52,26 +60,42 @@ class TestSolverPersistenceIntegration:
         assert solver.persistence is mock_persistence
 
     def test_analyze_hand_strategy_calls_persistence(self, solver, mock_persistence):
-        """Test that analyze_hand_strategy calls persistence methods."""
-        # Reset mock to clear any previous calls
+        """Test that analyze_hand_strategy stores game states and players."""
         mock_persistence.reset()
 
-        # Call analyze_hand_strategy
         result = solver.analyze_hand_strategy(
             hole_cards=['As', 'Kh'],
-            num_opponents=5,
+            num_opponents=1,
             pot_size=20,
             bet_amount=10,
             num_simulations=100
         )
 
-        # Verify the method completed
         assert 'recommendation' in result
         assert result['recommendation'] in ['ALL-IN', 'FOLD']
+        assert len(mock_persistence.store_game_state_calls) == 100
+        assert len(mock_persistence.store_player_calls) == 200  # hero + one opponent per simulation
 
-        # Note: Currently this doesn't call persistence because the method
-        # only returns aggregated results. This test will need to be updated
-        # when the method is modified to store individual game states.
+    def test_analyze_hand_strategy_persists_player_hand_class_and_final_strength(
+        self, solver, mock_persistence
+    ):
+        """Regression test validating player hand metadata is persisted."""
+        mock_persistence.reset()
+
+        solver.analyze_hand_strategy(
+            hole_cards=['As', 'Kh'],
+            num_opponents=1,
+            pot_size=20,
+            bet_amount=10,
+            num_simulations=100
+        )
+
+        assert len(mock_persistence.store_player_calls) == 200
+        for call in mock_persistence.store_player_calls:
+            assert call['hand_class'] is not None, f"Player missing hand_class: {call}"
+            assert isinstance(call['hand_class'], str)
+            assert call['final_strength'] is not None, f"Player missing final_strength: {call}"
+            assert isinstance(call['final_strength'], int)
 
     def test_persistence_strategy_interface(self, mock_persistence):
         """Test that mock persistence strategy implements the interface."""

@@ -860,6 +860,7 @@ class AoFPrecomputeRunner:
         SIM-001: Convert individual_outcomes from solver to GameStates-first architecture.
         PERF-002: Performance monitoring integrated for data capture operations.
         """
+        analyzer = PokerAnalyzer()
         with performance_monitor.track_operation(
             "store_individual_outcomes",
             cell_id=cell_id,
@@ -911,29 +912,66 @@ class AoFPrecomputeRunner:
                         continue
 
                     # Hero player
+                    hero_hole_cards = [hero_hand[i:i+2] for i in range(0, len(hero_hand), 2)]
+                    hero_hand_class = analyzer.get_hand_class_value(hero_hole_cards, cards)
+                    hero_strength = analyzer.evaluate_hand(hero_hole_cards, cards)
                     hero_data = {
                         'game_state_id': game_state_id,
                         'position': 'hero',
                         'hole_cards': hero_hand,
                         'stack_size': pot_size,
-                        'is_hero': True
+                        'is_hero': True,
+                        'hand_class': hero_hand_class,
+                        'final_strength': hero_strength,
                     }
 
                     with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=True):
                         hero_id = self.database_repository.create_player(hero_data)
 
                     villain_id = None
-                    if villain_hand is not None:
-                        villain_data = {
-                            'game_state_id': game_state_id,
-                            'position': 'villain',
-                            'hole_cards': villain_hand,
-                            'stack_size': pot_size,
-                            'is_hero': False
-                        }
+                    villain_ids: list[int] = []
+                    villain_hands_list = outcome.get('villain_hands')
+                    if isinstance(villain_hands_list, list) and villain_hands_list:
+                        for idx, villain_hand_entry in enumerate(villain_hands_list):
+                            normalized_villain_hand = self._normalize_hole_cards_for_storage(villain_hand_entry)
+                            if normalized_villain_hand is None:
+                                continue
 
-                        with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=False):
-                            villain_id = self.database_repository.create_player(villain_data)
+                            villain_hole_cards = [normalized_villain_hand[i:i+2] for i in range(0, len(normalized_villain_hand), 2)]
+                            villain_hand_class = analyzer.get_hand_class_value(villain_hole_cards, cards)
+                            villain_strength = analyzer.evaluate_hand(villain_hole_cards, cards)
+                            villain_data = {
+                                'game_state_id': game_state_id,
+                                'position': f'villain_{idx}',
+                                'hole_cards': normalized_villain_hand,
+                                'stack_size': pot_size,
+                                'is_hero': False,
+                                'hand_class': villain_hand_class,
+                                'final_strength': villain_strength,
+                            }
+
+                            with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=False):
+                                vid = self.database_repository.create_player(villain_data)
+                            villain_ids.append(vid)
+                    else:
+                        normalized_villain_hand = self._normalize_hole_cards_for_storage(villain_hand)
+                        if normalized_villain_hand is not None:
+                            villain_hole_cards = [normalized_villain_hand[i:i+2] for i in range(0, len(normalized_villain_hand), 2)]
+                            villain_hand_class = analyzer.get_hand_class_value(villain_hole_cards, cards)
+                            villain_strength = analyzer.evaluate_hand(villain_hole_cards, cards)
+                            villain_data = {
+                                'game_state_id': game_state_id,
+                                'position': 'villain',
+                                'hole_cards': normalized_villain_hand,
+                                'stack_size': pot_size,
+                                'is_hero': False,
+                                'hand_class': villain_hand_class,
+                                'final_strength': villain_strength,
+                            }
+
+                            with performance_monitor.track_operation("create_player", game_state_id=game_state_id, is_hero=False):
+                                villain_id = self.database_repository.create_player(villain_data)
+                                villain_ids.append(villain_id)
 
                     # Create Bets (all-in raises)
                     hero_bet_data = {
@@ -947,17 +985,18 @@ class AoFPrecomputeRunner:
                     with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=hero_id):
                         self.database_repository.create_bet(hero_bet_data)
 
-                    if villain_id:
-                        villain_bet_data = {
-                            'game_state_id': game_state_id,
-                            'player_id': villain_id,
-                            'amount': bet_amount,
-                            'action_type': 'raise',
-                            'round': 'preflop'
-                        }
+                    if villain_ids:
+                        for vid in villain_ids:
+                            villain_bet_data = {
+                                'game_state_id': game_state_id,
+                                'player_id': vid,
+                                'amount': bet_amount,
+                                'action_type': 'raise',
+                                'round': 'preflop'
+                            }
 
-                        with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=villain_id):
-                            self.database_repository.create_bet(villain_bet_data)
+                            with performance_monitor.track_operation("create_bet", game_state_id=game_state_id, player_id=vid):
+                                self.database_repository.create_bet(villain_bet_data)
 
                     # Check for jackpots
                     with performance_monitor.track_operation("check_jackpots", game_state_id=game_state_id):

@@ -80,6 +80,39 @@ class TestDatabaseRepositoryWrites:
             assert sim.parameters == json.loads(test_parameters)
             assert sim.parameters['num_simulations'] == 5000
 
+    def test_create_player_persists_hand_call_and_final_strength(self, test_db):
+        """Verify GameStateRepository.create_player stores hand metadata."""
+        repository = GameStateRepository(test_db)
+
+        game_state_id = repository.create_game_state(
+            {
+                "pot_size": 100.0,
+                "board_cards_str": "As,Kd,5c,??,??",
+                "outcome": "hero_win",
+            }
+        )
+
+        player_id = repository.create_player(
+            {
+                "game_state_id": game_state_id,
+                "position": "hero",
+                "hole_cards": "AsKh",
+                "stack_size": 100.0,
+                "is_hero": True,
+                "hand_class": "pair",
+                "final_strength": 100,
+            }
+        )
+
+        with test_db.session_scope() as session:
+            row = session.execute(text(
+                "SELECT hand_class, final_strength FROM players WHERE id = :id"
+            ), {"id": player_id}).fetchone()
+
+        assert row is not None
+        assert row[0] == "PAIR"
+        assert row[1] == 100
+
     def test_create_hand_matrix_linked_to_simulation(self, test_db):
         """
         T052.3: Verify foreign key relationship to simulation.

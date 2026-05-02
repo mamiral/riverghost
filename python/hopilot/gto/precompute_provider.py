@@ -50,7 +50,7 @@ class PrecomputeProvider:
         """Determine number of opponents from position actions."""
         # Count how many positions are ALL_IN
         count = sum(1 for v in position_actions.values() if v == "ALL_IN")
-        return max(1, count - 1)  # Exclude hero
+        return max(0, count - 1)  # Exclude hero
     
     def _baseline_equity(self, hand_key: str) -> float:
         """Get baseline equity for a hand (used for EQR calculation)."""

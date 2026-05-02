@@ -315,12 +315,16 @@ class AllInFoldGTOSolver:
             )
             
             # Store hero player
+            hero_hand_class = self.analyzer.get_hand_class_value(hole_cards, [])
+            hero_strength = self.analyzer.evaluate_hand(hole_cards, [])
             hero_id = self.persistence.store_player(
                 game_state_id=game_state_id,
                 position='HERO',
                 hole_cards=hole_cards,
                 stack_size=100.0,  # Default stack
-                is_hero=True
+                is_hero=True,
+                hand_class=hero_hand_class,
+                final_strength=hero_strength
             )
             
             # Store hero's all-in bet
@@ -342,12 +346,16 @@ class AllInFoldGTOSolver:
                 available_cards = [c for c in available_cards if c not in opp_cards]
                 
                 # Store opponent player
+                opp_hand_class = self.analyzer.get_hand_class_value(opp_cards, [])
+                opp_strength = self.analyzer.evaluate_hand(opp_cards, [])
                 opp_id = self.persistence.store_player(
                     game_state_id=game_state_id,
                     position=f'OPP{opp_num}',
                     hole_cards=opp_cards,
                     stack_size=100.0,
-                    is_hero=False
+                    is_hero=False,
+                    hand_class=opp_hand_class,
+                    final_strength=opp_strength
                 )
                 
                 # Opponents fold (since it's all-in-or-fold)

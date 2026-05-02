@@ -39,11 +39,14 @@ class AoFBrowserViewState:
         self.clear_selected_cell()
 
     def set_position_action(self, position: str, action: str) -> None:
-        # Browser runs in preset-only mode: per-position manual overrides are ignored.
         if position not in POSITIONS:
             raise ValueError(f"Unsupported position: {position}")
         if action not in ACTIONS:
             raise ValueError(f"Unsupported action: {action}")
+        if self.position_actions is None:
+            self.position_actions = preset_position_actions(self.selected_position)
+        self.position_actions[position] = action
+        self.clear_selected_cell()
 
     def get_position_action(self, position: str) -> str:
         if self.position_actions is None:

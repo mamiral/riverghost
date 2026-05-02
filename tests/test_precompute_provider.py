@@ -75,7 +75,11 @@ def test_resolve_num_opponents(provider_with_mock):
     """Test _resolve_num_opponents helper."""
     # Single player all-in (hero only, so 0 opponents)
     num_opp = provider_with_mock._resolve_num_opponents("ALL_IN", {"BTN": "ALL_IN"})
-    assert num_opp == 1, "max(1, count-1) should give at least 1"
+    assert num_opp == 0
+
+    # No active players should still resolve to 0 opponents
+    num_opp = provider_with_mock._resolve_num_opponents("FOLD", {})
+    assert num_opp == 0
     
     # Two players all-in (hero + 1 opponent)
     num_opp = provider_with_mock._resolve_num_opponents("ALL_IN", {"BTN": "ALL_IN", "BB": "ALL_IN"})

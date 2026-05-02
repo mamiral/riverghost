@@ -167,15 +167,17 @@ class PokerAnalyzer:
                     else:
                         ev_chips = hero_equity
 
-                    villain_hand = None
+                    villain_hands = []
                     if current_opponent_holes:
-                        villain_hand = ''.join(
-                            self.pokerkit_to_card_name(c) for c in current_opponent_holes[0]
-                        )
+                        villain_hands = [
+                            ''.join(self.pokerkit_to_card_name(c) for c in opp_hole)
+                            for opp_hole in current_opponent_holes
+                        ]
 
                     individual_outcomes.append({
                         'hero_hand': ''.join(self.pokerkit_to_card_name(c) for c in hero_hole),
-                        'villain_hand': villain_hand if villain_hand is not None else 'NONE',
+                        'villain_hand': villain_hands[0] if villain_hands else 'NONE',
+                        'villain_hands': villain_hands,
                         'outcome': 'WIN' if hero_better_than_all else ('TIE' if hero_ties_all else 'LOSS'),
                         'hero_equity': hero_equity,
                         'ev_chips': ev_chips,
@@ -536,9 +538,12 @@ class PokerAnalyzer:
                 hero_better_than_all = all(hero_score < opp_score for opp_score in opp_scores)
                 hero_ties_all = all(hero_score == opp_score for opp_score in opp_scores)
 
-                # Get a representative villain hand (first opponent) for shorthand
-                villain_cards = [self.pokerkit_to_card_name(c) for c in opponent_holes[0]]
-                villain_shorthand = HandRange.shorthand_from_cards(villain_cards)
+                # Collect all sampled villain hands for multi-opponent scenarios
+                villain_hands = []
+                for opp_hole in opponent_holes:
+                    villain_cards = [self.pokerkit_to_card_name(c) for c in opp_hole]
+                    villain_hands.append(HandRange.shorthand_from_cards(villain_cards))
+                villain_shorthand = villain_hands[0] if villain_hands else 'NONE'
 
                 # Convert board cards to string format
                 board_card_names = [self.pokerkit_to_card_name(c) for c in full_board]
@@ -560,6 +565,7 @@ class PokerAnalyzer:
                 outcomes.append({
                     'hero_hand': hero_shorthand,
                     'villain_hand': villain_shorthand,
+                    'villain_hands': [villain_shorthand],
                     'outcome': outcome,
                     'hero_equity': hero_equity,
                     'ev_chips': ev_chips,
@@ -614,9 +620,11 @@ class PokerAnalyzer:
             )
             return None  # Need at least 5 cards for evaluation
 
-        score = -StandardHighHand(all_cards).entry.index
-        self.logger.debug(f"Hand evaluation score: {score}")
-        return score
+        try:
+            return self.safe_evaluate(board, hole)
+        except Exception as e:
+            self.logger.error(f"Failed to evaluate hand: {e}")
+            return None
 
     def get_hand_class(self, hole_cards: List[str], board_cards: List[str]) -> str:
         """
@@ -641,6 +649,17 @@ class PokerAnalyzer:
             return ' '.join(capitalized)
         except:
             return "Unknown"
+
+    def get_hand_class_value(self, hole_cards: List[str], board_cards: List[str]) -> Optional[str]:
+        """Get normalized hand class value for persistence."""
+        try:
+            hand = StandardHighHand.from_game(
+                [self.card_name_to_pokerkit(c) for c in hole_cards],
+                [self.card_name_to_pokerkit(c) for c in board_cards]
+            )
+            return self._map_hand_class(hand)
+        except Exception:
+            return None
 
     def get_advice(self, hole_cards: List[str], board_cards: List[str], phase: str) -> str:
         """

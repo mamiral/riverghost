@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch, MagicMock
 # Add python directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 
+from sqlalchemy import text
 import pytest
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, PrecomputeProfile
 from hopilot.gto.precompute_orchestration import PrecomputeOrchestrationService
@@ -388,6 +389,61 @@ class TestDataPersistenceAfterFix:
 
             board_cards_str = session.execute(text("SELECT board_cards_str FROM game_states")).scalar()
             assert board_cards_str == "", "Blank board cards should be stored as an empty string, not placeholders"
+
+    def test_store_individual_outcomes_persists_player_hand_metadata(self):
+        """Regression: persisted players should include hand_class and final_strength."""
+        runner = AoFPrecomputeRunner(provider=Mock(), database_url="sqlite:///:memory:")
+
+        outcome = {
+            "hero_hand": "AA",
+            "villain_hand": "NONE",
+            "outcome": "WIN",
+            "hero_equity": 0.68,
+            "ev_chips": 1.2,
+            "board_cards": "Kd,Qc,Js,2h,3d",
+        }
+        context = {"pot_size": 100.0, "bet_amount": 100.0}
+
+        runner._store_individual_outcomes_as_game_states(
+            cell_id=1,
+            individual_outcomes=[outcome],
+            context=context,
+        )
+
+        with runner.database_repository.connection.session_scope() as session:
+            hero_row = session.execute(
+                text("SELECT hand_class, final_strength FROM players WHERE position = 'hero'"),
+            ).fetchone()
+            assert hero_row is not None
+            assert hero_row[0] == "PAIR"
+            assert isinstance(hero_row[1], int)
+
+    def test_store_individual_outcomes_persists_multiple_villains(self):
+        """Regression: multiple opponent hole cards should persist all villain players."""
+        runner = AoFPrecomputeRunner(provider=Mock(), database_url="sqlite:///:memory:")
+
+        outcome = {
+            "hero_hand": "AA",
+            "villain_hands": ["KQs", "JTs"],
+            "villain_hand": "KQs",
+            "outcome": "LOSS",
+            "hero_equity": 0.32,
+            "ev_chips": -100.0,
+            "board_cards": "Kd,Qc,Js,2h,3d",
+        }
+        context = {"pot_size": 100.0, "bet_amount": 100.0}
+
+        runner._store_individual_outcomes_as_game_states(
+            cell_id=1,
+            individual_outcomes=[outcome],
+            context=context,
+        )
+
+        with runner.database_repository.connection.session_scope() as session:
+            villain_count = session.execute(
+                text("SELECT COUNT(*) FROM players WHERE position LIKE 'villain%'")
+            ).scalar()
+            assert villain_count == 2, "Both villain players should be persisted"
 
 
 class TestScenarioStructureConsistency:

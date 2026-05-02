@@ -103,8 +103,8 @@ class AoFSolverAdapter:
     ) -> int:
         active_players = sum(1 for action in position_actions.values() if action == "ALL_IN")
         if selected_action == "ALL_IN":
-            return max(1, active_players - 1)
-        return max(1, active_players)
+            return max(0, active_players - 1)
+        return max(0, active_players)
 
     def _expand_hand_key_to_combos(self, hand_key: str) -> list[tuple[str, str]]:
         # Deterministic combo sampler; exact eval runs on these sampled concrete combos.

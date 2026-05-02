@@ -96,7 +96,7 @@ class PerformanceMonitor:
 
     def _log_metrics(self, metrics: PerformanceMetrics) -> None:
         """Log performance metrics."""
-        self.logger.info(
+        self.logger.debug(
             f"Performance: {metrics.operation_name} completed in {metrics.duration_ms:.2f}ms, "
             f"Memory: {metrics.memory_usage_mb:.1f}MB, CPU: {metrics.cpu_percent:.1f}%"
         )
