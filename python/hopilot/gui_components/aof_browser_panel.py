@@ -9,7 +9,7 @@ import yaml
 from typing import List, Dict, Any, Optional
 
 from hopilot.gto.browser_database_provider import BrowserDatabaseProvider
-from hopilot.gto.aof_browser_state import AoFBrowserViewState, POSITIONS, METRICS
+from hopilot.gto.aof_browser_state import AoFBrowserViewState, POSITIONS, METRICS, normalize_position_actions
 from hopilot.gto.aof_precompute_runner import AoFPrecomputeRunner, GuiPrecomputeRunSession, GuiRunState
 from hopilot.gto.convergence_analysis_queries import ConvergenceAnalysisQueries
 from hopilot.gui_components.aof_action_selector import AoFActionSelector
@@ -628,22 +628,38 @@ class AoFBrowserPanel:
                             params = dict(params)
                         except Exception:
                             params = {}
-                    position = params.get("position")
-                    action = params.get("action")  # This might be the action for the selected position
+                    position = params.get("position") or params.get("selected_position")
+                    action = params.get("action") or params.get("hero_action")
                     metric = params.get("metric", "WIN_LOSE_PROBABILITY")
                     position_actions = params.get("position_actions")
-                    
+
                     if position and position in POSITIONS:
                         self.state.set_position(position)
-                        # If action is specified, try to set it
-                        if action:
-                            self.state.set_position_action(position, action)
                         if position_actions and isinstance(position_actions, dict):
-                            self.state.position_actions = position_actions
+                            self.state.position_actions = normalize_position_actions(position_actions)
+                        elif action:
+                            self.state.set_position_action(position, action)
+
+                        simulations_per_cell = (
+                            params.get("simulations_per_cell")
+                            or params.get("sims_per_combo")
+                            or params.get("num_simulations")
+                        )
+                        if simulations_per_cell is not None:
+                            try:
+                                self.precompute_simulations_per_cell = int(simulations_per_cell)
+                            except (TypeError, ValueError):
+                                self.logger.warning(
+                                    "Invalid simulations_per_cell in restored context: %s",
+                                    simulations_per_cell,
+                                )
+
                         if metric in METRICS:
                             self.state.set_metric(metric)
                         
-                        self.logger.info(f"Restored context from latest simulation: position={position}, action={action}, metric={metric}, position_actions={position_actions}")
+                        self.logger.info(
+                            f"Restored context from latest simulation: position={position}, action={action}, metric={metric}, position_actions={position_actions}, simulations_per_cell={simulations_per_cell}"
+                        )
         except Exception as e:
             self.logger.warning(f"Failed to restore context from database: {e}")
 
@@ -1125,17 +1141,16 @@ class AoFBrowserPanel:
             if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
                 if self.precompute_session.run_state == GuiRunState.RUNNING:
                     self.runner.stop_gui_session(self.precompute_session)
-                self.precompute_session.stop_event.set()
-                self._cancel_pending_precompute_futures()
-                # Shutdown executor and wait for running tasks to finish
-                if self.precompute_executor is not None:
+                if hasattr(self.precompute_session, 'stop_event') and self.precompute_session.stop_event is not None:
                     try:
-                        self.precompute_executor.shutdown(wait=True, cancel_futures=True)
+                        self.precompute_session.stop_event.set()
                     except Exception as exc:
-                        self.logger.warning("Error shutting down precompute executor: %s", exc)
-                    finally:
-                        self.precompute_executor = None
-                self._clear_precompute_result_queue()
+                        self.logger.warning("Unable to set stop_event on precompute_session: %s", exc)
+                self._cancel_pending_precompute_futures()
+                # Shut down executor without blocking, matching shutdown semantics used elsewhere
+                self._shutdown_precompute_executor()
+                if hasattr(self, '_precompute_result_queue') and self._precompute_result_queue is not None:
+                    self._clear_precompute_result_queue()
                 # Mark as COMPLETED so all_work_done() returns True for state machine transition
                 if self.precompute_session.run_state != GuiRunState.COMPLETED:
                     self.runner.transition_session_state(self.precompute_session, GuiRunState.COMPLETED)
