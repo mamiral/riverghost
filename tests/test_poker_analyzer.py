@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import sys
 from unittest.mock import patch, MagicMock
+from pokerkit.hands import StandardHighHand
 
 # Add the python directory to the path so we can import hopilot modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
@@ -123,6 +124,19 @@ class TestPokerAnalyzer:
         high_card = analyzer.evaluate_hand(["AS", "2H"], ["3C", "4D", "7S"])
         assert high_card is not None
         assert high_card > royal_flush  # Weaker hand has higher score
+
+    def test_best_standard_high_hand_entry_matches_pokerkit(self, analyzer):
+        """Regression test: direct lookup entry must match StandardHighHand.from_game."""
+        hero_cards = [analyzer.card_name_to_pokerkit(c) for c in ["AS", "KH"]]
+        board_cards = [analyzer.card_name_to_pokerkit(c) for c in ["QS", "JS", "10S", "2D", "3C"]]
+
+        assert all(card is not None for card in hero_cards + board_cards)
+
+        lookup_entry = analyzer._best_standard_high_hand_entry(hero_cards, board_cards)
+        expected_entry = StandardHighHand.from_game(hero_cards, board_cards).entry
+
+        assert lookup_entry.index == expected_entry.index
+        assert lookup_entry.label == expected_entry.label
 
     def test_hand_class_mapping(self, analyzer):
         """Test that hand classes are mapped correctly."""
