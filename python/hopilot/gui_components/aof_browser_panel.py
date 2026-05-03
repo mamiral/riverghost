@@ -119,6 +119,7 @@ class AoFBrowserPanel:
                 self.state.selected_position,
                 self.state.selected_metric,
                 self.state.position_actions,
+                simulations_per_cell=self.precompute_simulations_per_cell,
                 allow_compute=False,
             )
         except Exception as exc:
@@ -302,6 +303,7 @@ class AoFBrowserPanel:
                     self.state.selected_position,
                     self.state.selected_metric,
                     self.state.position_actions,
+                    simulations_per_cell=self.precompute_simulations_per_cell,
                     allow_compute=False,
                 )
 

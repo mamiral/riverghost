@@ -11,7 +11,7 @@ from hopilot.gto.simulation_repository import SimulationRepository
 from hopilot.gto.matrix_sweep_service import MatrixSweepService
 from hopilot.models import AggregatedMetric, GameState, HandMatrix, MatrixCell, Player, Simulation
 from hopilot.poker_analyzer import PokerAnalyzer
-from hopilot.database.persistence import DatabasePersistenceStrategy
+from hopilot.database.persistence import BatchingPersistenceStrategy, DatabasePersistenceStrategy
 from tests.integration.matrix_sweep_db_utils import build_matrix_sweep_contract, create_matrix_sweep_db_fixture
 
 
@@ -34,6 +34,27 @@ def test_matrix_sweep_raw_phase_writes_only_raw_records_before_aggregation() -> 
             assert session.query(AggregatedMetric).count() == 0
 
         assert raw_result["status"] == "raw_sweep_complete"
+        assert raw_result["raw_game_states_written"] > 0
+        assert raw_result["raw_players_written"] >= raw_result["raw_game_states_written"] * 2
+        assert raw_result["failed_combinations"] == 0
+    finally:
+        fixture.cleanup()
+
+
+def test_matrix_sweep_raw_phase_flushes_buffered_rows_before_capturing_boundaries() -> None:
+    fixture = create_matrix_sweep_db_fixture(use_temp=True)
+    try:
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
+        service = MatrixSweepService(
+            repository,
+            PokerAnalyzer(),
+            lambda session: BatchingPersistenceStrategy(session=session, batch_size=1_000_000),
+        )
+
+        raw_result = service.run_raw_sweep(build_matrix_sweep_contract(sims_per_combo=1))
+
         assert raw_result["raw_game_states_written"] > 0
         assert raw_result["raw_players_written"] >= raw_result["raw_game_states_written"] * 2
         assert raw_result["failed_combinations"] == 0

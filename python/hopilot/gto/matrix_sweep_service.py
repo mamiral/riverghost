@@ -66,6 +66,8 @@ class MatrixSweepService:
                     if not result or result.get("valid_simulations", 0) == 0:
                         failed_combinations += 1
 
+            # Ensure any buffered rows are flushed before we capture the end boundary.
+            persistence.close()
             raw_game_state_id_end = self.repository.get_latest_game_state_id()
             raw_counts = self.repository.get_run_raw_counts(raw_game_state_id_start, raw_game_state_id_end)
             completed_parameters = mark_raw_sweep_complete(

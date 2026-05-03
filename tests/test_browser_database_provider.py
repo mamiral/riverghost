@@ -201,6 +201,34 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         assert called_contract["run_kind"] == "matrix_sweep"
 
     @patch('hopilot.gto.browser_database_provider.SimulationRepository')
+    def test_get_matrix_payload_propagates_simulations_per_cell(self, mock_db_class):
+        """Test that browser provider uses simulations_per_cell in scenario contracts."""
+        mock_db = MagicMock()
+        mock_db_class.return_value = mock_db
+        mock_db.get_cross_run_matrix_summary.return_value = {
+            "simulation": MagicMock(id=1),
+            "hand_matrix": MagicMock(id=2),
+            "matrix_cells": [
+                MagicMock(row_index=row, col_index=col, hand_combination="AA", aggregated_metric=MagicMock(equity=0.55, win_probability=None, ev=None, jackpot_adjusted_ev=None))
+                for row in range(13) for col in range(13)
+            ],
+            "aggregated_metrics": []
+        }
+
+        provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
+        payload = provider.get_matrix_payload(
+            position="UTG",
+            metric="EV",
+            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+            simulations_per_cell=1000,
+        )
+
+        assert payload["status"] == STATUS_AVAILABLE
+        called_contract = mock_db.get_cross_run_matrix_summary.call_args[0][0]
+        assert called_contract["sims_per_combo"] == 1000
+        assert called_contract["num_simulations"] == 1000
+
+    @patch('hopilot.gto.browser_database_provider.SimulationRepository')
     def test_get_matrix_payload_database_failure_returns_missing(self, mock_db_class):
         """Test that repository failures return graceful MISSING payload."""
         mock_db = MagicMock()

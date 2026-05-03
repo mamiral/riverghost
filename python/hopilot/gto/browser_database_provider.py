@@ -187,6 +187,7 @@ class BrowserDatabaseProvider:
         position_actions: Dict[str, str] | None = None,
         pot_size: float = 20.0,
         bet_amount: float = 10.0,
+        simulations_per_cell: int | None = None,
         strict_current_action: bool = False,
         allow_compute: bool = True,
         on_cell_complete: Optional[Any] = None,
@@ -203,6 +204,7 @@ class BrowserDatabaseProvider:
                 position_actions=position_actions,
                 pot_size=pot_size,
                 bet_amount=bet_amount,
+                simulations_per_cell=simulations_per_cell,
                 strict_current_action=strict_current_action,
             )
         except ValueError as e:
@@ -279,6 +281,7 @@ class BrowserDatabaseProvider:
             pos for pos, action in context["position_actions"].items() if action != "FOLD"
         ]
 
+        sims_per_combo = context.get("simulations_per_cell", 120)
         contract = {
             "selected_position": context["position"],
             "hero_action": context["action"],
@@ -287,8 +290,8 @@ class BrowserDatabaseProvider:
             "num_opponents": max(0, sum(1 for pos, action in context["position_actions"].items() if action != "FOLD" and pos != context["position"])),
             "pot_size": float(context["pot_size"]),
             "bet_amount": float(context["bet_amount"]),
-            "sims_per_combo": 120,
-            "num_simulations": 120,
+            "sims_per_combo": int(sims_per_combo),
+            "num_simulations": int(sims_per_combo),
             "matrix_size": "13x13",
             "game_type": "cash",
             "run_kind": "matrix_sweep",
@@ -379,6 +382,7 @@ class BrowserDatabaseProvider:
         position_actions: Dict[str, str] | None = None,
         pot_size: float = 20.0,
         bet_amount: float = 10.0,
+        simulations_per_cell: int | None = None,
         strict_current_action: bool = False,
         allow_compute: bool = True,
         on_cell_complete: Optional[Any] = None,
@@ -390,6 +394,7 @@ class BrowserDatabaseProvider:
             position_actions=position_actions,
             pot_size=pot_size,
             bet_amount=bet_amount,
+            simulations_per_cell=simulations_per_cell,
             strict_current_action=strict_current_action,
             allow_compute=allow_compute,
             on_cell_complete=on_cell_complete,
@@ -402,6 +407,7 @@ class BrowserDatabaseProvider:
         position_actions: Dict[str, str] | None = None,
         pot_size: float = 20.0,
         bet_amount: float = 10.0,
+        simulations_per_cell: int | None = None,
         strict_current_action: bool = False,
     ) -> Dict[str, Any]:
         """Build browser context from parameters."""
@@ -413,7 +419,7 @@ class BrowserDatabaseProvider:
         actions = normalize_position_actions(position_actions or {})
         active_players = sum(1 for action in actions.values() if action != "FOLD")
 
-        return {
+        context = {
             "position": position,
             "action": actions.get(position, "UNKNOWN"),
             "metric": metric,
@@ -424,6 +430,9 @@ class BrowserDatabaseProvider:
             "effective_mode": "strict-current-action" if strict_current_action else "analysis",
             "timeout_ms": 30000,  # Phase 4: Default timeout for solver
         }
+        if simulations_per_cell is not None:
+            context["simulations_per_cell"] = int(simulations_per_cell)
+        return context
 
 
 

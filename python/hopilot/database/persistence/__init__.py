@@ -9,10 +9,12 @@ from .base import GameStatePersistence
 from .database import DatabasePersistenceStrategy
 from .mock import MockPersistenceStrategy
 from .memory import InMemoryPersistenceStrategy
+from .batching import BatchingPersistenceStrategy
 
 __all__ = [
     'GameStatePersistence',
     'DatabasePersistenceStrategy', 
     'MockPersistenceStrategy',
-    'InMemoryPersistenceStrategy'
+    'InMemoryPersistenceStrategy',
+    'BatchingPersistenceStrategy',
 ]

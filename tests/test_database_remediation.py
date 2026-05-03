@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.all_in_fold_gto import AllInFoldGTOSolver
-from hopilot.database.persistence import DatabasePersistenceStrategy
+from hopilot.database.persistence import BatchingPersistenceStrategy, DatabasePersistenceStrategy
 from hopilot.models import GameState, Player, Bet, Jackpot, Base
 
 
@@ -150,6 +150,134 @@ class TestDatabaseRemediation:
             assert bet.amount == 10.0
             assert bet.action_type == 'raise'
 
+        finally:
+            session.close()
+
+    def test_batching_persistence_commits_only_when_threshold_reached(self, temp_db):
+        """Test that batching persistence delays commit until batch size is reached."""
+        db_url, SessionLocal = temp_db
+        session = SessionLocal()
+        try:
+            strategy = BatchingPersistenceStrategy(session=session, batch_size=2)
+
+            game_state_id_1 = strategy.store_game_state(
+                timestamp='2024-01-01T00:00:00',
+                round_name='preflop',
+                pot_size=20.0,
+                board_cards=['As', 'Kh'],
+                outcome='hero_win'
+            )
+            strategy.store_player(
+                game_state_id=game_state_id_1,
+                position='HERO',
+                hole_cards=['As', 'Kh'],
+                stack_size=100.0,
+                is_hero=True
+            )
+            strategy.commit_transaction()
+
+            other_session = SessionLocal()
+            try:
+                assert other_session.query(GameState).count() == 0
+            finally:
+                other_session.close()
+
+            game_state_id_2 = strategy.store_game_state(
+                timestamp='2024-01-01T00:00:01',
+                round_name='preflop',
+                pot_size=20.0,
+                board_cards=['Qs', 'Jh'],
+                outcome='loss'
+            )
+            strategy.store_player(
+                game_state_id=game_state_id_2,
+                position='HERO',
+                hole_cards=['Qs', 'Jh'],
+                stack_size=100.0,
+                is_hero=True
+            )
+            strategy.commit_transaction()
+
+            other_session = SessionLocal()
+            try:
+                assert other_session.query(GameState).count() == 2
+                assert other_session.query(Player).count() == 2
+            finally:
+                other_session.close()
+        finally:
+            strategy.close()
+            session.close()
+
+    def test_batching_persistence_flushes_remaining_on_close(self, temp_db):
+        """Test that closing the strategy flushes any remaining buffered rows."""
+        db_url, SessionLocal = temp_db
+        session = SessionLocal()
+        try:
+            strategy = BatchingPersistenceStrategy(session=session, batch_size=3)
+
+            game_state_id = strategy.store_game_state(
+                timestamp='2024-01-01T00:00:00',
+                round_name='preflop',
+                pot_size=20.0,
+                board_cards=['As', 'Kh'],
+                outcome='hero_win'
+            )
+            strategy.store_player(
+                game_state_id=game_state_id,
+                position='HERO',
+                hole_cards=['As', 'Kh'],
+                stack_size=100.0,
+                is_hero=True
+            )
+            strategy.commit_transaction()
+
+            other_session = SessionLocal()
+            try:
+                assert other_session.query(GameState).count() == 0
+            finally:
+                other_session.close()
+
+            strategy.close()
+
+            other_session = SessionLocal()
+            try:
+                assert other_session.query(GameState).count() == 1
+                assert other_session.query(Player).count() == 1
+            finally:
+                other_session.close()
+        finally:
+            session.close()
+
+    def test_batching_persistence_rollback_discards_buffered_rows(self, temp_db):
+        """Test that rollback clears buffered rows before flush."""
+        db_url, SessionLocal = temp_db
+        session = SessionLocal()
+        try:
+            strategy = BatchingPersistenceStrategy(session=session, batch_size=3)
+
+            game_state_id = strategy.store_game_state(
+                timestamp='2024-01-01T00:00:00',
+                round_name='preflop',
+                pot_size=20.0,
+                board_cards=['As', 'Kh'],
+                outcome='hero_win'
+            )
+            strategy.store_player(
+                game_state_id=game_state_id,
+                position='HERO',
+                hole_cards=['As', 'Kh'],
+                stack_size=100.0,
+                is_hero=True
+            )
+            strategy.rollback_transaction()
+            strategy.close()
+
+            other_session = SessionLocal()
+            try:
+                assert other_session.query(GameState).count() == 0
+                assert other_session.query(Player).count() == 0
+            finally:
+                other_session.close()
         finally:
             session.close()
 

@@ -318,15 +318,16 @@ class AoFPrecomputeRunner:
 
     def run_matrix_sweep(self, scenario_contract: dict[str, Any]) -> dict[str, Any]:
         """Execute one production matrix sweep through the dedicated sweep service."""
-        from hopilot.database.persistence import DatabasePersistenceStrategy
+        from hopilot.database.persistence import BatchingPersistenceStrategy
         from hopilot.gto.matrix_sweep_service import MatrixSweepService
         from hopilot.poker_analyzer import PokerAnalyzer
 
         simulation_repository = SimulationRepository(self.db_connection)
+        batch_size = min(max(1, int(scenario_contract.get("sims_per_combo", 120))), 1000)
         service = MatrixSweepService(
             simulation_repository,
             PokerAnalyzer(),
-            DatabasePersistenceStrategy,
+            lambda session: BatchingPersistenceStrategy(session=session, batch_size=batch_size),
         )
         return service.run_sweep(scenario_contract)
 
@@ -1373,13 +1374,14 @@ class AoFPrecomputeRunner:
         return contract
 
     def _execute_matrix_sweep(self, scenario_contract: dict[str, Any]) -> dict[str, Any]:
-        from hopilot.database.persistence import DatabasePersistenceStrategy
+        from hopilot.database.persistence import BatchingPersistenceStrategy
         from hopilot.gto.matrix_sweep_service import MatrixSweepService
 
+        batch_size = min(max(1, int(scenario_contract.get("sims_per_combo", 120))), 1000)
         service = MatrixSweepService(
             self.database_repository,
             PokerAnalyzer(),
-            DatabasePersistenceStrategy,
+            lambda session: BatchingPersistenceStrategy(session=session, batch_size=batch_size),
         )
         try:
             sweep_result = service.run_sweep(scenario_contract)
