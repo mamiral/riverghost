@@ -138,6 +138,76 @@ class TestDatabasePersistence:
             assert metric is not None, "AggregatedMetric not found"
             assert metric.equity == 0.75, f"equity not stored: {metric.equity}"
 
+    def test_upsert_matrix_cell_stores_all_aggregated_metric_fields(self, provider, mock_solver):
+        """Verify upsert_matrix_cell persists all AggregatedMetric fields."""
+        provider._solver = mock_solver
+
+        with provider.database_repository.connection.session_scope() as session:
+            from datetime import datetime, timezone
+            from hopilot.models import Simulation, HandMatrix
+
+            sim = Simulation(
+                name="test_upsert_all_fields",
+                parameters={
+                    "num_simulations": 120,
+                    "matrix_size": "13x13",
+                    "game_type": "cash",
+                },
+                start_timestamp=datetime.now(timezone.utc)
+            )
+            session.add(sim)
+            session.flush()
+            sim_id = sim.id
+
+            matrix = HandMatrix(
+                simulation_id=sim_id,
+                matrix_size="13x13"
+            )
+            session.add(matrix)
+            session.commit()
+            matrix_id = matrix.id
+
+        metrics = {
+            "equity": 0.82,
+            "win_probability": 0.78,
+            "ev": 2.25,
+            "jackpot_adjusted_ev": 2.35,
+            "jackpot_frequency": 0.04,
+            "avg_jackpot_payout": 15.0,
+            "sample_count": 500,
+        }
+
+        provider.database_repository.upsert_matrix_cell(
+            matrix_id=matrix_id,
+            row_idx=1,
+            col_idx=1,
+            hand_key="KK vs Random",
+            metrics=metrics,
+            status="AVAILABLE"
+        )
+
+        with provider.database_repository.connection.session_scope() as session:
+            from hopilot.models import MatrixCell, AggregatedMetric
+
+            cell = session.query(MatrixCell).filter_by(
+                matrix_id=matrix_id,
+                row_index=1,
+                col_index=1
+            ).first()
+
+            assert cell is not None, "Cell not found in database"
+
+            metric = session.query(AggregatedMetric).filter_by(cell_id=cell.id).first()
+            assert metric is not None, "AggregatedMetric not found"
+            assert float(metric.equity) == 0.82
+            assert float(metric.win_probability) == 0.78
+            assert float(metric.ev) == 2.25
+            assert float(metric.jackpot_adjusted_ev) == 2.35
+            assert float(metric.jackpot_frequency) == 0.04
+            assert float(metric.avg_jackpot_payout) == 15.0
+            assert metric.sample_count == 500
+            assert metric.convergence_status == "AVAILABLE"
+
     def test_precompute_runner_persists_to_database(self, provider, mock_solver):
         """Verify data gets written and can be queried back."""
         # This test verifies the Round-trip: Write → Read

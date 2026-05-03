@@ -1,12 +1,11 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from itertools import product
 import json
+import threading
 import time
-from typing import Any
+from typing import Any, Dict, Optional
 
 from hopilot.gto.aof_hand_matrix import format_metric_value
 from hopilot.database import DatabaseConnection
@@ -232,6 +231,7 @@ class GuiPrecomputeRunSession:
     elapsed_active_ms: int = 0
     sim_id: int | None = None
     matrix_id: int | None = None
+    stop_event: threading.Event = field(default_factory=threading.Event)
     _active_start_perf: float | None = field(default=None, repr=False)
 
     def validate(self) -> None:
@@ -535,24 +535,35 @@ class AoFPrecomputeRunner:
         *,
         session: GuiPrecomputeRunSession,
         context: dict[str, Any],
+        cell_index: int | None = None,
     ) -> dict[str, Any] | None:
         if session.run_state != GuiRunState.RUNNING:
             return None
 
-        if session.next_cell_index >= session.total_cells:
-            self.transition_session_state(session, GuiRunState.COMPLETED)
-            self._persist_gui_session_checkpoint(session)
-            return None
+        if cell_index is None:
+            if session.next_cell_index >= session.total_cells:
+                self.transition_session_state(session, GuiRunState.COMPLETED)
+                self._persist_gui_session_checkpoint(session)
+                return None
 
-        idx = int(session.next_cell_index)
+            idx = int(session.next_cell_index)
+            session.next_cell_index = idx + 1
+        else:
+            idx = int(cell_index)
+
         session.current_cell_index = idx
-        cell, status_message = self.compute_gui_cell(context=context, cell_index=idx)
-        session.next_cell_index = idx + 1
-        self.apply_gui_cell_result(session=session, context=context, cell=cell, status_message=status_message)
+        cell, status_message = self.compute_gui_cell(context=context, cell_index=idx, session=session)
+
+        if session.run_state in (GuiRunState.RUNNING, GuiRunState.STOPPING, GuiRunState.COMPLETED):
+            self.apply_gui_cell_result(session=session, context=context, cell=cell, status_message=status_message)
+
         session.current_cell_index = None
         return cell
 
-    def compute_gui_cell(self, *, context: dict[str, Any], cell_index: int) -> tuple[dict[str, Any], str | None]:
+    def compute_gui_cell(self, *, context: dict[str, Any], cell_index: int, session: GuiPrecomputeRunSession) -> tuple[dict[str, Any], str | None]:
+        if session.run_state != GuiRunState.RUNNING:
+            return {}, None
+
         row = int(cell_index) // 13
         col = int(cell_index) % 13
         hand_key = self.provider._matrix_keys[row][col]  # pylint: disable=protected-access
@@ -563,6 +574,7 @@ class AoFPrecomputeRunner:
                 context,
                 hand_key,
                 int(context["timeout_ms"]),
+                session,
             )
 
             if individual_outcomes:
@@ -588,6 +600,8 @@ class AoFPrecomputeRunner:
                 value = metrics.get(metric)
                 status = "AVAILABLE"
                 status_message = None
+            elif solved_status == "STOPPED":
+                return {}, None
             elif solved_status == "TIMEOUT":
                 metrics = {
                     "WIN_LOSE_PROBABILITY": None,
@@ -643,8 +657,12 @@ class AoFPrecomputeRunner:
         context: dict[str, Any],
         hand_key: str,
         remaining_timeout_ms: int,
+        session: GuiPrecomputeRunSession,
     ) -> tuple[list[dict[str, Any]] | None, str]:
         """Get individual simulation outcomes for a hand key."""
+        if session.stop_event.is_set():
+            return None, "STOPPED"
+
         action = context["action"]
         active_players = int(context["active_players"])
         pot_size = float(context["pot_size"])

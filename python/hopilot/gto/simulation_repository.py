@@ -178,18 +178,33 @@ class SimulationRepository(SimulationRepositoryInterface):
 
                 existing_metric = session.query(AggregatedMetric).filter_by(cell_id=cell_id).first()
                 equity = metrics.get("equity", 0.5)
-                jackpot_adjusted_ev = metrics.get("jackpot_adjusted_ev", 0.0)
+                win_probability = metrics.get("win_probability")
+                ev = metrics.get("ev")
+                jackpot_adjusted_ev = metrics.get("jackpot_adjusted_ev")
+                jackpot_frequency = metrics.get("jackpot_frequency")
+                avg_jackpot_payout = metrics.get("avg_jackpot_payout")
+                sample_count = metrics.get("sample_count")
 
                 if existing_metric:
                     existing_metric.equity = equity
+                    existing_metric.win_probability = win_probability
+                    existing_metric.ev = ev
                     existing_metric.jackpot_adjusted_ev = jackpot_adjusted_ev
+                    existing_metric.jackpot_frequency = jackpot_frequency
+                    existing_metric.avg_jackpot_payout = avg_jackpot_payout
+                    existing_metric.sample_count = sample_count
                     existing_metric.convergence_status = status
                     existing_metric.last_updated = datetime.now()
                 else:
                     metric_record = AggregatedMetric(
                         cell_id=cell_id,
                         equity=equity,
+                        win_probability=win_probability,
+                        ev=ev,
                         jackpot_adjusted_ev=jackpot_adjusted_ev,
+                        jackpot_frequency=jackpot_frequency,
+                        avg_jackpot_payout=avg_jackpot_payout,
+                        sample_count=sample_count,
                         convergence_status=status,
                         last_updated=datetime.now(),
                     )

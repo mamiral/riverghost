@@ -8,6 +8,7 @@ These are smoke tests to ensure the panel works with the database-backed provide
 import pytest
 from types import SimpleNamespace
 from unittest.mock import Mock, MagicMock, patch
+from concurrent.futures import Future
 import pygame
 import sys
 import os
@@ -561,6 +562,85 @@ class TestAoFBrowserPrecomputeLifecycle:
 
         panel._refresh.assert_called_once()
         assert panel._rerun_in_progress is False
+
+    @patch('hopilot.gui_components.aof_browser_panel.BrowserDatabaseProvider')
+    def test_precompute_result_queue_updates_payload(self, mock_provider_class, database_url_fixture):
+        if not pygame.display.get_surface():
+            pygame.init()
+            pygame.display.set_mode((800, 600))
+
+        mock_provider = MagicMock()
+        mock_provider_class.return_value = mock_provider
+        panel = AoFBrowserPanel(width=800, height=600, database_url=database_url_fixture)
+        panel._load_convergence_data = MagicMock()
+        panel.runner = MagicMock()
+        panel.precompute_session = SimpleNamespace(
+            run_state=GuiRunState.RUNNING,
+            total_cells=169,
+            next_cell_index=169,
+            completed_cells=0,
+            failed_cells=0,
+        )
+        panel.precompute_context = {'status_message': 'Done'}
+        panel.payload = {
+            'context': {'position': 'UTG'},
+            'cells': [{'row': row, 'col': col, 'hand_key': 'AA', 'value': None, 'status': 'MISSING', 'display': '-'}
+                      for row in range(13) for col in range(13)],
+            'status_message': '',
+        }
+
+        future = Future()
+        future.set_result({'row': 0, 'col': 0, 'hand_key': 'AA', 'value': 0.55, 'status': 'AVAILABLE', 'display': '55%'})
+        panel.precompute_futures[future] = 0
+
+        panel._on_precompute_future_done(future, panel.precompute_session, panel.precompute_context, 0)
+        panel._tick_precompute()
+
+        assert panel.payload['cells'][0]['value'] == 0.55
+        assert panel.payload['status_message'] == 'Done'
+        panel.runner.apply_gui_cell_result.assert_not_called()
+
+    @patch('hopilot.gui_components.aof_browser_panel.BrowserDatabaseProvider')
+    def test_stop_precompute_ignores_late_callbacks(self, mock_provider_class, database_url_fixture):
+        if not pygame.display.get_surface():
+            pygame.init()
+            pygame.display.set_mode((800, 600))
+
+        mock_provider = MagicMock()
+        mock_provider_class.return_value = mock_provider
+        panel = AoFBrowserPanel(width=800, height=600, database_url=database_url_fixture)
+        panel.runner = MagicMock()
+        panel.precompute_session = SimpleNamespace(run_state=GuiRunState.COMPLETED)
+        panel.precompute_context = {'status_message': 'Done'}
+
+        future = Future()
+        future.set_result(({'row': 0, 'col': 0, 'hand_key': 'AA', 'value': 0.55, 'status': 'AVAILABLE', 'display': '55%'}, 'Done'))
+
+        panel._on_precompute_future_done(future, panel.precompute_session, panel.precompute_context, 0)
+
+        panel.runner.apply_gui_cell_result.assert_not_called()
+
+    @patch('hopilot.gui_components.aof_browser_panel.BrowserDatabaseProvider')
+    def test_stop_precompute_shuts_down_executor(self, mock_provider_class, database_url_fixture):
+        if not pygame.display.get_surface():
+            pygame.init()
+            pygame.display.set_mode((800, 600))
+
+        mock_provider = MagicMock()
+        mock_provider_class.return_value = mock_provider
+        panel = AoFBrowserPanel(width=800, height=600, database_url=database_url_fixture)
+        panel.runner = MagicMock()
+        panel.precompute_session = SimpleNamespace(run_state=GuiRunState.RUNNING)
+        executor = MagicMock()
+        panel.precompute_executor = executor
+        panel.precompute_futures = {}
+
+        result = panel.stop_precompute()
+
+        assert result is True
+        executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        assert panel.precompute_executor is None
+        panel.runner.stop_gui_session.assert_called_once_with(panel.precompute_session)
 
 
 class TestAoFBrowserPanelProviderIntegration:

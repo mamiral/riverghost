@@ -1,6 +1,8 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
 import os
+import queue
+import threading
 from pathlib import Path
 import pygame
 import yaml
@@ -19,6 +21,8 @@ class PanelState(Enum):
     MISSING = "MISSING"
     NO_CONTEST = "NO_CONTEST"
     ERROR = "ERROR"
+
+
 from hopilot.gui_components.aof_cell_detail_panel import AoFCellDetailPanel
 from hopilot.gui_components.aof_hand_matrix_panel import AoFHandMatrixPanel
 from hopilot.gui_components.aof_metric_dropdown import AoFMetricDropdown
@@ -66,6 +70,8 @@ class AoFBrowserPanel:
         self.precompute_executor: ThreadPoolExecutor | None = None
         self.precompute_futures: dict[Future, int] = {}
         self.precompute_payload_persisted = False
+        self._precompute_result_queue: queue.Queue[tuple[int, dict[str, Any], str | None]] = queue.Queue()
+        self._precompute_session_lock = threading.Lock()
 
         self._last_error: str | None = None
         self._refresh_context: dict[str, Any] | None = None
@@ -623,16 +629,19 @@ class AoFBrowserPanel:
                     position = params.get("position")
                     action = params.get("action")  # This might be the action for the selected position
                     metric = params.get("metric", "WIN_LOSE_PROBABILITY")
+                    position_actions = params.get("position_actions")
                     
                     if position and position in POSITIONS:
                         self.state.set_position(position)
                         # If action is specified, try to set it
                         if action:
                             self.state.set_position_action(position, action)
+                        if position_actions and isinstance(position_actions, dict):
+                            self.state.position_actions = position_actions
                         if metric in METRICS:
                             self.state.set_metric(metric)
                         
-                        self.logger.info(f"Restored context from latest simulation: position={position}, action={action}, metric={metric}")
+                        self.logger.info(f"Restored context from latest simulation: position={position}, action={action}, metric={metric}, position_actions={position_actions}")
         except Exception as e:
             self.logger.warning(f"Failed to restore context from database: {e}")
 
@@ -667,6 +676,7 @@ class AoFBrowserPanel:
                 "position": self.precompute_context.get("position"),
                 "action": self.precompute_context.get("action"),
                 "metric": self.precompute_context.get("metric"),
+                "position_actions": self.precompute_context.get("position_actions"),
                 "strict_mode": self.precompute_context.get("strict_current_action", False),
             })
             self.precompute_session.sim_id = self.runner.database_repository.create_simulation(parameters)
@@ -683,6 +693,7 @@ class AoFBrowserPanel:
         if self.precompute_executor is None:
             self.precompute_executor = ThreadPoolExecutor(max_workers=self.precompute_max_workers, thread_name_prefix="aof-precompute")
         self._cancel_pending_precompute_futures()
+        self._clear_precompute_result_queue()
         self.precompute_payload_persisted = False
 
         start_from_available = (
@@ -747,42 +758,72 @@ class AoFBrowserPanel:
         
         self.precompute_futures.clear()
 
+    def _clear_precompute_result_queue(self) -> None:
+        """Clear any pending precompute result notifications."""
+        while not self._precompute_result_queue.empty():
+            try:
+                self._precompute_result_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _on_precompute_future_done(
+        self,
+        future: Future,
+        session: GuiPrecomputeRunSession | None,
+        context: dict[str, Any],
+        cell_index: int,
+    ) -> None:
+        """Handle completed precompute futures without blocking the GUI thread."""
+        if session is None or session is not self.precompute_session:
+            return
+
+        if future.cancelled():
+            return
+
+        if session is None or session is not self.precompute_session:
+            return
+
+        with self._precompute_session_lock:
+            self.precompute_futures.pop(future, None)
+
+        try:
+            cell = future.result()
+        except Exception as exc:  # pragma: no cover - defensive thread result guard
+            row = int(cell_index) // 13
+            col = int(cell_index) % 13
+            cell = {
+                "row": row,
+                "col": col,
+                "hand_key": self.provider._matrix_keys[row][col],  # pylint: disable=protected-access
+                "value": None,
+                "status": "ERROR",
+                "display": "-",
+            }
+
+        if cell is None:
+            return
+
+        status_message = None
+        self._precompute_result_queue.put((cell_index, cell, status_message))
+
     def _tick_precompute(self) -> None:
         if self.precompute_session is None or self.precompute_context is None:
             return
 
-        for future in list(self.precompute_futures.keys()):
-            if not future.done():
-                continue
-            cell_index = self.precompute_futures.pop(future, 0)
+        processed_results = False
+        while True:
             try:
-                cell, status_message = future.result()
-            except Exception as exc:  # pragma: no cover - defensive thread result guard
-                row = int(cell_index) // 13
-                col = int(cell_index) % 13
-                cell = {
-                    "row": row,
-                    "col": col,
-                    "hand_key": self.provider._matrix_keys[row][col],  # pylint: disable=protected-access
-                    "value": None,
-                    "status": "ERROR",
-                    "display": "-",
-                }
-                status_message = str(exc)
+                cell_index, cell, status_message = self._precompute_result_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.payload["cells"][cell_index] = cell
+            self.payload["context"] = dict(self.precompute_context or {})
+            self.payload["status_message"] = self.precompute_context.get("status_message") if self.precompute_context else None
+            processed_results = True
 
-            self.runner.apply_gui_cell_result(
-                session=self.precompute_session,
-                context=self.precompute_context,
-                cell=cell,
-                status_message=status_message,
-            )
-            index = int(cell["row"]) * 13 + int(cell["col"])
-            self.payload["cells"][index] = cell
-            self.payload["context"] = dict(self.precompute_context)
-            self.payload["status_message"] = self.precompute_context.get("status_message")
-
-        self.selected_cell_detail = self._build_selected_cell_detail_model()
-        self._load_convergence_data()  # Update convergence plot with new data
+        if processed_results:
+            self.selected_cell_detail = self._build_selected_cell_detail_model()
+            self._load_convergence_data()  # Update convergence plot with new data
 
         if self.precompute_session.run_state == GuiRunState.COMPLETED and not self.precompute_futures:
             self._persist_completed_precompute_payload()
@@ -823,8 +864,21 @@ class AoFBrowserPanel:
             context_copy = dict(self.precompute_context)
             if "position_actions" in context_copy and isinstance(context_copy["position_actions"], dict):
                 context_copy["position_actions"] = dict(context_copy["position_actions"])
-            future = self.precompute_executor.submit(self.runner.compute_gui_cell, context=context_copy, cell_index=idx)
+            future = self.precompute_executor.submit(
+                self.runner.run_gui_cell,
+                session=self.precompute_session,
+                context=context_copy,
+                cell_index=idx,
+            )
             self.precompute_futures[future] = idx
+            future.add_done_callback(
+                lambda f, session=self.precompute_session, context=context_copy, cell_index=idx: self._on_precompute_future_done(
+                    f,
+                    session,
+                    context,
+                    cell_index,
+                )
+            )
 
         processed = self.precompute_session.completed_cells + self.precompute_session.failed_cells
         if (
@@ -1032,6 +1086,29 @@ class AoFBrowserPanel:
             self.logger.error(f"Failed to resume precompute: {e}")
             return False
 
+    def _shutdown_precompute_executor(self) -> None:
+        """Shut down the current precompute executor and release worker threads."""
+        if self.precompute_executor is not None:
+            try:
+                self.precompute_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:
+                self.logger.warning("Error shutting down precompute executor: %s", exc)
+            finally:
+                self.precompute_executor = None
+
+    def shutdown(self) -> None:
+        """Shut down any active precompute work and release executor resources."""
+        try:
+            if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
+                self.stop_precompute()
+        except Exception:
+            self.logger.exception("Error stopping precompute during shutdown")
+        self._cancel_pending_precompute_futures()
+        self._clear_precompute_result_queue()
+        self._shutdown_precompute_executor()
+        self.precompute_session = None
+        self.precompute_context = None
+
     def stop_precompute(self) -> bool:
         """Stop precompute operation and transition to stopped state.
 
@@ -1046,7 +1123,17 @@ class AoFBrowserPanel:
             if self.precompute_session and self.precompute_session.run_state in (GuiRunState.RUNNING, GuiRunState.PAUSED):
                 if self.precompute_session.run_state == GuiRunState.RUNNING:
                     self.runner.stop_gui_session(self.precompute_session)
+                self.precompute_session.stop_event.set()
                 self._cancel_pending_precompute_futures()
+                # Shutdown executor and wait for running tasks to finish
+                if self.precompute_executor is not None:
+                    try:
+                        self.precompute_executor.shutdown(wait=True, cancel_futures=True)
+                    except Exception as exc:
+                        self.logger.warning("Error shutting down precompute executor: %s", exc)
+                    finally:
+                        self.precompute_executor = None
+                self._clear_precompute_result_queue()
                 # Mark as COMPLETED so all_work_done() returns True for state machine transition
                 if self.precompute_session.run_state != GuiRunState.COMPLETED:
                     self.runner.transition_session_state(self.precompute_session, GuiRunState.COMPLETED)

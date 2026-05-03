@@ -50,14 +50,23 @@ class GuiApplication:
 
     def run(self):
         running = True
-        while running:
-            for event in pygame.event.get():
-                running = self.handle_event(event)
-            self.draw()
-            self.clock.tick(self.TARGET_FPS)
-
-        pygame.quit()
-        sys.exit()
+        try:
+            while running:
+                for event in pygame.event.get():
+                    if not self.handle_event(event):
+                        running = False
+                self.draw()
+                if not pygame.display.get_active():
+                    running = False
+                self.clock.tick(self.TARGET_FPS)
+        finally:
+            if self.panel is not None:
+                try:
+                    self.panel.shutdown()
+                except Exception as exc:
+                    self.logger.error("Failed to shut down panel on exit: %s", exc)
+            pygame.quit()
+            sys.exit(0)
 
 
 if __name__ == "__main__":

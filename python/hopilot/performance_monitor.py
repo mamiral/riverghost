@@ -8,6 +8,7 @@ database operations and simulation data capture.
 import time
 import psutil
 from contextlib import contextmanager
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
@@ -68,7 +69,7 @@ class PerformanceMonitor:
     def __init__(self, alert_threshold_percent: float = 15.0):
         self.alert_threshold_percent = alert_threshold_percent
         self.baseline_metrics: Dict[str, float] = {}
-        self.current_metrics: List[PerformanceMetrics] = []
+        self.current_metrics: deque[PerformanceMetrics] = deque(maxlen=10000)
         self.logger = get_logger(__name__)
 
     @contextmanager
@@ -119,9 +120,9 @@ class PerformanceMonitor:
                 f"(baseline: {baseline:.2f}ms, current: {current:.2f}ms)"
             )
 
-            # Update baseline to current (adaptive baseline)
-            self.baseline_metrics[metrics.operation_name] = current
-            self.logger.info(f"Updated baseline for {metrics.operation_name} to {current:.2f}ms")
+            # Disabled adaptive baseline update to prevent masking real performance issues
+            # self.baseline_metrics[metrics.operation_name] = current
+            # self.logger.info(f"Updated baseline for {metrics.operation_name} to {current:.2f}ms")
 
     def get_recent_metrics(self, operation_name: Optional[str] = None, limit: int = 10) -> List[PerformanceMetrics]:
         """Get recent performance metrics."""
