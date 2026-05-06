@@ -15,7 +15,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 from sqlalchemy import create_engine, Engine, text
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import QueuePool, StaticPool
 
 from hopilot.logging_config import get_logger
 from hopilot.models import GameState, Player, Bet, Jackpot
@@ -67,15 +67,25 @@ class DatabaseConnection:
                 "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,  # Enable type detection
             }
 
+        poolclass = QueuePool
+        pool_kwargs = {
+            "pool_pre_ping": True,
+            "pool_size": 5,
+            "max_overflow": 10,
+        }
+        if database_url == "sqlite:///:memory:":
+            poolclass = StaticPool
+            pool_kwargs = {
+                "pool_pre_ping": False,
+            }
+
         self._engine = create_engine(
             database_url,
             connect_args=connect_args,
-            poolclass=QueuePool,
-            pool_pre_ping=True,  # Verify connections before use
-            pool_size=5,  # Limit connection pool size
-            max_overflow=10,  # Allow overflow connections
-            echo=bool(os.getenv("SQLALCHEMY_ECHO", False)),  # Debug logging
-            isolation_level="SERIALIZABLE",  # ACID compliance
+            poolclass=poolclass,
+            echo=bool(os.getenv("SQLALCHEMY_ECHO", False)),
+            isolation_level="SERIALIZABLE",
+            **pool_kwargs,
         )
 
         self._session_factory = sessionmaker(
@@ -163,6 +173,8 @@ class DatabaseConnection:
 
     def create_tables(self) -> None:
         """Create all database tables from SQLAlchemy models."""
+        # Ensure all model classes are imported so SQLAlchemy metadata includes them.
+        import hopilot.models  # noqa: F401
         from hopilot.models.base import Base
         Base.metadata.create_all(self._engine)
         logger.info("Database tables created")

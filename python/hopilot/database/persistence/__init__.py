@@ -10,6 +10,7 @@ from .database import DatabasePersistenceStrategy
 from .mock import MockPersistenceStrategy
 from .memory import InMemoryPersistenceStrategy
 from .batching import BatchingPersistenceStrategy
+from .queue import QueuePersistenceStrategy
 
 __all__ = [
     'GameStatePersistence',
@@ -17,4 +18,5 @@ __all__ = [
     'MockPersistenceStrategy',
     'InMemoryPersistenceStrategy',
     'BatchingPersistenceStrategy',
+    'QueuePersistenceStrategy',
 ]

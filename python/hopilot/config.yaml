@@ -21,3 +21,6 @@ capture:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+sweep:
+  write_queue_maxsize: 15000

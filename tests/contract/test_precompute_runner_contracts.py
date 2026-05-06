@@ -44,6 +44,29 @@ def test_normalize_scenario_contract_legacy_field_mapping() -> None:
     assert normalized["num_simulations"] == 1
 
 
+def test_normalize_scenario_contract_preserves_stop_event() -> None:
+    stop_event = object()
+    contract = build_valid_scenario_contract()
+    contract["stop_event"] = stop_event
+
+    normalized = normalize_scenario_contract(contract)
+
+    assert normalized["stop_event"] is stop_event
+    assert normalized["selected_position"] == contract["selected_position"]
+
+
+def test_build_run_parameters_strips_runtime_stop_event() -> None:
+    stop_event = object()
+    contract = build_valid_scenario_contract()
+    contract["stop_event"] = stop_event
+
+    parameters = build_run_parameters(contract)
+
+    assert "stop_event" not in parameters
+    assert parameters["status"] == RUN_STATUS_CREATED
+    assert parameters["sims_per_combo"] == contract["sims_per_combo"]
+
+
 def test_validate_scenario_contract_rejects_missing_required_fields() -> None:
     contract = build_valid_scenario_contract()
     contract.pop("selected_position")

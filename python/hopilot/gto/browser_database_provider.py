@@ -296,6 +296,8 @@ class BrowserDatabaseProvider:
             "game_type": "cash",
             "run_kind": "matrix_sweep",
         }
+        if "max_workers" in context:
+            contract["max_workers"] = int(context["max_workers"])
         return validate_scenario_contract(contract)
 
     def _build_missing_payload(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -408,6 +410,7 @@ class BrowserDatabaseProvider:
         pot_size: float = 20.0,
         bet_amount: float = 10.0,
         simulations_per_cell: int | None = None,
+        max_workers: int | None = None,
         strict_current_action: bool = False,
     ) -> Dict[str, Any]:
         """Build browser context from parameters."""
@@ -432,6 +435,8 @@ class BrowserDatabaseProvider:
         }
         if simulations_per_cell is not None:
             context["simulations_per_cell"] = int(simulations_per_cell)
+        if max_workers is not None:
+            context["max_workers"] = int(max_workers)
         return context
 
 

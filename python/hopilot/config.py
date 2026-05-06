@@ -62,6 +62,16 @@ class LoggingConfig(BaseModel):
     )
 
 
+class SweepConfig(BaseModel):
+    """Configuration for matrix sweep execution."""
+
+    write_queue_maxsize: int = Field(
+        15000,
+        ge=1,
+        description="Maximum size of the raw sweep write queue for persistence backpressure management",
+    )
+
+
 class AppConfig(BaseModel):
     """Main application configuration."""
 
@@ -76,6 +86,10 @@ class AppConfig(BaseModel):
     )
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig, description="Logging settings"  # type: ignore
+    )
+    sweep: SweepConfig = Field(
+        default_factory=SweepConfig,
+        description="Settings for matrix sweep execution",
     )
 
 

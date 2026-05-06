@@ -104,6 +104,7 @@ class PokerAnalyzer:
         return_individual_outcomes: bool = False,
         pot_size: float = 0.0,
         bet_amount: float = 0.0,
+        cancel_check=None,
     ) -> Optional[Dict[str, float]]:
         """
         Core Monte Carlo simulation method.
@@ -133,6 +134,8 @@ class PokerAnalyzer:
         individual_outcomes: list[Dict[str, Any]] = []
 
         for _ in range(num_simulations):
+            if cancel_check is not None and cancel_check():
+                break
             # Copy a pre-filtered deck each simulation, then shuffle
             deck_cards = base_deck.copy()
             random.shuffle(deck_cards)
@@ -266,6 +269,7 @@ class PokerAnalyzer:
         return_individual_outcomes: bool = False,
         pot_size: float = 0.0,
         bet_amount: float = 0.0,
+        cancel_check=None,
     ) -> Optional[Dict[str, float]]:
         """
         Calculate odds against random opponent hands.
@@ -310,6 +314,7 @@ class PokerAnalyzer:
             return_individual_outcomes=return_individual_outcomes,
             pot_size=pot_size,
             bet_amount=bet_amount,
+            cancel_check=cancel_check,
         )
         
         if result:

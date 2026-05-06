@@ -9,6 +9,8 @@ import pygame
 import sys
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -291,6 +293,103 @@ class TestAoFBrowserPanelDatabaseIntegration:
             assert panel._last_error is None
             assert panel.precompute_session is not None
             assert panel.panel_state != "ERROR"
+        finally:
+            pygame.quit()
+
+    def test_panel_builds_matrix_sweep_contract_before_background_run(self, temp_db_path):
+        """Integration test: START builds a valid matrix sweep contract from browser context."""
+        pygame.init()
+        try:
+            screen = pygame.display.set_mode((800, 600))
+            panel = AoFBrowserPanel(width=800, height=600, database_url=temp_db_path)
+            panel.precompute_context = {
+                "position": "UTG",
+                "action": "ALL_IN",
+                "metric": "EV",
+                "position_actions": {"UTG": "ALL_IN", "BB": "FOLD"},
+                "pot_size": 20.0,
+                "bet_amount": 10.0,
+                "simulations_per_cell": 100,
+                "game_type": "cash",
+            }
+            panel.precompute_stop_event.clear()
+            panel.precompute_session = SimpleNamespace(
+                run_state=GuiRunState.IDLE,
+                total_cells=169,
+                completed_cells=0,
+                failed_cells=0,
+                next_cell_index=0,
+                current_cell_index=None,
+            )
+            def fake_run_matrix_sweep(contract):
+                assert contract["selected_position"] == "UTG"
+                assert contract["hero_action"] == "ALL_IN"
+                assert contract["num_opponents"] == 1
+                assert contract["sims_per_combo"] == 100
+                assert contract["num_simulations"] == 100
+                assert contract["matrix_size"] == "13x13"
+                assert contract["game_type"] == "cash"
+                assert contract["run_kind"] == "matrix_sweep"
+                assert contract["stop_event"] is panel.precompute_stop_event
+                return {"status": "raw_sweep_complete"}
+
+            panel.runner = MagicMock()
+            panel.runner.run_matrix_sweep.side_effect = fake_run_matrix_sweep
+
+            panel._run_matrix_sweep_background()
+
+            panel.runner.run_matrix_sweep.assert_called_once()
+            assert panel.precompute_session.completed_cells == 169
+        finally:
+            pygame.quit()
+
+    def test_panel_stop_precompute_sets_stop_event_and_updates_state(self, temp_db_path):
+        """Integration test: STOP sets the GUI stop event and transitions the run state."""
+        pygame.init()
+        try:
+            screen = pygame.display.set_mode((800, 600))
+            panel = AoFBrowserPanel(width=800, height=600, database_url=temp_db_path)
+            panel._start_async_refresh = lambda: None
+            panel._build_current_context = MagicMock(return_value={
+                "position": "UTG",
+                "metric": "EV",
+                "position_actions": panel.state.position_actions,
+            })
+            panel.precompute_context = panel._build_current_context()
+            panel.precompute_session = SimpleNamespace(
+                run_state=GuiRunState.RUNNING,
+                total_cells=169,
+                completed_cells=0,
+                failed_cells=0,
+                next_cell_index=0,
+                current_cell_index=None,
+            )
+            panel.precompute_stop_event.clear()
+
+            def fake_run_matrix_sweep(contract):
+                assert contract["stop_event"] is panel.precompute_stop_event
+                for _ in range(20):
+                    if contract["stop_event"].is_set():
+                        break
+                    time.sleep(0.01)
+                return {"status": "raw_sweep_stopped"}
+
+            panel.runner = MagicMock()
+            panel.runner.run_matrix_sweep.side_effect = fake_run_matrix_sweep
+            panel.runner.stop_gui_session.side_effect = lambda session: setattr(session, 'run_state', GuiRunState.COMPLETED)
+            panel.runner.transition_session_state = MagicMock()
+
+            panel.precompute_thread = threading.Thread(target=panel._run_matrix_sweep_background, daemon=True)
+            panel.precompute_thread.start()
+            time.sleep(0.05)
+
+            stopped = panel.stop_precompute()
+
+            assert stopped is True
+            assert panel.precompute_stop_event.is_set()
+            panel.runner.stop_gui_session.assert_called_once_with(panel.precompute_session)
+            assert panel.precompute_session.run_state == GuiRunState.COMPLETED
+            assert panel.state.status_message == "Precompute stopped"
         finally:
             pygame.quit()
 

@@ -87,13 +87,17 @@ def normalize_scenario_contract(scenario_contract: Mapping[str, Any]) -> dict[st
     if not isinstance(scenario_contract, Mapping):
         raise MatrixSweepContractError("Scenario contract must be a mapping")
 
-    normalized = deepcopy(dict(scenario_contract))
+    normalized = dict(scenario_contract)
+    stop_event = normalized.pop("stop_event", None)
 
     if "sims_per_combo" not in normalized and "num_simulations" in normalized:
         normalized["sims_per_combo"] = normalized["num_simulations"]
 
     if "num_simulations" not in normalized and "sims_per_combo" in normalized:
         normalized["num_simulations"] = normalized["sims_per_combo"]
+
+    if stop_event is not None:
+        normalized["stop_event"] = stop_event
 
     return normalized
 
@@ -145,6 +149,11 @@ def validate_scenario_contract(scenario_contract: Mapping[str, Any]) -> dict[str
     if normalized["num_simulations"] != sims_per_combo:
         raise MatrixSweepContractError("num_simulations must match sims_per_combo for compatibility")
 
+    max_workers = normalized.get("max_workers")
+    if max_workers is not None:
+        if not isinstance(max_workers, int) or max_workers < 1:
+            raise MatrixSweepContractError("max_workers must be an integer >= 1")
+
     for numeric_field in ("pot_size", "bet_amount"):
         value = normalized[numeric_field]
         if not isinstance(value, (int, float)) or value < 0:
@@ -173,6 +182,7 @@ def build_run_parameters(
 ) -> dict[str, Any]:
     """Create persisted run parameters with default run-boundary metadata."""
     parameters = validate_scenario_contract(scenario_contract)
+    parameters.pop("stop_event", None)
     parameters.update(
         {
             "status": status,
@@ -196,6 +206,7 @@ def update_run_parameters(
 ) -> dict[str, Any]:
     """Return an updated, revalidated run-parameter mapping."""
     merged = normalize_scenario_contract(parameters)
+    merged.pop("stop_event", None)
     merged.update(updates)
 
     completed_at = merged.get("run_completed_at")
