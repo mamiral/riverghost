@@ -65,11 +65,13 @@ class AoFCellDetailPanel:
             text = font.render(line, True, (210, 210, 210))
             surface.blit(text, (self.rect.x + 10, self.rect.y + 36 + idx * 20))
 
-        # Draw confidence indicator if available
+        # Calculate chart area dynamically based on text layout
+        text_end_y = self.rect.y + 36 + len(lines) * 20
         confidence = detail_model.get("confidence")
         if status == "AVAILABLE" and confidence is not None:
-            confidence_indicator_y = self.rect.y + 36 + len(lines) * 20 + 5
+            confidence_indicator_y = text_end_y + 5
             self._draw_confidence_indicator(surface, confidence, confidence_indicator_y)
+            text_end_y = confidence_indicator_y + 15
 
         if status != "AVAILABLE":
             badge_rect = pygame.Rect(self.rect.x + 10, self.rect.y + self.rect.height - 32, self.rect.width - 20, 22)
@@ -81,7 +83,11 @@ class AoFCellDetailPanel:
 
         metric = str(detail_model.get("metric", ""))
         segments = detail_model.get("segments", [])
-        chart_rect = pygame.Rect(self.rect.x + 10, self.rect.y + 122, self.rect.width - 20, self.rect.height - 134)
+        
+        # Start chart below the text area with a small buffer
+        chart_y = max(text_end_y + 10, self.rect.y + 120) 
+        chart_height = self.rect.bottom - chart_y - 12
+        chart_rect = pygame.Rect(self.rect.x + 10, chart_y, self.rect.width - 20, chart_height)
 
         if metric == "WIN_LOSE_PROBABILITY":
             self._draw_probability_stack(surface, font, chart_rect, segments)
