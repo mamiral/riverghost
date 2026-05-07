@@ -407,8 +407,8 @@ class BrowserDatabaseProvider:
         position: str,
         metric: str,
         position_actions: Dict[str, str] | None = None,
-        pot_size: float = 20.0,
-        bet_amount: float = 10.0,
+        pot_size: float | None = None,
+        bet_amount: float = 1.0,
         simulations_per_cell: int | None = None,
         max_workers: int | None = None,
         strict_current_action: bool = False,
@@ -421,6 +421,9 @@ class BrowserDatabaseProvider:
 
         actions = normalize_position_actions(position_actions or {})
         active_players = sum(1 for action in actions.values() if action != "FOLD")
+
+        if pot_size is None:
+            pot_size = bet_amount * active_players
 
         context = {
             "position": position,

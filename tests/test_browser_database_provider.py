@@ -48,8 +48,8 @@ class TestBrowserDatabaseProviderContextBuilding:
         assert context["position_actions"]["UTG"] == "FOLD"
         assert context["position_actions"]["BTN"] == "ALL_IN"
         assert context["active_players"] == 1  # Only BTN is ALL_IN
-        assert context["pot_size"] == 20.0  # Default
-        assert context["bet_amount"] == 10.0  # Default
+        assert context["pot_size"] == 1.0  # bet_amount * active_players
+        assert context["bet_amount"] == 1.0  # Default
         assert context["effective_mode"] == "analysis"
 
     def test_build_context_with_strict_mode(self):

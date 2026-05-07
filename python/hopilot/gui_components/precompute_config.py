@@ -11,6 +11,7 @@ class PrecomputeConfig(BaseModel):
 
     max_workers: int = Field(default=4, ge=1, le=16, description="Thread pool size for concurrent processing")
     simulations_per_cell: int = Field(default=1000, ge=100, le=50000, description="Base number of simulations per cell")
+    bet_size: float = Field(default=1.0, gt=0, description="Bet size per player for EV/EQR calculations")
 
     @property
     def step_sizes(self) -> Dict[str, int]:
@@ -37,14 +38,16 @@ class PrecomputeConfig(BaseModel):
 
         return cls(
             max_workers=aof_config.get('precompute_max_workers'),
-            simulations_per_cell=aof_config.get('num_simulations', 1000)
+            simulations_per_cell=aof_config.get('num_simulations', 1000),
+            bet_size=aof_config.get('bet_size', 1.0)
         )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary for serialization."""
         return {
             'max_workers': self.max_workers,
-            'simulations_per_cell': self.simulations_per_cell
+            'simulations_per_cell': self.simulations_per_cell,
+            'bet_size': self.bet_size
         }
 
     def update(self, **kwargs) -> None:

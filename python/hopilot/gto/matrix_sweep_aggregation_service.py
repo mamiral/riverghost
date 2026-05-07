@@ -64,6 +64,10 @@ class MatrixSweepAggregationService:
         matrix_id = self.repository.get_or_create_hand_matrix_for_simulation(simulation_id)
         timestamp = datetime.now(timezone.utc).isoformat()
 
+        # Get betting parameters for EV calculation
+        pot_size = parameters.get("pot_size", 0.0)
+        bet_amount = parameters.get("bet_amount", 0.0)
+
         session = self.repository.get_session()
         try:
             for row_index, col_index, hand_key in iter_canonical_matrix_cells():
@@ -80,10 +84,18 @@ class MatrixSweepAggregationService:
                 total = stats["total"]
                 equity = None
                 win_probability = None
+                ev = None
                 convergence_status = "no_samples"
                 if total > 0:
                     equity = (stats["wins"] + 0.5 * stats["ties"]) / total
                     win_probability = stats["wins"] / total
+                    
+                    # Calculate EV based on outcomes and betting parameters
+                    # For all-in scenarios: WIN = pot_size, TIE = pot_size/2, LOSS = 0
+                    # For betting scenarios: this would be more complex
+                    if pot_size > 0:
+                        ev = (stats["wins"] * pot_size + stats["ties"] * (pot_size / 2.0)) / total
+                    
                     convergence_status = "complete"
 
                 session.add(
@@ -91,6 +103,7 @@ class MatrixSweepAggregationService:
                         cell_id=cell.id,
                         equity=equity,
                         win_probability=win_probability,
+                        ev=ev,
                         sample_count=total,
                         convergence_status=convergence_status,
                         last_updated=timestamp,

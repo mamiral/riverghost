@@ -667,12 +667,16 @@ class AoFBrowserPanel:
             self.logger.warning(f"Failed to restore context from database: {e}")
 
     def _build_current_context(self) -> dict:
+        bet_amount = 1.0
+        if self.state_machine_controller and self.state_machine_controller.config:
+            bet_amount = self.state_machine_controller.config.bet_size
         return self.provider._build_context(  # pylint: disable=protected-access
             position=self.state.selected_position,
             metric=self.state.selected_metric,
             position_actions=self.state.position_actions,
             simulations_per_cell=self.precompute_simulations_per_cell,
             max_workers=self.precompute_max_workers,
+            bet_amount=bet_amount,
         )
 
     def _build_scenario_contract(self, context: dict[str, Any]) -> dict[str, Any]:

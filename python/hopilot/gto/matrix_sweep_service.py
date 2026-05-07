@@ -62,6 +62,8 @@ class MatrixSweepService:
                 num_simulations=normalized_contract["sims_per_combo"],
                 persistence=persistence,
                 cancel_check=stop_event.is_set if stop_event is not None else None,
+                pot_size=normalized_contract["pot_size"],
+                bet_amount=normalized_contract["bet_amount"],
             )
             return bool(result and result.get("valid_simulations", 0) > 0)
         except Exception:
