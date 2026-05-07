@@ -91,8 +91,8 @@ class MatrixSweepAggregationService:
                     win_probability = stats["wins"] / total
                     
                     # Calculate EV based on outcomes and betting parameters
-                    # For all-in scenarios: WIN = pot_size, TIE = pot_size/2, LOSS = 0
-                    # For betting scenarios: this would be more complex
+                    # For all-in scenarios: EV = equity * pot_size (since bet is already committed)
+                    # This gives: EV = (wins * pot_size + ties * (pot_size / 2.0)) / total
                     if pot_size > 0:
                         ev = (stats["wins"] * pot_size + stats["ties"] * (pot_size / 2.0)) / total
                     

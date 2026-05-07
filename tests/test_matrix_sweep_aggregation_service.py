@@ -91,3 +91,39 @@ def test_aggregate_run_excludes_unmappable_hero_records_and_reports_them() -> No
         assert result["status"] == "aggregated"
     finally:
         fixture.cleanup()
+
+
+def test_aggregate_run_calculates_ev_correctly_based_on_simulation_parameters() -> None:
+    """Test that EV is calculated correctly using pot_size from simulation parameters."""
+    fixture = create_matrix_sweep_db_fixture(use_temp=True)
+    try:
+        conn = DatabaseConnection(fixture.database_url)
+        conn.create_tables()
+        repository = SimulationRepository(conn)
+        seed = seed_matrix_sweep_raw_run(repository)
+        service = MatrixSweepAggregationService(repository)
+
+        result = service.aggregate_run(seed["simulation_id"])
+        summary = repository.get_matrix_sweep_summary(seed["simulation_id"])
+
+        # Check that EV is calculated for metrics with samples
+        metrics_with_ev = [m for m in summary["aggregated_metrics"] if m.ev is not None and m.sample_count and m.sample_count > 0]
+        assert len(metrics_with_ev) > 0, "Should have metrics with EV calculated"
+
+        # Get simulation parameters to verify EV calculation
+        sim = repository.get_simulation_record(seed["simulation_id"])
+        pot_size = sim.parameters.get("pot_size", 0.0)
+
+        # Verify EV calculation: EV should equal equity * pot_size for all-in scenarios
+        for metric in metrics_with_ev:
+            if metric.equity is not None and metric.equity > 0:
+                expected_ev = float(metric.equity) * pot_size
+                actual_ev = float(metric.ev)
+                assert abs(actual_ev - expected_ev) < 0.0001, f"EV calculation incorrect: expected {expected_ev}, got {actual_ev}"
+                
+                # EV should be positive and not exceed pot_size
+                assert actual_ev > 0, f"EV should be positive, got {actual_ev}"
+                assert actual_ev <= pot_size, f"EV should not exceed pot_size {pot_size}, got {actual_ev}"
+
+    finally:
+        fixture.cleanup()
