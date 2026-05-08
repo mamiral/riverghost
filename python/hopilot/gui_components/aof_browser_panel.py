@@ -52,6 +52,16 @@ class AoFBrowserPanel:
             self.logger.error("Failed to initialize convergence analysis queries: %s", exc)
             self.convergence_queries = None
 
+        # Initialize convergence repository for new convergence tracking
+        try:
+            from hopilot.database import DatabaseConnection
+            from hopilot.gto.convergence_repository import ConvergenceRepository
+            db_conn = DatabaseConnection(database_url)
+            self.convergence_repo = ConvergenceRepository(db_conn)
+        except Exception as exc:
+            self.logger.error("Failed to initialize convergence repository: %s", exc)
+            self.convergence_repo = None
+
         try:
             self.runner = AoFPrecomputeRunner(self.provider, database_url)
         except Exception as exc:
@@ -62,6 +72,8 @@ class AoFBrowserPanel:
         self.precompute_session: GuiPrecomputeRunSession | None = None
         self.precompute_context: dict | None = None
         self.precompute_simulations_per_cell = 1000
+        self.precompute_pot_size = 20.0  # Default pot size
+        self.precompute_bet_amount = 1.0  # Default bet amount
         self.precompute_buttons: dict[str, pygame.Rect] = {}
         self.precompute_worker_buttons: dict[str, pygame.Rect] = {}
         self.precompute_worker_knob = pygame.Rect(0, 0, 0, 0)
@@ -111,6 +123,8 @@ class AoFBrowserPanel:
         self.matrix = AoFHandMatrixPanel(self.outer_margin, self.top_margin + 80)
         self.cell_detail_panel = AoFCellDetailPanel(self.outer_margin, self.top_margin + 80, self.middle_panel_w, 220)
         self.convergence_panel = ConvergencePanel(self.outer_margin, self.top_margin + 80, 400, 200)
+        if self.convergence_repo:
+            self.convergence_panel.set_convergence_repository(self.convergence_repo)
         self._reflow_layout()
         self._build_precompute_controls()
 
@@ -358,64 +372,81 @@ class AoFBrowserPanel:
         self.is_loading = False
 
     def _load_convergence_data(self):
-        """Load convergence data for selected cell using convergence analysis queries."""
-        if self.convergence_queries is None:
-            self.logger.warning("Convergence analysis queries unavailable, skipping convergence data loading")
-            return
+        """Load convergence data for selected cell using the simplified scenario contract."""
         if not hasattr(self, 'convergence_panel') or self.convergence_panel is None:
-            self.logger.warning("Convergence panel not initialized, skipping convergence data loading")
             return
 
         try:
-            # Only show convergence plot when a cell is selected
             if self.state.selected_cell is None:
                 self.convergence_panel.set_convergence_data([], "", "")
                 return
 
             row, col, hand_key = self.state.selected_cell
+            position = self.state.selected_position
+            metric = self.state.selected_metric
 
-            # Get matrix ID from current payload context
-            matrix_id = self.payload.get("context", {}).get("matrix_id")
-            if not matrix_id:
-                self.logger.debug("No matrix_id in payload context, cannot load convergence data")
-                self.convergence_panel.set_convergence_data([], "", "")
-                return
+            # Use the new scenario-based convergence query
+            if self.convergence_repo:
+                try:
+                    snapshots = self.convergence_repo.get_scenario_convergence(position, hand_key)
+                    
+                    convergence_data = []
+                    for snapshot in snapshots:
+                        # Map snapshot metrics to panel format
+                        val = float(snapshot.equity) if snapshot.equity is not None else 0.0
+                        if metric == "EV":
+                            val = float(snapshot.ev) if snapshot.ev is not None else 0.0
+                        
+                        convergence_data.append({
+                            'sample_count': snapshot.sample_count,
+                            'equity': val,
+                            'timestamp': snapshot.timestamp
+                        })
 
-            # Get convergence data using the convergence analysis queries
-            convergence_result = self.convergence_queries.get_equity_convergence_series(
-                matrix_id=matrix_id,
-                row_idx=row,
-                col_idx=col,
-                sample_intervals=[100, 250, 500, 1000, 2500, 5000, 10000]
-            )
+                    self.convergence_panel.set_convergence_data(
+                        convergence_data,
+                        f"{position} - {hand_key}",
+                        "ALL-IN",
+                        metric
+                    )
+                    self.logger.debug(f"Loaded {len(convergence_data)} scenario convergence points for {hand_key}")
+                    return
+                except Exception as e:
+                    self.logger.warning(f"Scenario convergence query failed: {e}")
 
-            if convergence_result and convergence_result.get('convergence_series'):
-                # Convert the data format for the convergence panel
-                convergence_data = []
-                for point in convergence_result['convergence_series']:
-                    convergence_data.append({
-                        'sample_count': point['sample_count'],
-                        'equity': point['equity'],
-                        'timestamp': point.get('timestamp')
-                    })
-
-                position_action = self.state.get_position_action(self.state.selected_position)
-                self.convergence_panel.set_convergence_data(
-                    convergence_data,
-                    f"{self.state.selected_position} - {hand_key}",
-                    position_action,
-                    self.state.selected_metric
-                )
-
-                self.logger.debug(f"Loaded convergence data: {len(convergence_data)} points for {hand_key}")
-            else:
-                self.logger.debug(f"No convergence data available for {hand_key}")
-                self.convergence_panel.set_convergence_data([], "", "")
+            # Fallback (old style or failure)
+            self.convergence_panel.set_convergence_data([], "", "")
 
         except Exception as e:
             self.logger.warning(f"Failed to load convergence data: {e}", exc_info=True)
-            if hasattr(self, 'convergence_panel') and self.convergence_panel is not None:
-                self.convergence_panel.set_convergence_data([], "", "")
+            self.convergence_panel.set_convergence_data([], "", "")
+
+    def _find_cell_id(self, matrix_id: int, row: int, col: int) -> Optional[int]:
+        """
+        Find the cell ID for a given matrix position.
+
+        Args:
+            matrix_id: Matrix ID
+            row: Row index
+            col: Column index
+
+        Returns:
+            Cell ID if found, None otherwise
+        """
+        try:
+            # Query the database to find the cell
+            from hopilot.models import MatrixCell
+            session = self.provider.db_connection.get_session()
+            try:
+                cell = session.query(MatrixCell)\
+                    .filter_by(matrix_id=matrix_id, row_index=row, col_index=col)\
+                    .first()
+                return cell.id if cell else None
+            finally:
+                session.close()
+        except Exception as e:
+            self.logger.debug(f"Could not find cell ID for matrix {matrix_id}, row {row}, col {col}: {e}")
+            return None
 
     def _invalidate_selected_cell_if_needed(self) -> None:
         if self.state.selected_cell is None:
@@ -638,11 +669,8 @@ class AoFBrowserPanel:
 
                     if position and position in POSITIONS:
                         self.state.set_position(position)
-                        if position_actions and isinstance(position_actions, dict):
-                            self.state.position_actions = normalize_position_actions(position_actions)
-                        elif action:
-                            self.state.set_position_action(position, action)
-
+                        # position_actions is now read-only and derived from position
+                        
                         simulations_per_cell = (
                             params.get("simulations_per_cell")
                             or params.get("sims_per_combo")
@@ -659,24 +687,47 @@ class AoFBrowserPanel:
 
                         if metric in METRICS:
                             self.state.set_metric(metric)
+
+                        # Restore pot_size and bet_amount if available
+                        pot_size = params.get("pot_size")
+                        self.logger.info(f"Restoring pot_size from params: {pot_size}")
+                        if pot_size is not None:
+                            try:
+                                self.precompute_pot_size = float(pot_size)
+                                self.logger.info(f"Set precompute_pot_size to: {self.precompute_pot_size}")
+                            except (TypeError, ValueError):
+                                self.logger.warning(
+                                    "Invalid pot_size in restored context: %s",
+                                    pot_size,
+                                )
+
+                        bet_amount = params.get("bet_amount")
+                        self.logger.info(f"Restoring bet_amount from params: {bet_amount}")
+                        if bet_amount is not None:
+                            try:
+                                self.precompute_bet_amount = float(bet_amount)
+                                self.logger.info(f"Set precompute_bet_amount to: {self.precompute_bet_amount}")
+                            except (TypeError, ValueError):
+                                self.logger.warning(
+                                    "Invalid bet_amount in restored context: %s",
+                                    bet_amount,
+                                )
                         
                         self.logger.info(
-                            f"Restored context from latest simulation: position={position}, action={action}, metric={metric}, position_actions={position_actions}, simulations_per_cell={simulations_per_cell}"
+                            f"Restored context from latest simulation: position={position}, action={action}, metric={metric}, position_actions={position_actions}, simulations_per_cell={simulations_per_cell}, pot_size={pot_size}, bet_amount={bet_amount}"
                         )
         except Exception as e:
             self.logger.warning(f"Failed to restore context from database: {e}")
 
     def _build_current_context(self) -> dict:
-        bet_amount = 1.0
+        bet_amount = self.precompute_bet_amount
         if self.state_machine_controller and self.state_machine_controller.config:
             bet_amount = self.state_machine_controller.config.bet_size
         return self.provider._build_context(  # pylint: disable=protected-access
             position=self.state.selected_position,
             metric=self.state.selected_metric,
-            position_actions=self.state.position_actions,
             simulations_per_cell=self.precompute_simulations_per_cell,
             max_workers=self.precompute_max_workers,
-            bet_amount=bet_amount,
         )
 
     def _build_scenario_contract(self, context: dict[str, Any]) -> dict[str, Any]:

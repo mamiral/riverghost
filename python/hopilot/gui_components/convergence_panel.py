@@ -55,6 +55,11 @@ class ConvergencePanel:
         self.last_set_time = 0
         self.set_call_count = 0
 
+        # Database integration
+        self.convergence_repo = None
+        self.current_cell_id = None
+        self.current_simulation_id = None
+
         # Interaction state
         self.hovered_point = None
         self.selected_range = None
@@ -71,6 +76,48 @@ class ConvergencePanel:
         self.plot_y = y + 70  # Moved down to make room for stats
         self.plot_width = width - 80
         self.plot_height = height - 120  # Reduced to make room for stats
+
+    def set_convergence_repository(self, repo):
+        """Set the convergence repository for database access."""
+        self.convergence_repo = repo
+
+    def load_convergence_data(self, cell_id: int, simulation_id: int):
+        """
+        Load convergence data from database for a specific cell.
+
+        Args:
+            cell_id: Matrix cell ID to load convergence data for
+            simulation_id: Simulation ID
+        """
+        if not self.convergence_repo:
+            logger.warning("Convergence repository not set, cannot load data")
+            return
+
+        try:
+            # Load convergence history from database
+            snapshots = self.convergence_repo.get_convergence_history(cell_id, simulation_id)
+            
+            # Convert to format expected by panel
+            convergence_data = []
+            for snapshot in snapshots:
+                convergence_data.append({
+                    'sample_count': snapshot.sample_count,
+                    'equity': snapshot.equity,
+                    'ev': snapshot.ev,
+                    'timestamp': snapshot.timestamp
+                })
+
+            self.current_cell_id = cell_id
+            self.current_simulation_id = simulation_id
+            
+            # Set the data (position/action will be set by caller)
+            self.set_convergence_data(convergence_data, "", "", "EQUITY")
+            
+            logger.debug(f"Loaded {len(convergence_data)} convergence points for cell {cell_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load convergence data for cell {cell_id}: {e}")
+            self.set_convergence_data([], "", "", "EQUITY")
 
     def set_convergence_data(self, data: List[Dict[str, Any]], position: str, action: str, metric: str = ""):
         """

@@ -7,6 +7,10 @@ METRICS = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR")
 
 
 def preset_position_actions(selected_position: str) -> dict[str, str]:
+    """
+    Returns the canonical AoF scenario for a given hero position.
+    In AoF GTO browsing, for a given Hero position, there is only ONE canonical scenario.
+    """
     if selected_position not in POSITIONS:
         raise ValueError(f"Unsupported selected position: {selected_position}")
     if selected_position == "UTG":
@@ -15,47 +19,40 @@ def preset_position_actions(selected_position: str) -> dict[str, str]:
         return {"UTG": "FOLD", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
     if selected_position == "SB":
         return {"UTG": "FOLD", "BTN": "FOLD", "SB": "ALL_IN", "BB": "ALL_IN"}
-    return {"UTG": "FOLD", "BTN": "FOLD", "SB": "FOLD", "BB": "FOLD"}
+    return {"UTG": "FOLD", "BTN": "FOLD", "SB": "FOLD", "BB": "ALL_IN"}
 
 
 @dataclass
 class AoFBrowserViewState:
     selected_position: str = "UTG"
-    position_actions: dict[str, str] | None = None
     selected_metric: str = "WIN_LOSE_PROBABILITY"
     selected_cell: tuple[int, int, str] | None = None
     hover_hand: str | None = None
     status_message: str | None = None
 
-    def __post_init__(self) -> None:
-        self.position_actions = preset_position_actions(self.selected_position)
+    @property
+    def position_actions(self) -> dict[str, str]:
+        """Derived from position - canonical AoF scenario."""
+        return preset_position_actions(self.selected_position)
 
     def set_position(self, position: str) -> None:
         if position not in POSITIONS:
             raise ValueError(f"Unsupported position: {position}")
         self.selected_position = position
-        self.position_actions = preset_position_actions(position)
         # Clear selected cell when position changes to prevent stale convergence data warnings
         self.clear_selected_cell()
 
     def set_position_action(self, position: str, action: str) -> None:
-        if position not in POSITIONS:
-            raise ValueError(f"Unsupported position: {position}")
-        if action not in ACTIONS:
-            raise ValueError(f"Unsupported action: {action}")
-        if self.position_actions is None:
-            self.position_actions = preset_position_actions(self.selected_position)
-        self.position_actions[position] = action
-        self.clear_selected_cell()
+        """
+        No-op in simplified contract. Actions are derived from HERO position.
+        Kept for backward compatibility with GUI components if needed, but ignores input.
+        """
+        pass
 
     def get_position_action(self, position: str) -> str:
-        if self.position_actions is None:
-            self.position_actions = {p: "FOLD" for p in POSITIONS}
         return self.position_actions.get(position, "FOLD")
 
     def active_players(self) -> int:
-        if self.position_actions is None:
-            return 0
         return sum(1 for action in self.position_actions.values() if action == "ALL_IN")
 
     def set_metric(self, metric: str) -> None:
@@ -100,29 +97,26 @@ def validate_metric(metric: str) -> str:
 def build_browser_context(
     selected_position: str,
     metric: str,
-    position_actions: dict[str, str] | None,
-    pot_size: float,
-    bet_amount: float,
     num_simulations: int,
     timeout_ms: int,
-    strict_current_action: bool,
+    strict_current_action: bool = False,
 ) -> dict[str, Any]:
+    """
+    Builds a simplified browser context based on Hero position.
+    Redundant parameters (pot_size, bet_amount, position_actions) are removed
+    as they are derived from Hero position or global config.
+    """
     if selected_position not in POSITIONS:
         raise ValueError(f"Unsupported selected position: {selected_position}")
     validate_metric(metric)
-    if pot_size <= 0:
-        raise ValueError("pot_size must be positive")
-    if bet_amount <= 0:
-        raise ValueError("bet_amount must be positive")
     if num_simulations <= 0:
         raise ValueError("num_simulations must be positive")
     if timeout_ms <= 0:
         raise ValueError("timeout_ms must be positive")
 
-    actions = position_actions if position_actions is not None else preset_position_actions(selected_position)
+    actions = preset_position_actions(selected_position)
     active_players = sum(1 for action in actions.values() if action == "ALL_IN")
     selected_action = actions[selected_position]
-    effective_mode = "strict-current-action" if strict_current_action else "analysis"
 
     return {
         "position": selected_position,
@@ -130,9 +124,7 @@ def build_browser_context(
         "metric": metric,
         "position_actions": actions,
         "active_players": active_players,
-        "pot_size": float(pot_size),
-        "bet_amount": float(bet_amount),
         "num_simulations": int(num_simulations),
         "timeout_ms": int(timeout_ms),
-        "effective_mode": effective_mode,
+        "run_kind": "matrix_sweep"
     }

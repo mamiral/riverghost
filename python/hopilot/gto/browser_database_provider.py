@@ -13,7 +13,13 @@ from collections.abc import Coroutine
 from typing import Any, Dict, List, Optional
 from hopilot.gto.repository_errors import DatabaseConnectionError
 from hopilot.gto.data_model import PositionContext, ActionContext, MetricType
-from hopilot.gto.aof_browser_state import POSITIONS, normalize_position_actions, METRICS, build_browser_context
+from hopilot.gto.aof_browser_state import (
+    POSITIONS,
+    normalize_position_actions,
+    METRICS,
+    build_browser_context,
+    preset_position_actions,
+)
 from hopilot.gto.aof_hand_matrix import build_matrix_keys, format_metric_value
 from hopilot.gto.matrix_sweep_contract import validate_scenario_contract
 from hopilot.gto.simulation_repository import SimulationRepository
@@ -24,6 +30,9 @@ from hopilot.logging_config import get_logger
 STATUS_AVAILABLE = "AVAILABLE"
 STATUS_MISSING = "MISSING"
 STATUS_NO_CONTEST = "NO_CONTEST"
+
+
+logger = get_logger(__name__)
 
 
 class _AwaitableDict(dict, Coroutine):
@@ -194,61 +203,24 @@ class BrowserDatabaseProvider:
     ) -> Dict[str, Any]:
         """
         Get matrix payload from database.
-
-        Phase 4: Read-only database access for GUI.
+        Simplified contract: Ignores redundant position_actions/pot_size.
         """
         try:
             context = self._build_context(
                 position=position,
                 metric=metric,
-                position_actions=position_actions,
-                pot_size=pot_size,
-                bet_amount=bet_amount,
                 simulations_per_cell=simulations_per_cell,
-                strict_current_action=strict_current_action,
             )
         except ValueError as e:
             self.logger.warning(f"Invalid context: {e}")
             return {
                 "context": {
                     "position": position,
-                    "action": normalize_position_actions(position_actions or {}).get(position, "UNKNOWN"),
                     "metric": metric,
-                    "position_actions": normalize_position_actions(position_actions or {}),
-                    "active_players": sum(1 for action in normalize_position_actions(position_actions or {}).values() if action != "FOLD"),
-                    "pot_size": float(pot_size),
-                    "bet_amount": float(bet_amount),
                 },
                 "cells": [],
                 "status": STATUS_MISSING,
                 "status_message": f"Invalid context: {e}",
-            }
-
-        if self._is_no_contest_scenario(position, position_actions or {}, strict_current_action):
-            self.logger.debug(f"NO_CONTEST scenario detected for position {position}")
-            cells = []
-            for row in range(13):
-                for col in range(13):
-                    hand_key = self._matrix_keys[row][col]
-                    if metric == "WIN_LOSE_PROBABILITY":
-                        value = 1.0
-                    elif metric == "EV":
-                        value = pot_size
-                    else:
-                        value = 1.0
-                    cells.append({
-                        "row": row,
-                        "col": col,
-                        "hand_key": hand_key,
-                        "value": value,
-                        "status": STATUS_NO_CONTEST,
-                        "display": format_metric_value(metric, value),
-                    })
-            return {
-                "context": context,
-                "cells": cells,
-                "status": STATUS_NO_CONTEST,
-                "status_message": "No contest - all other players folded",
             }
 
         try:
@@ -269,6 +241,7 @@ class BrowserDatabaseProvider:
                 "status": STATUS_AVAILABLE,
                 "status_message": "Matrix loaded from database",
             }
+
         except Exception as e:
             self.logger.error(f"Database query failed: {e}", exc_info=True)
             payload = self._build_missing_payload(context)
@@ -302,6 +275,12 @@ class BrowserDatabaseProvider:
 
     def _build_missing_payload(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Return the explicit missing scenario payload according to the spec."""
+        logger.warning(
+            "No aggregated run available for scenario: position=%s, actions=%s, metric=%s",
+            context.get("position"),
+            context.get("position_actions"),
+            context.get("metric")
+        )
         cells = []
         for row in range(13):
             for col in range(13):
@@ -406,35 +385,37 @@ class BrowserDatabaseProvider:
         self,
         position: str,
         metric: str,
-        position_actions: Dict[str, str] | None = None,
-        pot_size: float | None = None,
-        bet_amount: float = 1.0,
         simulations_per_cell: int | None = None,
         max_workers: int | None = None,
-        strict_current_action: bool = False,
     ) -> Dict[str, Any]:
-        """Build browser context from parameters."""
+        """
+        Build browser context from hero position.
+        Position-actions and pot-size are derived canonically.
+        """
         if position not in POSITIONS:
             raise ValueError(f"Invalid position: {position}")
         if metric not in METRICS:
             raise ValueError(f"Invalid metric: {metric}")
 
-        actions = normalize_position_actions(position_actions or {})
-        active_players = sum(1 for action in actions.values() if action != "FOLD")
-
-        if pot_size is None:
-            pot_size = bet_amount * active_players
+        # Derive canonical AoF scenario from position
+        actions = preset_position_actions(position)
+        active_players = sum(1 for action in actions.values() if action == "ALL_IN")
+        
+        # Consistent bet/pot for AoF Browsing
+        bet_amount = 1.0 
+        pot_size = float(bet_amount * active_players)
 
         context = {
             "position": position,
-            "action": actions.get(position, "UNKNOWN"),
+            "action": actions.get(position, "ALL_IN"),
             "metric": metric,
             "position_actions": actions,
             "active_players": active_players,
-            "pot_size": float(pot_size),
-            "bet_amount": float(bet_amount),
-            "effective_mode": "strict-current-action" if strict_current_action else "analysis",
-            "timeout_ms": 30000,  # Phase 4: Default timeout for solver
+            "pot_size": pot_size,
+            "bet_amount": bet_amount,
+            "effective_mode": "analysis",
+            "timeout_ms": 30000,
+            "run_kind": "matrix_sweep"
         }
         if simulations_per_cell is not None:
             context["simulations_per_cell"] = int(simulations_per_cell)

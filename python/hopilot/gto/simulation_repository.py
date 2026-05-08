@@ -257,13 +257,20 @@ class SimulationRepository(SimulationRepositoryInterface):
         for key, query_value in query_normalized.items():
             saved_value = saved_normalized.get(key)
             if not self._compare_contract_values(saved_value, query_value, key):
+                logger.warning(f"Contract mismatch on {key}: saved={saved_value}, query={query_value}")
                 return False
+        logger.info(f"Contract match found for: {query_contract}")
         return True
 
     def list_matrix_sweep_runs_by_contract(self, scenario_contract: Dict[str, Any]) -> List[Simulation]:
         with self._session_scope() as session:
             runs = session.query(Simulation).all()
-            return [run for run in runs if self._matches_scenario_contract(run.parameters, scenario_contract)]
+            matching_runs = []
+            for run in runs:
+                if self._matches_scenario_contract(run.parameters, scenario_contract):
+                    matching_runs.append(run)
+            logger.info(f"Found {len(matching_runs)} matching runs for contract {scenario_contract}")
+            return matching_runs
 
     def get_run_game_states(self, raw_game_state_id_start: int, raw_game_state_id_end: int) -> List[GameState]:
         with self._session_scope() as session:

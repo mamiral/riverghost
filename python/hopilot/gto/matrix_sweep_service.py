@@ -318,9 +318,24 @@ class MatrixSweepService:
         if raw_result.get("status") != "raw_sweep_complete":
             return raw_result
 
+        # Trigger aggregation using the existing proven batch method first to ensure metrics are saved
+        # This uses the original non-incremental logic that uses cell_stats dictionary
         aggregation_result = MatrixSweepAggregationService(self.repository).aggregate_run(
             raw_result["simulation_id"]
         )
+        
+        # Load convergence configuration from contract or defaults
+        enable_tracking = scenario_contract.get("enable_convergence_tracking", True)
+        if enable_tracking:
+            emit_interval = scenario_contract.get("convergence_emit_interval", 100)
+            logger.info("Triggering background convergence snapshot generation")
+            # We call incremental mode second - it handles its own metric merging safely
+            MatrixSweepAggregationService(self.repository).aggregate_run_incremental(
+                raw_result["simulation_id"],
+                enable_convergence_tracking=True,
+                emit_interval=emit_interval
+            )
+
         result = {
             "simulation_id": raw_result["simulation_id"],
             "matrix_id": aggregation_result["matrix_id"],

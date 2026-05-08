@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from hopilot.gto.aof_hand_matrix import hand_coordinates_from_hole_cards, hand_key_from_index, iter_canonical_matrix_cells
+from hopilot.gto.incremental_aggregation_service import IncrementalAggregationService
 from hopilot.gto.matrix_sweep_contract import mark_aggregation_complete, normalize_scenario_contract, RUN_STATUS_AGGREGATED
 from hopilot.logging_config import get_logger
 from hopilot.models import AggregatedMetric, MatrixCell
@@ -18,6 +19,200 @@ class MatrixSweepAggregationService:
 
     def __init__(self, repository):
         self.repository = repository
+
+    def aggregate_run_incremental(self, simulation_id, enable_convergence_tracking=False, emit_interval=100):
+        """
+        Perform incremental aggregation with optional convergence tracking.
+
+        Args:
+            simulation_id: Simulation ID to aggregate
+            enable_convergence_tracking: Whether to emit convergence events
+            emit_interval: Sample count interval for convergence emissions
+
+        Returns:
+            Aggregation summary dictionary
+        """
+        simulation = self.repository.get_simulation_record(simulation_id)
+        if simulation is None:
+            raise ValueError(f"Simulation {simulation_id} does not exist")
+
+        parameters = normalize_scenario_contract(simulation.parameters)
+        raw_start = parameters.get("raw_game_state_id_start")
+        raw_end = parameters.get("raw_game_state_id_end")
+        if raw_start is None or raw_end is None:
+            raise ValueError(f"Simulation {simulation_id} has no completed raw run boundary")
+
+        # Get betting parameters
+        pot_size = parameters.get("pot_size", 0.0)
+        bet_amount = parameters.get("bet_amount", 0.0)
+
+        # Create matrix and cells first
+        matrix_id = self.repository.get_or_create_hand_matrix_for_simulation(simulation_id)
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        session = self.repository.get_session()
+        cell_id_map = {}
+
+        try:
+            # Check for existing cells to avoid duplicates
+            existing_cells = session.query(MatrixCell).filter_by(matrix_id=matrix_id).all()
+            if existing_cells:
+                logger.info(f"Using {len(existing_cells)} existing matrix cells for simulation {simulation_id}")
+                cell_id_map = {cell.hand_combination: cell.id for cell in existing_cells}
+            else:
+                # Create all matrix cells if they don't exist
+                for row_index, col_index, hand_key in iter_canonical_matrix_cells():
+                    cell = MatrixCell(
+                        matrix_id=matrix_id,
+                        row_index=row_index,
+                        col_index=col_index,
+                        hand_combination=hand_key,
+                    )
+                    session.add(cell)
+                    session.flush()
+                    cell_id_map[hand_key] = cell.id
+                session.commit()
+        finally:
+            session.close()
+
+        # Set up incremental aggregation if convergence tracking is enabled
+        incremental_service = None
+        if enable_convergence_tracking:
+            from hopilot.database import DatabaseConnection
+            from hopilot.poker_analyzer import PokerAnalyzer
+            from hopilot.gto.convergence_events import ConvergenceEventEmitter
+
+            db_connection = self.repository.db_connection
+            poker_analyzer = PokerAnalyzer()
+            event_emitter = ConvergenceEventEmitter()
+
+            # Attach database observer for convergence tracking
+            from hopilot.gto.database_convergence_observer import DatabaseConvergenceObserver
+            db_observer = DatabaseConvergenceObserver(db_connection)
+            event_emitter.attach(db_observer)
+
+            incremental_service = IncrementalAggregationService(
+                db_connection=db_connection,
+                poker_analyzer=poker_analyzer,
+                event_emitter=event_emitter,
+                emit_interval=emit_interval
+            )
+
+        # Process each cell
+        total_cells = 0
+        total_metrics = 0
+
+        for row_index, col_index, hand_key in iter_canonical_matrix_cells():
+            cell_id = cell_id_map[hand_key]
+
+            if incremental_service:
+                # Use incremental aggregation with convergence tracking
+                final_metrics = incremental_service.aggregate_cell_incremental(
+                    cell_id=cell_id,
+                    hand_key=hand_key,
+                    simulation_id=simulation_id,
+                    pot_size=pot_size,
+                    bet_amount=bet_amount,
+                    raw_start=raw_start,
+                    raw_end=raw_end
+                )
+            else:
+                # Use traditional batch aggregation
+                final_metrics = self._aggregate_cell_batch(
+                    cell_id, simulation_id, raw_start, raw_end, pot_size, bet_amount
+                )
+
+            # Store final aggregated metric (using merge to handle existing metrics)
+            session = self.repository.get_session()
+            try:
+                # Check for existing metric
+                existing_metric = session.query(AggregatedMetric).filter_by(cell_id=cell_id).first()
+                if existing_metric:
+                    existing_metric.equity = final_metrics.get('equity')
+                    existing_metric.win_probability = final_metrics.get('win_probability')
+                    existing_metric.ev = final_metrics.get('ev')
+                    existing_metric.sample_count = final_metrics.get('sample_count', 0)
+                    sample_count = final_metrics.get('sample_count', 0)
+                    if sample_count >= 100:
+                        existing_metric.convergence_status = "CONVERGED"
+                    elif sample_count > 0:
+                        existing_metric.convergence_status = "CONVERGING"
+                    else:
+                        existing_metric.convergence_status = "NO_DATA"
+                    existing_metric.last_updated = timestamp
+                else:
+                    sample_count = final_metrics.get('sample_count', 0)
+                    if sample_count >= 100:
+                        convergence_status = "CONVERGED"
+                    elif sample_count > 0:
+                        convergence_status = "CONVERGING"
+                    else:
+                        convergence_status = "NO_DATA"
+                    new_metric = AggregatedMetric(
+                        cell_id=cell_id,
+                        equity=final_metrics.get('equity'),
+                        win_probability=final_metrics.get('win_probability'),
+                        ev=final_metrics.get('ev'),
+                        sample_count=sample_count,
+                        convergence_status=convergence_status,
+                        last_updated=timestamp,
+                    )
+                    session.add(new_metric)
+                session.commit()
+                total_metrics += 1
+            except Exception as e:
+                logger.error(f"Failed to save metric for cell {cell_id}: {e}")
+                session.rollback()
+            finally:
+                session.close()
+
+            total_cells += 1
+
+        updated_parameters = mark_aggregation_complete(
+            parameters,
+            matrix_id=matrix_id,
+            mapping_failures=0,  # Not tracking this in incremental mode
+        )
+        self.repository.update_matrix_sweep_simulation(simulation_id, parameters=updated_parameters)
+
+        return {
+            "simulation_id": simulation_id,
+            "matrix_id": matrix_id,
+            "matrix_cells_written": total_cells,
+            "aggregated_metrics_written": total_metrics,
+            "convergence_tracking_enabled": enable_convergence_tracking,
+            "status": RUN_STATUS_AGGREGATED,
+        }
+
+    def _aggregate_cell_batch(self, cell_id, simulation_id, raw_start, raw_end, pot_size, bet_amount):
+        """Aggregate a single cell using traditional batch processing."""
+        # Get game states for this cell
+        game_states = list(self.repository.get_run_game_states(raw_start, raw_end))
+        cell_game_states = [gs for gs in game_states if gs.cell_id == cell_id]
+
+        if not cell_game_states:
+            return {'equity': None, 'win_probability': None, 'ev': None, 'sample_count': 0}
+
+        wins = 0
+        ties = 0
+        total = len(cell_game_states)
+
+        for game_state in cell_game_states:
+            if game_state.outcome == "WIN":
+                wins += 1
+            elif game_state.outcome == "TIE":
+                ties += 1
+
+        equity = (wins + 0.5 * ties) / total
+        win_probability = wins / total
+        ev = (wins * pot_size + ties * (pot_size / 2.0)) / total if pot_size > 0 else None
+
+        return {
+            'equity': equity,
+            'win_probability': win_probability,
+            'ev': ev,
+            'sample_count': total
+        }
 
     def aggregate_run(self, simulation_id):
         simulation = self.repository.get_simulation_record(simulation_id)

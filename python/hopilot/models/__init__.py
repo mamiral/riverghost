@@ -8,6 +8,7 @@ database schema used in poker analysis simulations.
 from .aggregated_metric import AggregatedMetric
 from .base import Base, BaseModel
 from .bet import Bet
+from .convergence_snapshot import ConvergenceSnapshot
 from .game_state import GameState
 from .hand_matrix import HandMatrix
 from .jackpot import Jackpot
@@ -28,6 +29,7 @@ __all__ = [
     "Bet",
     "Jackpot",
     "AggregatedMetric",
+    "ConvergenceSnapshot",
     "PrecomputeJobSession",
     "ScenarioRunLink",
 ]

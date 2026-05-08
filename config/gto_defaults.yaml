@@ -18,7 +18,10 @@ aof_browser_runtime:
   timeout_ms: 900
   seed: 42
   precompute_max_workers: 3
+  bet_size: 1.0
   convergence_target_points: 8
+  convergence_tracking_enabled: true
+  convergence_emit_interval: 300
 
 database:
   url: "sqlite:///python/hopilot/data/normalized_poker.sqlite3"
