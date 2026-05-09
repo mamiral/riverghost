@@ -107,7 +107,7 @@ def test_matrix_display_metric_combinations(database_provider):
     """T024: Test matrix display with database data for all metric combinations."""
     position = "UTG"
     actions = {"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "ALL_IN", "BB": "ALL_IN"}
-    metrics = ["WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR"]
+    metrics = ["WIN_LOSE_PROBABILITY", "EV", "EQUITY"]
 
     for metric in metrics:
         # Get matrix payload for this metric

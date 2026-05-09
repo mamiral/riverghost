@@ -108,10 +108,10 @@ class IncrementalAggregationService:
 
             # Emit convergence event if interval reached
             if total_samples % self.emit_interval == 0:
-                self._emit_convergence_update(cell_id, simulation_id, total_samples, running_stats, pot_size)
+                self._emit_convergence_update(cell_id, simulation_id, total_samples, running_stats, pot_size, bet_amount)
 
         # Calculate final metrics
-        final_metrics = self._calculate_final_metrics(running_stats, pot_size)
+        final_metrics = self._calculate_final_metrics(running_stats, pot_size, bet_amount)
         final_metrics['sample_count'] = total_samples
 
         logger.info(f"Completed incremental aggregation for cell {cell_id}: {total_samples} samples")
@@ -177,9 +177,10 @@ class IncrementalAggregationService:
         ties = 0
 
         for game_state in game_states:
-            if game_state.outcome == "WIN":
+            outcome = (game_state.outcome or "").strip().upper()
+            if outcome == "WIN":
                 wins += 1
-            elif game_state.outcome == "TIE":
+            elif outcome == "TIE":
                 ties += 1
 
         return {
@@ -209,13 +210,14 @@ class IncrementalAggregationService:
             'total': current_stats['total'] + batch_stats['total']
         }
 
-    def _calculate_final_metrics(self, stats: Dict[str, float], pot_size: float) -> Dict[str, float]:
+    def _calculate_final_metrics(self, stats: Dict[str, float], pot_size: float, bet_amount: float) -> Dict[str, float]:
         """
         Calculate final aggregated metrics from running statistics.
 
         Args:
             stats: Running statistics
             pot_size: Pot size for EV calculation
+            bet_amount: Amount the hero must call or risk
 
         Returns:
             Final metrics dictionary
@@ -224,13 +226,18 @@ class IncrementalAggregationService:
         if total == 0:
             return {'equity': 0.0, 'ev': 0.0, 'win_probability': 0.0}
 
-        equity = (stats['wins'] + 0.5 * stats['ties']) / total
-        ev = equity * pot_size
+        wins = stats['wins']
+        ties = stats['ties']
+        equity = (wins + 0.5 * ties) / total
+        win_probability = wins / total
+        loss_probability = 1.0 - win_probability - (ties / total)
+
+        ev = win_probability * (pot_size + bet_amount) - loss_probability * bet_amount
 
         return {
             'equity': equity,
             'ev': ev,
-            'win_probability': equity  # Same as equity for now
+            'win_probability': win_probability
         }
 
     def _emit_convergence_update(
@@ -239,7 +246,8 @@ class IncrementalAggregationService:
         simulation_id: int,
         sample_count: int,
         stats: Dict[str, float],
-        pot_size: float
+        pot_size: float,
+        bet_amount: float
     ) -> None:
         """
         Emit a convergence update event.
@@ -250,17 +258,12 @@ class IncrementalAggregationService:
             sample_count: Current sample count
             stats: Current running statistics
             pot_size: Pot size for EV calculation
+            bet_amount: Amount the hero must call or risk
         """
-        # Calculate current metrics
-        total = stats['total']
-        if total > 0:
-            equity = (stats['wins'] + 0.5 * stats['ties']) / total
-            ev = equity * pot_size
-            win_probability = equity
-        else:
-            equity = 0.0
-            ev = 0.0
-            win_probability = 0.0
+        metrics = self._calculate_final_metrics(stats, pot_size, bet_amount)
+        equity = metrics['equity']
+        ev = metrics['ev']
+        win_probability = metrics['win_probability']
 
         # Create convergence data
         data = ConvergenceData(

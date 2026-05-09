@@ -33,18 +33,16 @@ def test_probability_metric_range_and_display():
             assert payload["cells"][0]["display"] == "--"
 
 
-def test_equity_and_ev_and_eqr_metric_semantics():
+def test_equity_and_ev_metric_semantics():
     provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
     provider._solver = _FakeSolver()
 
     ev_payload = provider.get_matrix_payload("UTG", "EV", _ctx())
     eq_payload = provider.get_matrix_payload("UTG", "EQUITY", _ctx())
-    eqr_payload = provider.get_matrix_payload("UTG", "EQR", _ctx())
 
     # Phase 4: In-memory database is empty, verify payload structure
     assert "cells" in ev_payload
     assert "cells" in eq_payload
-    assert "cells" in eqr_payload
     if ev_payload["cells"]:
         if ev_payload["cells"][0]["value"] is not None:
             assert isinstance(ev_payload["cells"][0]["value"], float)
@@ -52,5 +50,3 @@ def test_equity_and_ev_and_eqr_metric_semantics():
             assert ev_payload["cells"][0]["display"] == "--"
         if eq_payload["cells"][0]["value"] is not None:
             assert 0.0 <= eq_payload["cells"][0]["value"] <= 1.0
-        if eqr_payload["cells"][0]["value"] is not None:
-            assert 0.0 <= eqr_payload["cells"][0]["value"] <= 1.0

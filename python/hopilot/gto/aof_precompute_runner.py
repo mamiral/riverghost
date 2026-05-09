@@ -27,7 +27,7 @@ STATUS_TIMEOUT = "TIMEOUT"
 @dataclass
 class PrecomputeProfile:
     positions: tuple[str, ...] = ("UTG", "BTN", "SB", "BB")
-    metrics: tuple[str, ...] = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR")
+    metrics: tuple[str, ...] = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY")
     strict_modes: tuple[bool, ...] = (False, True)
     simulations_per_cell: int = 1000
 
@@ -596,7 +596,6 @@ class AoFPrecomputeRunner:
                     "LOSS_PROBABILITY": round(loss_prob, 4),
                     "EQUITY": round(equity, 4),
                     "EV": round(ev, 4),
-                    "EQR": round(max(0.0, min(1.0, equity / max(1e-6, self.provider._baseline_equity(hand_key)))), 4),
                 }
                 value = metrics.get(metric)
                 status = "AVAILABLE"
@@ -610,7 +609,6 @@ class AoFPrecomputeRunner:
                     "LOSS_PROBABILITY": None,
                     "EQUITY": None,
                     "EV": None,
-                    "EQR": None,
                 }
                 value = None
                 status = "TIMEOUT"
@@ -623,7 +621,6 @@ class AoFPrecomputeRunner:
                     "LOSS_PROBABILITY": None,
                     "EQUITY": None,
                     "EV": None,
-                    "EQR": None,
                 }
                 value = None
                 status = "MISSING"
@@ -637,7 +634,6 @@ class AoFPrecomputeRunner:
                 "LOSS_PROBABILITY": None,
                 "EQUITY": None,
                 "EV": None,
-                "EQR": None,
             }
             value, status, status_message = None, "ERROR", str(exc)
             individual_outcomes = []

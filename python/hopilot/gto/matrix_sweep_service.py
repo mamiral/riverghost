@@ -19,6 +19,11 @@ from hopilot.logging_config import get_logger
 from hopilot.models import HandMatrix, Simulation
 from hopilot.database.persistence import QueuePersistenceStrategy
 
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover
+    tqdm = None
+
 
 logger = get_logger(__name__)
 
@@ -169,22 +174,37 @@ class MatrixSweepService:
         writer_thread.start()
 
         def _queue_monitor() -> None:
-            max_size = write_queue.maxsize if write_queue.maxsize > 0 else 1
+            max_size = write_queue.maxsize if write_queue.maxsize > 0 else None
+            progress_bar = None
+            if tqdm is not None:
+                progress_bar = tqdm(
+                    total=max_size,
+                    desc="Write queue",
+                    unit="items",
+                    dynamic_ncols=True,
+                )
             warning_active = False
             while not monitor_stop_event.is_set():
                 qsize = write_queue.qsize()
-                fill_pct = qsize / max_size * 100.0
-                if fill_pct > 75.0 and not warning_active:
-                    logger.warning(
-                        "Writer queue fill level is %.1f%% (%d/%d)",
-                        fill_pct,
-                        qsize,
-                        max_size,
-                    )
-                    warning_active = True
-                elif fill_pct <= 75.0 and warning_active:
-                    warning_active = False
+                if progress_bar is not None:
+                    progress_bar.n = qsize
+                    progress_bar.refresh()
+                else:
+                    effective_max = max_size if max_size is not None else max(qsize, 1)
+                    fill_pct = qsize / effective_max * 100.0
+                    if fill_pct > 75.0 and not warning_active:
+                        logger.warning(
+                            "Writer queue fill level is %.1f%% (%d/%s)",
+                            fill_pct,
+                            qsize,
+                            effective_max,
+                        )
+                        warning_active = True
+                    elif fill_pct <= 75.0 and warning_active:
+                        warning_active = False
                 time.sleep(0.05)
+            if progress_bar is not None:
+                progress_bar.close()
 
         monitor_thread = threading.Thread(target=_queue_monitor, daemon=True)
         monitor_thread.start()

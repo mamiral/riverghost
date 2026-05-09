@@ -3,7 +3,7 @@ from typing import Any
 
 POSITIONS = ("UTG", "BTN", "SB", "BB")
 ACTIONS = ("FOLD", "ALL_IN")
-METRICS = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR")
+METRICS = ("WIN_LOSE_PROBABILITY", "EV", "EQUITY")
 
 
 def preset_position_actions(selected_position: str) -> dict[str, str]:

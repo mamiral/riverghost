@@ -2,7 +2,7 @@ import pygame
 
 
 class AoFMetricDropdown:
-    OPTIONS = ["WIN_LOSE_PROBABILITY", "EV", "EQUITY", "EQR"]
+    OPTIONS = ["WIN_LOSE_PROBABILITY", "EV", "EQUITY"]
 
     def __init__(self, x: int, y: int, width: int = 220, height: int = 32):
         self.rect = pygame.Rect(x, y, width, height)
