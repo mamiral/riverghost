@@ -154,12 +154,20 @@ class AoFCellDetailPanel:
         bar_rect = pygame.Rect(chart_rect.x + 12, chart_rect.y + 8, 34, chart_rect.height - 16)
         fill_h = int(bar_rect.height * weight)
         fill_rect = pygame.Rect(bar_rect.x, bar_rect.bottom - fill_h, bar_rect.width, fill_h)
-        pygame.draw.rect(surface, (80, 150, 205), fill_rect)
+
+        color_role = str(segment.get("color_role", "neutral"))
+        color_map = {
+            "negative": (192, 60, 65),
+            "neutral": (150, 150, 150),
+            "positive": (80, 175, 90),
+        }
+        fill_color = color_map.get(color_role, (80, 150, 205))
+        pygame.draw.rect(surface, fill_color, fill_rect)
         pygame.draw.rect(surface, (120, 120, 120), bar_rect, 1)
 
         display = str(segment.get("display", "-"))
         label = str(segment.get("label", "Value"))
-        text = font.render(f"{label}: {display}", True, (220, 220, 220))
+        text = font.render(f"{label}: {display}", True, (100, 100, 100))
         surface.blit(text, (bar_rect.right + 12, chart_rect.y + 10))
 
     def _draw_confidence_indicator(

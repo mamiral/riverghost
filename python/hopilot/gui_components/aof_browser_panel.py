@@ -633,17 +633,42 @@ class AoFBrowserPanel:
             else:
                 scalar_weight = max(0.05, min(1.0, abs(scalar_value) / 3.0))
                 scalar_display = f"{scalar_value:+.2f}"
+
+            color_role = "neutral"
+            if metric == "EV":
+                color_role = self._ev_color_role(scalar_value)
+
             model["segments"] = [
                 {
                     "label": metric,
                     "value": scalar_value,
                     "display": scalar_display,
                     "weight": scalar_weight,
-                    "color_role": "neutral",
+                    "color_role": color_role,
                 }
             ]
 
         return model
+
+    def _ev_color_role(self, ev_value: float) -> str:
+        """Choose an EV color role using scenario-aware thresholds.
+
+        EV is expressed in absolute dollars, so the thresholds scale with the
+        current pot and bet amounts rather than using a fixed +/-0.1 cutoff.
+        """
+        context = self.payload.get("context") or {}
+        pot_size = float(context.get("pot_size", self.precompute_pot_size or 1.0))
+        bet_amount = float(context.get("bet_amount", self.precompute_bet_amount or 1.0))
+        total_risk = max(1.0, pot_size + bet_amount)
+
+        positive_threshold = total_risk * 0.20
+        negative_threshold = -total_risk * 0.10
+
+        if ev_value >= positive_threshold:
+            return "positive"
+        if ev_value <= negative_threshold:
+            return "negative"
+        return "neutral"
 
     def _restore_precompute_checkpoint_if_available(self) -> None:
         """Phase 4: Restore context from latest database simulation."""
@@ -1274,7 +1299,13 @@ class AoFBrowserPanel:
         )
         self.metric_dropdown.draw(screen, self.font, self.state.selected_metric)
 
-        self.matrix.draw(screen, self.small_font, self.payload["cells"], self.state.selected_metric)
+        self.matrix.draw(
+            screen,
+            self.small_font,
+            self.payload["cells"],
+            self.state.selected_metric,
+            self.payload.get("context", {}),
+        )
 
         available_cells = sum(1 for cell in self.payload.get("cells", []) if cell.get("status") == PanelState.AVAILABLE.value)
         if 0 < available_cells < 169:

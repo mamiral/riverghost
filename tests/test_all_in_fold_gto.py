@@ -172,7 +172,30 @@ class TestAllInFoldGTOSolver:
         # Bonus EV: 0.6 * (20 * 5) = 60
         # Total EV: 8 + 60 = 68
         assert ev == 68.0
+    def test_find_gto_threshold_progress_callback(self, solver, mock_analyzer):
+        """Test progress callback is invoked during threshold calculation."""
+        mock_analyzer.calculate_odds_random_opponents.return_value = {
+            'win_probability': 0.5
+        }
 
+        progress_events = []
+
+        def progress_callback(progress, message):
+            progress_events.append((progress, message))
+
+        result = solver.find_gto_threshold(
+            num_opponents=8,
+            pot_size=20,
+            bet_amount=10,
+            num_simulations=100,
+            progress_callback=progress_callback
+        )
+
+        assert isinstance(result, dict)
+        assert progress_events, "Expected progress callback to be called"
+        assert progress_events[0][0] > 0.0
+        assert progress_events[-1][0] == 1.0
+        assert "Evaluating hand" in progress_events[-1][1]
     def test_calculate_ev_without_bonus(self, solver):
         """Test EV calculation for hands without bonus."""
         # Mock the analyzer for hand evaluation

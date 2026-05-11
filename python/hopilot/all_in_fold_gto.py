@@ -13,6 +13,11 @@ from hopilot.poker_analyzer import PokerAnalyzer
 from hopilot.database.persistence import GameStatePersistence
 from hopilot.hand_range import HandRange
 
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover
+    tqdm = None
+
 
 class AllInFoldGTOSolver:
     """
@@ -118,7 +123,7 @@ class AllInFoldGTOSolver:
             Expected value of the hand
         """
         # Standard poker EV
-        call_ev = equity * pot_size - (1 - equity) * bet_amount
+        call_ev = equity * pot_size - bet_amount
 
         # Add bonus payout EV
         hand_category = self._get_hand_category(hole_cards, board_cards)
@@ -189,30 +194,42 @@ class AllInFoldGTOSolver:
         sample_size = min(500, len(all_hands))  # Sample 500 hands for testing
         sampled_hands = random.sample(all_hands, sample_size)
         
-        self.logger.info(f"Evaluating {len(sampled_hands)} sampled starting hands...")
+        self.logger.debug(f"Evaluating {len(sampled_hands)} sampled starting hands...")
+
+        progress_bar = None
+        if progress_callback is None and tqdm is not None:
+            progress_bar = tqdm(
+                total=len(sampled_hands),
+                desc="GTO hand evaluation",
+                unit="hand",
+                dynamic_ncols=True,
+            )
 
         # Sort hands by equity (we'll calculate this)
         hand_equities = []
 
-        for i, hand in enumerate(sampled_hands):
-            if cancel_check and cancel_check():
-                self.logger.info("GTO calculation cancelled")
-                return {'cancelled': True}
+        try:
+            for i, hand in enumerate(sampled_hands):
+                if cancel_check and cancel_check():
+                    self.logger.info("GTO calculation cancelled")
+                    return {'cancelled': True}
 
-            if progress_callback:
-                progress = (i + 1) / len(sampled_hands)
-                progress_callback(progress, f"Evaluating hand {i+1}/{len(sampled_hands)}")
+                if progress_callback:
+                    progress = (i + 1) / len(sampled_hands)
+                    progress_callback(progress, f"Evaluating hand {i+1}/{len(sampled_hands)}")
+                elif progress_bar is not None:
+                    progress_bar.update(1)
 
-            if i % 50 == 0:  # Log less frequently
-                self.logger.debug(f"Evaluated {i}/{len(sampled_hands)} hands")
+                if i % 50 == 0:  # Log less frequently
+                    self.logger.debug(f"Evaluated {i}/{len(sampled_hands)} hands")
 
-            # Calculate equity vs random opponents
-            equity_result = self.analyzer.calculate_odds_random_opponents(
-                hero_hole_cards=hand,
-                board_cards=[],  # Preflop
-                num_opponents=num_opponents,
-                num_simulations=num_simulations
-            )
+                # Calculate equity vs random opponents
+                equity_result = self.analyzer.calculate_odds_random_opponents(
+                    hero_hole_cards=hand,
+                    board_cards=[],  # Preflop
+                    num_opponents=num_opponents,
+                    num_simulations=num_simulations
+                )
 
             if equity_result:
                 equity = equity_result['win_probability']
@@ -223,6 +240,9 @@ class AllInFoldGTOSolver:
                     'equity': equity,
                     'ev': ev
                 })
+        finally:
+            if progress_bar is not None:
+                progress_bar.close()
 
         # Sort by EV (descending)
         hand_equities.sort(key=lambda x: x['ev'], reverse=True)
@@ -304,12 +324,15 @@ class AllInFoldGTOSolver:
         
         for sim_num in range(num_simulations):
             total_simulations += 1
+            # Determine actual pot from all-in hero bet and opponent calls
+            actual_pot_size = bet_amount * (1 + num_opponents) if bet_amount > 0 else 0.0
+
             # Create game state for this simulation
             timestamp = datetime.now().isoformat()
             game_state_id = self.persistence.store_game_state(
                 timestamp=timestamp,
                 round_name='preflop',
-                pot_size=pot_size,
+                pot_size=actual_pot_size,
                 board_cards=[],  # No board cards in preflop all-in
                 outcome='pending'  # Will update after determining winner
             )
@@ -328,12 +351,13 @@ class AllInFoldGTOSolver:
             )
             
             # Store hero's all-in bet
-            self.persistence.store_bet(
-                game_state_id=game_state_id,
-                player_id=hero_id,
-                amount=bet_amount,
-                action_type='raise'  # All-in is a raise
-            )
+            if bet_amount > 0.0:
+                self.persistence.store_bet(
+                    game_state_id=game_state_id,
+                    player_id=hero_id,
+                    amount=bet_amount,
+                    action_type='raise'  # All-in is a raise
+                )
             
             # Generate random opponent hands
             available_cards = [r + s for r in '23456789TJQKA' for s in 'shdc' 
@@ -358,13 +382,14 @@ class AllInFoldGTOSolver:
                     final_strength=opp_strength
                 )
                 
-                # Opponents fold (since it's all-in-or-fold)
-                self.persistence.store_bet(
-                    game_state_id=game_state_id,
-                    player_id=opp_id,
-                    amount=0.0,
-                    action_type='fold'
-                )
+                # Opponents call the hero's all-in
+                if bet_amount > 0.0:
+                    self.persistence.store_bet(
+                        game_state_id=game_state_id,
+                        player_id=opp_id,
+                        amount=bet_amount,
+                        action_type='call'
+                    )
                 
                 opponent_hands.append(opp_cards)
             
@@ -796,8 +821,8 @@ class AllInFoldGTOSolver:
             }
         
         equity = equity_result['win_probability']
-        # Calculate EV: equity * pot_size - (1-equity) * bet_amount
-        ev = equity * pot_size - (1 - equity) * bet_amount
+        # Calculate EV from total showdown pot net of the hero's risk.
+        ev = equity * pot_size - bet_amount
         
         return {
             "equity": equity,

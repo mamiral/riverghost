@@ -91,8 +91,11 @@ class MatrixSweepService:
             outcome=game_state["outcome"],
         )
 
+        # Map temporary player IDs from the queue payload to real DB player IDs
+        player_id_map: dict[int, int] = {}
         for player in players:
-            persistence.store_player(
+            temp_id = player.get("temp_id")
+            actual_player_id = persistence.store_player(
                 game_state_id=game_state_id,
                 position=player["position"],
                 hole_cards=player["hole_cards"],
@@ -101,14 +104,27 @@ class MatrixSweepService:
                 hand_class=player.get("hand_class"),
                 final_strength=player.get("final_strength"),
             )
+            if temp_id is not None:
+                player_id_map[temp_id] = actual_player_id
 
         for bet in bets:
+            player_id = player_id_map.get(bet["player_id"], bet["player_id"])
             persistence.store_bet(
                 game_state_id=game_state_id,
-                player_id=bet["player_id"],
+                player_id=player_id,
                 amount=bet["amount"],
                 action_type=bet["action_type"],
                 round_name=bet.get("round", "preflop"),
+            )
+
+        for jackpot in jackpots:
+            player_id = player_id_map.get(jackpot["player_id"], jackpot["player_id"])
+            persistence.store_jackpot(
+                game_state_id=game_state_id,
+                player_id=player_id,
+                jackpot_type=jackpot["jackpot_type"],
+                payout_amount=jackpot["payout_amount"],
+                cards_used=jackpot["cards_used"],
             )
 
         for jackpot in jackpots:
@@ -216,6 +232,14 @@ class MatrixSweepService:
             remaining_by_cell: dict[int, int] = {}
             hand_key_by_cell: dict[int, str] = {}
             stopped = False
+            cell_progress_bar = None
+            if tqdm is not None:
+                cell_progress_bar = tqdm(
+                    total=total_cells,
+                    desc="Sweep cells",
+                    unit="cell",
+                    dynamic_ncols=True,
+                )
 
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="matrix-sweep") as executor:
                 executor_shutdown = False
@@ -230,7 +254,7 @@ class MatrixSweepService:
                     combos = HandRange.parse_shorthand(hand_key)
                     remaining_by_cell[cell_index] = len(combos)
                     hand_key_by_cell[cell_index] = hand_key
-                    logger.info(
+                    logger.debug(
                         "Starting sweep cell %d/%d: %s (%d combos)",
                         cell_index,
                         total_cells,
@@ -269,12 +293,14 @@ class MatrixSweepService:
                     remaining_by_cell[cell_index] -= 1
                     if remaining_by_cell[cell_index] == 0:
                         hand_key = hand_key_by_cell[cell_index]
-                        logger.info(
+                        logger.debug(
                             "Finished sweep cell %d/%d: %s",
                             cell_index,
                             total_cells,
                             hand_key,
                         )
+                        if cell_progress_bar is not None:
+                            cell_progress_bar.update(1)
 
             write_queue.put(None)
             writer_thread.join()
@@ -331,6 +357,9 @@ class MatrixSweepService:
                 end_timestamp=datetime.now(timezone.utc),
             )
             raise
+        finally:
+            if cell_progress_bar is not None:
+                cell_progress_bar.close()
 
     def run_sweep(self, scenario_contract):
         baseline = self._capture_append_baseline()

@@ -43,7 +43,6 @@ class MatrixSweepAggregationService:
             raise ValueError(f"Simulation {simulation_id} has no completed raw run boundary")
 
         # Get betting parameters
-        pot_size = parameters.get("pot_size", 0.0)
         bet_amount = parameters.get("bet_amount", 0.0)
 
         # Create matrix and cells first
@@ -111,7 +110,6 @@ class MatrixSweepAggregationService:
                     cell_id=cell_id,
                     hand_key=hand_key,
                     simulation_id=simulation_id,
-                    pot_size=pot_size,
                     bet_amount=bet_amount,
                     raw_start=raw_start,
                     raw_end=raw_end
@@ -119,7 +117,7 @@ class MatrixSweepAggregationService:
             else:
                 # Use traditional batch aggregation
                 final_metrics = self._aggregate_cell_batch(
-                    cell_id, simulation_id, raw_start, raw_end, pot_size, bet_amount
+                    cell_id, simulation_id, raw_start, raw_end, bet_amount
                 )
 
             # Store final aggregated metric (using merge to handle existing metrics)
@@ -184,7 +182,7 @@ class MatrixSweepAggregationService:
             "status": RUN_STATUS_AGGREGATED,
         }
 
-    def _aggregate_cell_batch(self, cell_id, simulation_id, raw_start, raw_end, pot_size, bet_amount):
+    def _aggregate_cell_batch(self, cell_id, simulation_id, raw_start, raw_end, bet_amount):
         """Aggregate a single cell using traditional batch processing."""
         # Get game states for this cell
         game_states = list(self.repository.get_run_game_states(raw_start, raw_end))
@@ -195,17 +193,23 @@ class MatrixSweepAggregationService:
 
         wins = 0
         ties = 0
+        ev_sum = 0.0
         total = len(cell_game_states)
 
         for game_state in cell_game_states:
+            game_state_pot = float(game_state.pot_size)
             if game_state.outcome == "WIN":
                 wins += 1
+                ev_sum += game_state_pot - bet_amount
             elif game_state.outcome == "TIE":
                 ties += 1
+                ev_sum += game_state_pot / 2.0 - bet_amount / 2.0
+            else:
+                ev_sum -= bet_amount
 
         equity = (wins + 0.5 * ties) / total
         win_probability = wins / total
-        ev = (wins * pot_size + ties * (pot_size / 2.0)) / total if pot_size > 0 else None
+        ev = ev_sum / total
 
         return {
             'equity': equity,
@@ -232,10 +236,12 @@ class MatrixSweepAggregationService:
                 "wins": 0,
                 "ties": 0,
                 "total": 0,
+                "ev_sum": 0.0,
             }
             for row_index, col_index, hand_key in iter_canonical_matrix_cells()
         }
 
+        bet_amount = parameters.get("bet_amount", 0.0)
         unmapped_hero_records = 0
         for game_state in self.repository.get_run_game_states(raw_start, raw_end):
             hero_player = next((player for player in game_state.players if player.is_hero), None)
@@ -251,17 +257,18 @@ class MatrixSweepAggregationService:
             hand_key = hand_key_from_index(row_index, col_index)
             stats = cell_stats[hand_key]
             stats["total"] += 1
+            game_state_pot = float(game_state.pot_size)
             if game_state.outcome == "WIN":
                 stats["wins"] += 1
+                stats["ev_sum"] += game_state_pot - bet_amount
             elif game_state.outcome == "TIE":
                 stats["ties"] += 1
+                stats["ev_sum"] += game_state_pot / 2.0 - bet_amount / 2.0
+            else:
+                stats["ev_sum"] -= bet_amount
 
         matrix_id = self.repository.get_or_create_hand_matrix_for_simulation(simulation_id)
         timestamp = datetime.now(timezone.utc).isoformat()
-
-        # Get betting parameters for EV calculation
-        pot_size = parameters.get("pot_size", 0.0)
-        bet_amount = parameters.get("bet_amount", 0.0)
 
         session = self.repository.get_session()
         try:
@@ -284,13 +291,7 @@ class MatrixSweepAggregationService:
                 if total > 0:
                     equity = (stats["wins"] + 0.5 * stats["ties"]) / total
                     win_probability = stats["wins"] / total
-                    
-                    # Calculate EV based on outcomes and betting parameters
-                    # For all-in scenarios: EV = equity * pot_size (since bet is already committed)
-                    # This gives: EV = (wins * pot_size + ties * (pot_size / 2.0)) / total
-                    if pot_size > 0:
-                        ev = (stats["wins"] * pot_size + stats["ties"] * (pot_size / 2.0)) / total
-                    
+                    ev = stats["ev_sum"] / total
                     convergence_status = "complete"
 
                 session.add(

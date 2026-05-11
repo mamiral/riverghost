@@ -180,12 +180,13 @@ class PokerAnalyzer:
                     ties += 1
 
                 if return_individual_outcomes:
+                    actual_pot_size = bet_amount * (1 + len(current_opponent_holes)) if bet_amount > 0 else 0.0
                     hero_equity = 1.0 if hero_better_than_all else (0.5 if hero_ties_all else 0.0)
-                    if pot_size or bet_amount:
+                    if bet_amount > 0.0:
                         if hero_better_than_all:
-                            ev_chips = pot_size
+                            ev_chips = actual_pot_size
                         elif hero_ties_all:
-                            ev_chips = pot_size / 2.0 - bet_amount / 2.0
+                            ev_chips = actual_pot_size / 2.0 - bet_amount / 2.0
                         else:
                             ev_chips = -bet_amount
                     else:
@@ -211,28 +212,49 @@ class PokerAnalyzer:
                 if persistence is not None:
                     iteration_outcome = 'WIN' if hero_better_than_all else ('TIE' if hero_ties_all else 'LOSS')
                     board_str = [self.pokerkit_to_card_name(c) for c in full_board]
+                    stored_pot_size = bet_amount * (1 + len(current_opponent_holes)) if bet_amount > 0.0 else 0.0
                     gs_id = persistence.store_game_state(
                         timestamp=datetime.now(timezone.utc).isoformat(),
                         round_name='preflop',
-                        pot_size=0.0,
+                        pot_size=stored_pot_size,
                         board_cards=board_str,
                         outcome=iteration_outcome
                     )
                     hero_cards_str = [self.pokerkit_to_card_name(c) for c in hero_hole]
                     hero_hand_class = self._map_entry_label_to_hand_class(hero_entry.label)
-                    persistence.store_player(
+                    hero_id = persistence.store_player(
                         gs_id, 'hero', hero_cards_str, 100.0, is_hero=True,
                         hand_class=hero_hand_class,
                         final_strength=hero_score
                     )
+                    if bet_amount > 0.0:
+                        persistence.store_bet(
+                            game_state_id=gs_id,
+                            player_id=hero_id,
+                            amount=bet_amount,
+                            action_type='raise',
+                            round_name='preflop'
+                        )
                     for i, (opp_h, opp_entry, opp_score) in enumerate(zip(current_opponent_holes, opp_entries, opp_scores)):
                         opp_str = [self.pokerkit_to_card_name(c) for c in opp_h]
                         opp_hand_class = self._map_entry_label_to_hand_class(opp_entry.label)
-                        persistence.store_player(
-                            gs_id, f'opp_{i}', opp_str, 100.0, is_hero=False,
+                        opp_id = persistence.store_player(
+                            game_state_id=gs_id,
+                            position=f'opp_{i}',
+                            hole_cards=opp_str,
+                            stack_size=100.0,
+                            is_hero=False,
                             hand_class=opp_hand_class,
                             final_strength=opp_score
                         )
+                        if bet_amount > 0.0:
+                            persistence.store_bet(
+                                game_state_id=gs_id,
+                                player_id=opp_id,
+                                amount=bet_amount,
+                                action_type='call',
+                                round_name='preflop'
+                            )
                     persistence.commit_transaction()
 
             except Exception as e:

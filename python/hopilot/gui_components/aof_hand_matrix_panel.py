@@ -16,7 +16,33 @@ class AoFHandMatrixPanel:
         self.width = 13 * self.cell_size
         self.height = 13 * self.cell_size
 
-    def draw(self, surface: pygame.Surface, font: pygame.font.Font, cells: list[dict], active_metric: str):
+    @staticmethod
+    def _ev_color(value: float | None, pot_size: float = 1.0, bet_amount: float = 1.0) -> tuple[int, int, int]:
+        if value is None:
+            return (60, 60, 60)
+        try:
+            ev = float(value)
+        except (TypeError, ValueError):
+            return (60, 60, 60)
+
+        if ev < 0.0:
+            return (192, 60, 65)
+        if ev < 0.50:
+            return (150, 150, 150)
+        if ev < 1.0:
+            return (160, 190, 120)
+        if ev < 1.5:
+            return (110, 180, 100)
+        return (80, 175, 90)
+
+    def draw(
+        self,
+        surface: pygame.Surface,
+        font: pygame.font.Font,
+        cells: list[dict],
+        active_metric: str,
+        context: dict | None = None,
+    ):
         pygame.draw.rect(
             surface,
             (26, 31, 37),
@@ -37,7 +63,11 @@ class AoFHandMatrixPanel:
             else:
                 if status == "AVAILABLE":
                     value = cell["value"]
-                    if value is None:
+                    if active_metric == "EV":
+                        pot_size = float(context.get("pot_size", 1.0)) if isinstance(context, dict) else 1.0
+                        bet_amount = float(context.get("bet_amount", 1.0)) if isinstance(context, dict) else 1.0
+                        color = self._ev_color(value, pot_size=pot_size, bet_amount=bet_amount)
+                    elif value is None:
                         color = (60, 60, 60)
                     elif value >= 0.65:
                         color = (228, 63, 67)

@@ -65,7 +65,6 @@ def test_incremental_aggregation_uses_win_loss_probability(database):
         cell_id=1,
         hand_key='AKs',
         simulation_id=1,
-        pot_size=15.0,
         bet_amount=100.0,
         raw_start=1,
         raw_end=100,
@@ -75,4 +74,50 @@ def test_incremental_aggregation_uses_win_loss_probability(database):
     assert result['sample_count'] == 4
     assert result['win_probability'] == pytest.approx(0.5)
     assert result['equity'] == pytest.approx(0.625)
-    assert result['ev'] == pytest.approx(32.5)
+    expected_ev = (2 * (15.0 - 100.0) + 1 * (15.0 / 2.0 - 100.0 / 2.0) + (-100.0)) / 4.0
+    assert result['ev'] == pytest.approx(expected_ev)
+
+
+def test_incremental_aggregation_does_not_log_batch_matches_at_info(database, caplog):
+    gs_repo = GameStateRepository(database)
+    analyzer = PokerAnalyzer()
+    service = IncrementalAggregationService(database, analyzer, emit_interval=1)
+
+    hero_hole_cards = 'AsKs'
+    gs_repo.create_game_state({
+        'pot_size': 15.0,
+        'board_cards_str': 'QsJhTd9c8d',
+        'round': 'preflop',
+        'outcome': 'win',
+        'players': [
+            {
+                'position': 'UTG',
+                'hole_cards': hero_hole_cards,
+                'stack_size': 1000.0,
+                'is_hero': True,
+            },
+            {
+                'position': 'BTN',
+                'hole_cards': 'KdKh',
+                'stack_size': 1000.0,
+                'is_hero': False,
+            }
+        ]
+    })
+
+    caplog.set_level('INFO', logger='hopilot.gto.incremental_aggregation_service')
+
+    service.aggregate_cell_incremental(
+        cell_id=1,
+        hand_key='AKs',
+        simulation_id=1,
+        bet_amount=100.0,
+        raw_start=1,
+        raw_end=100,
+        batch_size=10,
+    )
+
+    assert not any(
+        'Found' in record.message and 'matches for AKs' in record.message
+        for record in caplog.records
+    ), 'Batch match discovery should not be logged at INFO level.'

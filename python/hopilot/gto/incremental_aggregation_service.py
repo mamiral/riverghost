@@ -10,6 +10,11 @@ from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import selectinload
 
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover
+    tqdm = None
+
 from hopilot.database import DatabaseConnection
 from hopilot.hand_range import HandRange
 from hopilot.gto.aof_hand_matrix import hand_key_from_index, hand_coordinates_from_hole_cards
@@ -56,7 +61,6 @@ class IncrementalAggregationService:
         cell_id: int,
         hand_key: str,
         simulation_id: int,
-        pot_size: float,
         bet_amount: float,
         raw_start: int,
         raw_end: int,
@@ -69,7 +73,6 @@ class IncrementalAggregationService:
             cell_id: Matrix cell ID to aggregate
             hand_key: Hand combination key (e.g. "AA")
             simulation_id: Simulation ID
-            pot_size: Pot size for EV calculations
             bet_amount: Bet amount for the simulation
             raw_start: Start ID of raw game states
             raw_end: End ID of raw game states
@@ -88,30 +91,45 @@ class IncrementalAggregationService:
             'wins': 0,
             'ties': 0,
             'total': 0,
-            'equity': 0.0,
-            'ev': 0.0
+            'ev_sum': 0.0,
         }
+
+        progress_bar = None
+        if tqdm is not None:
+            progress_bar = tqdm(
+                desc=f"Aggregating cell {cell_id}:{hand_key}",
+                unit="game",
+                dynamic_ncols=True,
+            )
 
         # Process game states in batches
         offset = 0
-        while True:
-            # Get next batch of game states
-            game_states = self._get_game_states_batch(hand_key, raw_start, raw_end, batch_size, offset)
-            if not game_states:
-                break
+        try:
+            while True:
+                # Get next batch of game states
+                game_states = self._get_game_states_batch(hand_key, raw_start, raw_end, batch_size, offset)
+                if not game_states:
+                    break
 
-            # Process batch and update running statistics
-            batch_stats = self._process_batch(game_states, pot_size, bet_amount)
-            running_stats = self._update_running_stats(running_stats, batch_stats)
-            total_samples += len(game_states)
-            offset += batch_size
+                # Process batch and update running statistics
+                batch_stats = self._process_batch(game_states, bet_amount)
+                running_stats = self._update_running_stats(running_stats, batch_stats)
+                total_samples += len(game_states)
+                offset += batch_size
 
-            # Emit convergence event if interval reached
-            if total_samples % self.emit_interval == 0:
-                self._emit_convergence_update(cell_id, simulation_id, total_samples, running_stats, pot_size, bet_amount)
+                if progress_bar is not None:
+                    progress_bar.update(len(game_states))
+
+                # Emit convergence event if interval reached
+                if total_samples % self.emit_interval == 0:
+                    self._emit_convergence_update(cell_id, simulation_id, total_samples, running_stats, bet_amount)
+
+        finally:
+            if progress_bar is not None:
+                progress_bar.close()
 
         # Calculate final metrics
-        final_metrics = self._calculate_final_metrics(running_stats, pot_size, bet_amount)
+        final_metrics = self._calculate_final_metrics(running_stats, bet_amount)
         final_metrics['sample_count'] = total_samples
 
         logger.info(f"Completed incremental aggregation for cell {cell_id}: {total_samples} samples")
@@ -152,47 +170,52 @@ class IncrementalAggregationService:
             game_states = query.all()
             
             if game_states:
-                logger.info(f"Found {len(game_states)} matches for {hand_key} at offset {offset}")
+                logger.debug(f"Found {len(game_states)} matches for {hand_key} at offset {offset}")
 
             return game_states
 
     def _process_batch(
         self,
         game_states: List[GameState],
-        pot_size: float,
         bet_amount: float
-    ) -> Dict[str, int]:
+    ) -> Dict[str, float]:
         """
         Process a batch of game states and calculate win/tie statistics.
 
         Args:
             game_states: List of game states to process
-            pot_size: Pot size for calculations
             bet_amount: Bet amount for calculations
 
         Returns:
-            Dictionary with wins, ties, and total counts
+            Dictionary with wins, ties, total count, and EV sum
         """
         wins = 0
         ties = 0
+        ev_sum = 0.0
 
         for game_state in game_states:
             outcome = (game_state.outcome or "").strip().upper()
+            game_state_pot = float(game_state.pot_size)
             if outcome == "WIN":
                 wins += 1
+                ev_sum += game_state_pot - bet_amount
             elif outcome == "TIE":
                 ties += 1
+                ev_sum += game_state_pot / 2.0 - bet_amount / 2.0
+            else:
+                ev_sum -= bet_amount
 
         return {
             'wins': wins,
             'ties': ties,
-            'total': len(game_states)
+            'total': len(game_states),
+            'ev_sum': ev_sum
         }
 
     def _update_running_stats(
         self,
         current_stats: Dict[str, float],
-        batch_stats: Dict[str, int]
+        batch_stats: Dict[str, float]
     ) -> Dict[str, float]:
         """
         Update running statistics with new batch results.
@@ -207,16 +230,16 @@ class IncrementalAggregationService:
         return {
             'wins': current_stats['wins'] + batch_stats['wins'],
             'ties': current_stats['ties'] + batch_stats['ties'],
-            'total': current_stats['total'] + batch_stats['total']
+            'total': current_stats['total'] + batch_stats['total'],
+            'ev_sum': current_stats['ev_sum'] + batch_stats['ev_sum']
         }
 
-    def _calculate_final_metrics(self, stats: Dict[str, float], pot_size: float, bet_amount: float) -> Dict[str, float]:
+    def _calculate_final_metrics(self, stats: Dict[str, float], bet_amount: float) -> Dict[str, float]:
         """
         Calculate final aggregated metrics from running statistics.
 
         Args:
             stats: Running statistics
-            pot_size: Pot size for EV calculation
             bet_amount: Amount the hero must call or risk
 
         Returns:
@@ -230,9 +253,7 @@ class IncrementalAggregationService:
         ties = stats['ties']
         equity = (wins + 0.5 * ties) / total
         win_probability = wins / total
-        loss_probability = 1.0 - win_probability - (ties / total)
-
-        ev = win_probability * (pot_size + bet_amount) - loss_probability * bet_amount
+        ev = stats['ev_sum'] / total
 
         return {
             'equity': equity,
@@ -246,7 +267,6 @@ class IncrementalAggregationService:
         simulation_id: int,
         sample_count: int,
         stats: Dict[str, float],
-        pot_size: float,
         bet_amount: float
     ) -> None:
         """
@@ -257,10 +277,9 @@ class IncrementalAggregationService:
             simulation_id: Simulation ID
             sample_count: Current sample count
             stats: Current running statistics
-            pot_size: Pot size for EV calculation
             bet_amount: Amount the hero must call or risk
         """
-        metrics = self._calculate_final_metrics(stats, pot_size, bet_amount)
+        metrics = self._calculate_final_metrics(stats, bet_amount)
         equity = metrics['equity']
         ev = metrics['ev']
         win_probability = metrics['win_probability']

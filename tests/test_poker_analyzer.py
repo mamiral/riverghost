@@ -4,10 +4,11 @@ import tempfile
 import shutil
 import sys
 from unittest.mock import patch, MagicMock
-from pokerkit.hands import StandardHighHand
 
 # Add the python directory to the path so we can import hopilot modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+from pokerkit.hands import StandardHighHand
+from hopilot.database.persistence import MockPersistenceStrategy
 from hopilot.poker_analyzer import PokerAnalyzer
 
 
@@ -219,6 +220,29 @@ class TestPokerAnalyzer:
         assert result['ev_index'] == "+EV"  # Positive expected value
         assert result['ev_amount'] == 40.0  # (0.6 * 150) - 50 = 90 - 50 = 40
         assert abs(result['break_even_percentage'] - 33.33333333333333) < 1e-10  # 50/150 ≈ 33.33%
+
+    def test_calculate_odds_random_opponents_persists_pot_size_and_bet(self, analyzer):
+        """Test that persistence stores the correct total pot size and hero bet."""
+        persistence = MockPersistenceStrategy()
+        persistence.reset()
+
+        result = analyzer.calculate_odds_random_opponents(
+            hero_hole_cards=['As', 'Kh'],
+            board_cards=[],
+            num_opponents=1,
+            num_simulations=10,
+            persistence=persistence,
+            pot_size=50.0,  # user-provided pot_size should be ignored
+            bet_amount=10.0
+        )
+
+        assert result is not None
+        assert result['valid_simulations'] > 0
+        assert len(persistence.store_game_state_calls) == result['valid_simulations']
+        assert len(persistence.store_bet_calls) == 2 * result['valid_simulations']
+        assert all(call['pot_size'] == 20.0 for call in persistence.store_game_state_calls)
+        assert all(call['amount'] == 10.0 for call in persistence.store_bet_calls)
+        assert all(call['action_type'] in {'raise', 'call'} for call in persistence.store_bet_calls)
 
     def test_negative_ev(self, analyzer):
         """Test negative expected value scenario."""

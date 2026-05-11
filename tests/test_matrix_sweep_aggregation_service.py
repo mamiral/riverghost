@@ -112,18 +112,17 @@ def test_aggregate_run_calculates_ev_correctly_based_on_simulation_parameters() 
 
         # Get simulation parameters to verify EV calculation
         sim = repository.get_simulation_record(seed["simulation_id"])
-        pot_size = sim.parameters.get("pot_size", 0.0)
+        pot_size = float(sim.parameters.get("pot_size", 0.0))
+        bet_amount = float(sim.parameters.get("bet_amount", 0.0))
+        total_pot = pot_size + bet_amount
 
-        # Verify EV calculation: EV should equal equity * pot_size for all-in scenarios
+        # Verify EV calculation: EV should use equity and total pot less the hero's bet.
         for metric in metrics_with_ev:
-            if metric.equity is not None and metric.equity > 0:
-                expected_ev = float(metric.equity) * pot_size
+            if metric.equity is not None:
+                expected_ev = float(metric.equity) * total_pot - bet_amount
                 actual_ev = float(metric.ev)
-                assert abs(actual_ev - expected_ev) < 0.0001, f"EV calculation incorrect: expected {expected_ev}, got {actual_ev}"
-                
-                # EV should be positive and not exceed pot_size
-                assert actual_ev > 0, f"EV should be positive, got {actual_ev}"
-                assert actual_ev <= pot_size, f"EV should not exceed pot_size {pot_size}, got {actual_ev}"
+                assert abs(actual_ev - expected_ev) < 1e-6, f"EV calculation incorrect: expected {expected_ev}, got {actual_ev}"
+                assert actual_ev <= total_pot, f"EV should not exceed total pot {total_pot}, got {actual_ev}"
 
     finally:
         fixture.cleanup()
