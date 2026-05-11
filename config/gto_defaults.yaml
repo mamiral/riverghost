@@ -24,8 +24,8 @@ aof_browser_runtime:
   convergence_emit_interval: 300
 
 database:
-  url: "sqlite:///python/hopilot/data/normalized_poker.sqlite3"
-  path: "python/hopilot/data/normalized_poker.sqlite3"
+  url: "sqlite:///python/hopilot/data/aof_gto_baseline.sqlite3"
+  path: "python/hopilot/data/aof_gto_baseline.sqlite3"
   connection_pool_size: 5
   pool_timeout: 30.0
   timeout_ms: 500

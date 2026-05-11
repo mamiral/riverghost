@@ -8,10 +8,37 @@ and file logging capabilities.
 import logging
 import os
 import sys
+import time
+from functools import wraps
 from logging.handlers import RotatingFileHandler
 
 import colorama
 from colorama import Fore, Back, Style
+
+
+def timing_decorator(func):
+    """
+    Decorator that logs the execution time of a function.
+
+    Args:
+        func: Function to time
+
+    Returns:
+        Wrapped function that logs execution time
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+
+        # Get logger for the function's module
+        logger = logging.getLogger(func.__module__)
+        logger.debug(f"{func.__name__} executed in {execution_time:.4f} seconds")
+
+        return result
+    return wrapper
 
 
 class ColoredFormatter(logging.Formatter):

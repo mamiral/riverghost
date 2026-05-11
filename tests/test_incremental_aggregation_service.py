@@ -36,7 +36,7 @@ def database(tmp_path):
 def test_incremental_aggregation_uses_win_loss_probability(database):
     gs_repo = GameStateRepository(database)
     analyzer = PokerAnalyzer()
-    service = IncrementalAggregationService(database, analyzer, emit_interval=1000)
+    service = IncrementalAggregationService(database, analyzer)
 
     hero_hole_cards = 'AsKs'
     for outcome in ['win', 'win', 'loss', 'tie']:
@@ -74,7 +74,8 @@ def test_incremental_aggregation_uses_win_loss_probability(database):
     assert result['sample_count'] == 4
     assert result['win_probability'] == pytest.approx(0.5)
     assert result['equity'] == pytest.approx(0.625)
-    expected_ev = (2 * (15.0 - 100.0) + 1 * (15.0 / 2.0 - 100.0 / 2.0) + (-100.0)) / 4.0
+    # EV calculation: win = pot_size, tie = (pot_size + bet_amount)/2 - bet_amount, loss = -bet_amount
+    expected_ev = (2 * 15.0 + 1 * ((15.0 + 100.0) / 2.0 - 100.0) + (-100.0)) / 4.0
     assert result['ev'] == pytest.approx(expected_ev)
 
 

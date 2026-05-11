@@ -260,10 +260,10 @@ class MatrixSweepAggregationService:
             game_state_pot = float(game_state.pot_size)
             if game_state.outcome == "WIN":
                 stats["wins"] += 1
-                stats["ev_sum"] += game_state_pot - bet_amount
+                stats["ev_sum"] += game_state_pot
             elif game_state.outcome == "TIE":
                 stats["ties"] += 1
-                stats["ev_sum"] += game_state_pot / 2.0 - bet_amount / 2.0
+                stats["ev_sum"] += (game_state_pot + bet_amount) / 2.0 - bet_amount
             else:
                 stats["ev_sum"] -= bet_amount
 

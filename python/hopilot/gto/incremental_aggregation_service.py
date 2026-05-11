@@ -6,6 +6,7 @@ enabling real-time monitoring of metric convergence during aggregation.
 """
 
 from datetime import datetime
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import selectinload
@@ -19,12 +20,19 @@ from hopilot.database import DatabaseConnection
 from hopilot.hand_range import HandRange
 from hopilot.gto.aof_hand_matrix import hand_key_from_index, hand_coordinates_from_hole_cards
 from hopilot.gto.convergence_events import ConvergenceData, ConvergenceEventEmitter
-from hopilot.logging_config import get_logger
+from hopilot.logging_config import get_logger, timing_decorator
 from hopilot.models.game_state import GameState
 from hopilot.models.player import Player
 from hopilot.poker_analyzer import PokerAnalyzer
 
 logger = get_logger(__name__)
+
+
+# Cache for hand range expansions to avoid repeated parsing
+@lru_cache(maxsize=128)
+def _cached_parse_shorthand(hand_key: str) -> Tuple[Tuple[str, str], ...]:
+    """Cache hand range parsing results."""
+    return tuple(HandRange.parse_shorthand(hand_key))
 
 
 class IncrementalAggregationService:
@@ -40,7 +48,8 @@ class IncrementalAggregationService:
         db_connection: DatabaseConnection,
         poker_analyzer: PokerAnalyzer,
         event_emitter: Optional[ConvergenceEventEmitter] = None,
-        emit_interval: int = 100
+        emit_interval: int = 100,
+        default_batch_size: int = 1000
     ) -> None:
         """
         Initialize incremental aggregation service.
@@ -50,11 +59,19 @@ class IncrementalAggregationService:
             poker_analyzer: Poker analyzer for metric calculations
             event_emitter: Optional event emitter for convergence tracking
             emit_interval: Sample count interval for convergence emissions
+            default_batch_size: Default batch size for database queries
         """
         self.db_connection = db_connection
         self.poker_analyzer = poker_analyzer
         self.event_emitter = event_emitter or ConvergenceEventEmitter()
         self.emit_interval = emit_interval
+        self.default_batch_size = default_batch_size
+        
+        # Log connection pool info for monitoring
+        engine = db_connection._engine
+        if engine:
+            pool = engine.pool
+            logger.debug(f"Database connection pool: {type(pool).__name__}, size={getattr(pool, 'size', 'N/A')}")
 
     def aggregate_cell_incremental(
         self,
@@ -76,15 +93,19 @@ class IncrementalAggregationService:
             bet_amount: Bet amount for the simulation
             raw_start: Start ID of raw game states
             raw_end: End ID of raw game states
-            batch_size: Number of game states to process per batch
+            batch_size: Number of game states to process per batch (default: default_batch_size)
 
         Returns:
             Final aggregated metrics for the cell
         """
         logger.info(f"Starting incremental aggregation for cell {cell_id} ({hand_key}), simulation {simulation_id}")
 
+        # Precompute hand range expansion once for the entire operation
+        hand_tuples = _cached_parse_shorthand(hand_key)
+        hole_cards_list = ["".join(tup) for tup in hand_tuples]
+
         if batch_size is None:
-            batch_size = self.emit_interval
+            batch_size = self.default_batch_size
 
         total_samples = 0
         running_stats = {
@@ -103,11 +124,11 @@ class IncrementalAggregationService:
             )
 
         # Process game states in batches
-        offset = 0
+        last_id = raw_start - 1  # Start before the first ID
         try:
             while True:
                 # Get next batch of game states
-                game_states = self._get_game_states_batch(hand_key, raw_start, raw_end, batch_size, offset)
+                game_states = self._get_game_states_batch(hole_cards_list, raw_start, raw_end, batch_size, last_id)
                 if not game_states:
                     break
 
@@ -115,10 +136,15 @@ class IncrementalAggregationService:
                 batch_stats = self._process_batch(game_states, bet_amount)
                 running_stats = self._update_running_stats(running_stats, batch_stats)
                 total_samples += len(game_states)
-                offset += batch_size
+                
+                # Update last_id for cursor-based pagination
+                last_id = game_states[-1].id
 
                 if progress_bar is not None:
                     progress_bar.update(len(game_states))
+
+                # Log batch processing statistics
+                logger.info(f"Processed batch of {len(game_states)} games (total: {total_samples}) for cell {cell_id}")
 
                 # Emit convergence event if interval reached
                 if total_samples % self.emit_interval == 0:
@@ -132,48 +158,57 @@ class IncrementalAggregationService:
         final_metrics = self._calculate_final_metrics(running_stats, bet_amount)
         final_metrics['sample_count'] = total_samples
 
-        logger.info(f"Completed incremental aggregation for cell {cell_id}: {total_samples} samples")
+        # Log performance summary
+        total_batches = (total_samples + batch_size - 1) // batch_size  # Ceiling division
+        logger.info(f"Performance summary: {total_samples} samples processed in {total_batches} batches "
+                   f"(avg {total_samples/total_batches:.1f} samples/batch)")
+
         return final_metrics
 
+    @timing_decorator
     def _get_game_states_batch(
         self,
-        hand_key: str,
+        hole_cards_list: List[str],
         raw_start: int,
         raw_end: int,
         batch_size: int,
-        offset: int
+        last_id: int
     ) -> List[GameState]:
         """
         Get a batch of game states for the specified hand and run range.
         Uses database-level filtering for Hero hole cards to ensure all hands are found.
+        Uses cursor-based pagination for better performance.
         """
-        # Expand hand_key (e.g., 'AKs') to all component hole_cards (e.g., ['AsKs', 'AhKh', ...])
-        # HandRange.parse_shorthand returns List[Tuple[str, str]]
-        hand_tuples = HandRange.parse_shorthand(hand_key)
-        hole_cards_list = ["".join(tup) for tup in hand_tuples]
-
         with self.db_connection.session_scope() as session:
-            # JOIN GameState with Player to filter by hole_cards in SQL
-            query = session.query(GameState)\
-                .join(Player)\
+            # Use subquery for better query planning and performance
+            # First get game_state_ids that match our criteria
+            subquery = session.query(Player.game_state_id)\
                 .filter(
-                    GameState.id >= raw_start,
-                    GameState.id <= raw_end,
                     Player.is_hero == True,
                     Player.hole_cards.in_(hole_cards_list)
                 )\
+                .subquery()
+
+            # Then query GameState with cursor-based pagination
+            query = session.query(GameState)\
+                .filter(
+                    GameState.id >= raw_start,
+                    GameState.id <= raw_end,
+                    GameState.id > last_id,  # Cursor-based pagination
+                    GameState.id.in_(session.query(subquery.c.game_state_id))
+                )\
                 .options(selectinload(GameState.players))\
                 .order_by(GameState.id)\
-                .offset(offset)\
                 .limit(batch_size)
             
             game_states = query.all()
             
             if game_states:
-                logger.debug(f"Found {len(game_states)} matches for {hand_key} at offset {offset}")
+                logger.debug(f"Found {len(game_states)} matches starting after ID {last_id}")
 
             return game_states
 
+    @timing_decorator
     def _process_batch(
         self,
         game_states: List[GameState],
@@ -198,10 +233,10 @@ class IncrementalAggregationService:
             game_state_pot = float(game_state.pot_size)
             if outcome == "WIN":
                 wins += 1
-                ev_sum += game_state_pot - bet_amount
+                ev_sum += game_state_pot
             elif outcome == "TIE":
                 ties += 1
-                ev_sum += game_state_pot / 2.0 - bet_amount / 2.0
+                ev_sum += (game_state_pot + bet_amount) / 2.0 - bet_amount
             else:
                 ev_sum -= bet_amount
 

@@ -8,7 +8,7 @@ import enum
 from decimal import Decimal
 from typing import Any, Dict
 
-from sqlalchemy import Boolean, Column, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Column, Enum, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import relationship
 
 from hopilot.models.base import BaseModel
@@ -37,6 +37,12 @@ class Player(BaseModel):
     """
 
     __tablename__ = "players"
+
+    # Composite indexes for query optimization
+    __table_args__ = (
+        Index('ix_player_hero_hole_cards', 'is_hero', 'hole_cards'),
+        Index('ix_player_hole_cards_game_state', 'hole_cards', 'game_state_id'),
+    )
 
     game_state_id = Column(Integer, ForeignKey("game_states.id"), nullable=False, index=True)
     position = Column(String(10), nullable=False)
