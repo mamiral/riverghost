@@ -747,7 +747,7 @@ class AoFBrowserPanel:
     def _build_current_context(self) -> dict:
         bet_amount = self.precompute_bet_amount
         if self.state_machine_controller and self.state_machine_controller.config:
-            bet_amount = self.state_machine_controller.config.bet_size
+            bet_amount = self.state_machine_controller.config.bb
         return self.provider._build_context(  # pylint: disable=protected-access
             position=self.state.selected_position,
             metric=self.state.selected_metric,

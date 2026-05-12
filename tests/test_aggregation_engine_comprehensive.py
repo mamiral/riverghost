@@ -123,6 +123,7 @@ class TestAggregationEngine:
             test_case['matrix_id'],
             test_case['row_idx'],
             test_case['col_idx'],
+            bb=10.0,  # Big blind amount
             min_samples=10,
         )
 
@@ -139,6 +140,7 @@ class TestAggregationEngine:
             test_case['matrix_id'],
             test_case['row_idx'],
             test_case['col_idx'],
+            bb=10.0,
             min_samples=10,
         )
 
@@ -147,7 +149,7 @@ class TestAggregationEngine:
     def test_aggregation_nonexistent_cell(self, test_db):
         engine = AggregationEngine(test_db.database_url)
 
-        result = engine.compute_matrix_cell_from_game_states(999, 0, 0, min_samples=1)
+        result = engine.compute_matrix_cell_from_game_states(999, 0, 0, bb=10.0, min_samples=1)
         assert result is None
 
     def test_aggregation_mathematical_correctness(self, test_db, populated_test_db):
@@ -158,6 +160,7 @@ class TestAggregationEngine:
             test_case['matrix_id'],
             test_case['row_idx'],
             test_case['col_idx'],
+            bb=10.0,
             min_samples=1,
         )
 
@@ -174,6 +177,7 @@ class TestAggregationEngine:
                     test_case['matrix_id'],
                     test_case['row_idx'],
                     test_case['col_idx'],
+                    bb=10.0,
                     min_samples=10,
                 )
                 assert isinstance(result, dict)
@@ -224,14 +228,14 @@ class TestAggregationEngine:
             'payout_multiplier': 500,
         })
 
-        result = engine.compute_matrix_cell_from_game_states(matrix_id, 0, 0, min_samples=1)
+        result = engine.compute_matrix_cell_from_game_states(matrix_id, 0, 0, bb=10.0, min_samples=1)
         assert isinstance(result, dict)
         assert result['total_games'] == 1
 
     def test_aggregation_edge_cases(self, test_db):
         engine = AggregationEngine(test_db.database_url)
-        assert engine.compute_matrix_cell_from_game_states(-1, 0, 0, min_samples=1) is None
-        assert engine.compute_matrix_cell_from_game_states(1, 999, 999, min_samples=1) is None
+        assert engine.compute_matrix_cell_from_game_states(-1, 0, 0, bb=10.0, min_samples=1) is None
+        assert engine.compute_matrix_cell_from_game_states(1, 999, 999, bb=10.0, min_samples=1) is None
 
     def test_aggregation_data_consistency(self, test_db, populated_test_db):
         engine = AggregationEngine(test_db.database_url)
@@ -242,6 +246,7 @@ class TestAggregationEngine:
                 test_case['matrix_id'],
                 test_case['row_idx'],
                 test_case['col_idx'],
+                bb=10.0,
                 min_samples=10,
             )
             for _ in range(3)
@@ -284,6 +289,7 @@ class TestAggregationIntegration:
             test_case['matrix_id'],
             test_case['row_idx'],
             test_case['col_idx'],
+            bb=10.0,
             min_samples=10,
         )
 

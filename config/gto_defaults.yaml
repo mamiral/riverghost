@@ -18,7 +18,8 @@ aof_browser_runtime:
   timeout_ms: 900
   seed: 42
   precompute_max_workers: 3
-  bet_size: 1.0
+  bb: 10.0
+  rake: 0.0
   convergence_target_points: 8
   convergence_tracking_enabled: true
   convergence_emit_interval: 300

@@ -20,10 +20,10 @@ def _make_store(tmp_path):
 
 
 def _context(provider: BrowserDatabaseProvider, *, position: str = "UTG") -> dict:
+    # Use canonical scenario (all ALL_IN for UTG)
     return provider._build_context(  # pylint: disable=protected-access
         position=position,
         metric="EV",
-        position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
     )
 
 

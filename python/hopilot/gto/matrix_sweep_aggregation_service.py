@@ -43,7 +43,7 @@ class MatrixSweepAggregationService:
             raise ValueError(f"Simulation {simulation_id} has no completed raw run boundary")
 
         # Get betting parameters
-        bet_amount = parameters.get("bet_amount", 0.0)
+        bb = parameters.get("bet_amount", 1.0)
 
         # Create matrix and cells first
         matrix_id = self.repository.get_or_create_hand_matrix_for_simulation(simulation_id)
@@ -94,7 +94,8 @@ class MatrixSweepAggregationService:
                 db_connection=db_connection,
                 poker_analyzer=poker_analyzer,
                 event_emitter=event_emitter,
-                emit_interval=emit_interval
+                emit_interval=emit_interval,
+                bb=bb
             )
 
         # Process each cell
@@ -110,14 +111,14 @@ class MatrixSweepAggregationService:
                     cell_id=cell_id,
                     hand_key=hand_key,
                     simulation_id=simulation_id,
-                    bet_amount=bet_amount,
+                    bet_amount=bb,
                     raw_start=raw_start,
                     raw_end=raw_end
                 )
             else:
                 # Use traditional batch aggregation
                 final_metrics = self._aggregate_cell_batch(
-                    cell_id, simulation_id, raw_start, raw_end, bet_amount
+                    cell_id, simulation_id, raw_start, raw_end, bb
                 )
 
             # Store final aggregated metric (using merge to handle existing metrics)

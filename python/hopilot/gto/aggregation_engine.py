@@ -46,6 +46,7 @@ class AggregationEngine:
         matrix_id: int,
         row_index: int,
         col_index: int,
+        bb: float,
         min_samples: int = 100
     ) -> Optional[Dict[str, Any]]:
         """
@@ -58,6 +59,7 @@ class AggregationEngine:
             matrix_id: Hand matrix ID
             row_index: Row index in the matrix
             col_index: Column index in the matrix
+            bb: Big blind amount for posted blind adjustment
             min_samples: Minimum number of game states required for aggregation
 
         Returns:
@@ -111,9 +113,10 @@ class AggregationEngine:
                 expected_jackpot_winnings = jackpot_frequency * avg_jackpot_payout
                 jackpot_adjusted_ev = avg_ev + expected_jackpot_winnings
 
-                # Alternative Method 2: Include jackpots in the EV calculation directly
-                # This would require recalculating EV to include jackpot payouts in outcomes
-                # For now, we use Method 1 as it's more conservative and clear
+                # Adjust for posted blind (SB posts 0.5 * bb)
+                posted_blind = 0.5 * bb
+                adjusted_ev = avg_ev - posted_blind
+                jackpot_adjusted_ev = jackpot_adjusted_ev - posted_blind
 
                 # Convergence assessment
                 if total_games >= 10000:
@@ -129,12 +132,14 @@ class AggregationEngine:
                     'total_games': total_games,
                     'equity': equity,
                     'win_probability': equity,  # Alias for compatibility
-                    'ev': avg_ev,
+                    'ev': adjusted_ev,
+                    'raw_ev': avg_ev,  # Keep raw EV for debugging
                     'jackpot_adjusted_ev': jackpot_adjusted_ev,
                     'jackpot_frequency': jackpot_frequency,
                     'avg_jackpot_payout': avg_jackpot_payout,
                     'total_jackpot_payout': total_jackpot_payout,
                     'games_with_jackpots': games_with_jackpots,
+                    'posted_blind': posted_blind,
                     'convergence_status': convergence_status,
                     'last_updated': datetime.now(timezone.utc).isoformat()
                 }

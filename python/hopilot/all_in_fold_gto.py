@@ -108,7 +108,7 @@ class AllInFoldGTOSolver:
             return 'high_card'
 
     def _calculate_ev_with_bonus(self, hole_cards: List[str], board_cards: List[str],
-                                equity: float, pot_size: float, bet_amount: float) -> float:
+                                equity: float, pot_size: float, bb: float, rake: float, posted_blind: float) -> float:
         """
         Calculate expected value including bonus payouts.
 
@@ -117,13 +117,16 @@ class AllInFoldGTOSolver:
             board_cards: Community cards
             equity: Win probability (0-1)
             pot_size: Current pot size
-            bet_amount: All-in bet amount
+            bb: Big blind amount
+            rake: Rake percentage (0-1)
+            posted_blind: Amount already posted (for baseline adjustment)
 
         Returns:
-            Expected value of the hand
+            Expected value relative to folding
         """
-        # Standard poker EV
-        call_ev = equity * pot_size - bet_amount
+        effective_pot = pot_size * (1 - rake)
+        # Standard poker EV: weighted by win/loss probabilities
+        call_ev = (equity * effective_pot) - ((1.0 - equity) * bb)
 
         # Add bonus payout EV
         hand_category = self._get_hand_category(hole_cards, board_cards)
@@ -131,347 +134,16 @@ class AllInFoldGTOSolver:
 
         if bonus_multiplier > 0:
             # Bonus is paid when you win, so multiply equity by bonus
-            bonus_ev = equity * (pot_size * bonus_multiplier)
+            bonus_ev = equity * (effective_pot * bonus_multiplier)
             total_ev = call_ev + bonus_ev
         else:
             total_ev = call_ev
 
-        return total_ev
-
-    def find_gto_threshold(self, num_opponents: int = 8, pot_size: float = 20,
-                          bet_amount: float = 10, num_simulations: int = 5000,
-                          progress_callback=None, cancel_check=None) -> Dict:
-        """
-        Find the GTO equity threshold for all-in-or-fold.
-
-        Returns the minimum equity required to profitably call all-in.
-
-        Args:
-            num_opponents: Number of opponents
-            pot_size: Current pot size before bet
-            bet_amount: All-in bet amount
-            num_simulations: Monte Carlo simulations per hand
-            progress_callback: Optional callback for progress updates (progress: float, message: str)
-            cancel_check: Optional function that returns True if calculation should be cancelled
-
-        Returns:
-            Dict with threshold equity and analysis data
-        """
-        # Parameter validation
-        if not isinstance(num_opponents, int) or not (1 <= num_opponents <= 9):
-            raise ValueError("num_opponents must be an integer between 1 and 9")
-        if not isinstance(pot_size, (int, float)) or pot_size <= 0:
-            raise ValueError("pot_size must be a positive number")
-        if not isinstance(bet_amount, (int, float)) or bet_amount <= 0:
-            raise ValueError("bet_amount must be a positive number")
-        if not isinstance(num_simulations, int) or not (100 <= num_simulations <= 10000):
-            raise ValueError("num_simulations must be an integer between 100 and 10000")
-
-        # Check cache first
-        cache_key = (num_opponents, pot_size, bet_amount, num_simulations, tuple(sorted(self.bonus_payouts.items())))
-        if cache_key in self._cache:
-            self.logger.info("Returning cached GTO result")
-            return self._cache[cache_key]
-
-        self.logger.info(f"Calculating GTO threshold: opponents={num_opponents}, "
-                        f"pot={pot_size}, bet={bet_amount}")
-
-        # Get all possible starting hands (1326 total)
-        # For testing/development, sample a subset to speed up calculations
-        import random
-        random.seed(42)  # For reproducible results
-        
-        all_hands = []
-        for rank1 in 'AKQJT98765432':
-            for rank2 in 'AKQJT98765432':
-                for suit1 in 'shcd':
-                    for suit2 in 'shcd':
-                        if rank1 + suit1 != rank2 + suit2:  # No duplicate cards
-                            hand = [rank1 + suit1, rank2 + suit2]
-                            all_hands.append(hand)
-        
-        # Sample a subset for faster testing (adjust as needed)
-        sample_size = min(500, len(all_hands))  # Sample 500 hands for testing
-        sampled_hands = random.sample(all_hands, sample_size)
-        
-        self.logger.debug(f"Evaluating {len(sampled_hands)} sampled starting hands...")
-
-        progress_bar = None
-        if progress_callback is None and tqdm is not None:
-            progress_bar = tqdm(
-                total=len(sampled_hands),
-                desc="GTO hand evaluation",
-                unit="hand",
-                dynamic_ncols=True,
-            )
-
-        # Sort hands by equity (we'll calculate this)
-        hand_equities = []
-
-        try:
-            for i, hand in enumerate(sampled_hands):
-                if cancel_check and cancel_check():
-                    self.logger.info("GTO calculation cancelled")
-                    return {'cancelled': True}
-
-                if progress_callback:
-                    progress = (i + 1) / len(sampled_hands)
-                    progress_callback(progress, f"Evaluating hand {i+1}/{len(sampled_hands)}")
-                elif progress_bar is not None:
-                    progress_bar.update(1)
-
-                if i % 50 == 0:  # Log less frequently
-                    self.logger.debug(f"Evaluated {i}/{len(sampled_hands)} hands")
-
-                # Calculate equity vs random opponents
-                equity_result = self.analyzer.calculate_odds_random_opponents(
-                    hero_hole_cards=hand,
-                    board_cards=[],  # Preflop
-                    num_opponents=num_opponents,
-                    num_simulations=num_simulations
-                )
-
-            if equity_result:
-                equity = equity_result['win_probability']
-                ev = self._calculate_ev_with_bonus(hand, [], equity, pot_size, bet_amount)
-                hand_equities.append({
-                    'hand': hand,
-                    'shorthand': HandRange.shorthand_from_cards(hand),
-                    'equity': equity,
-                    'ev': ev
-                })
-        finally:
-            if progress_bar is not None:
-                progress_bar.close()
-
-        # Sort by EV (descending)
-        hand_equities.sort(key=lambda x: x['ev'], reverse=True)
-
-        # Find the threshold where EV becomes positive
-        # Hands with positive EV should be played, negative should fold
-        positive_ev_hands = [h for h in hand_equities if h['ev'] > 0]
-        negative_ev_hands = [h for h in hand_equities if h['ev'] <= 0]
-
-        if not positive_ev_hands:
-            threshold_equity = 1.0  # No hands are profitable
-        elif not negative_ev_hands:
-            threshold_equity = 0.0  # All hands are profitable
-        else:
-            # Threshold is the equity of the worst positive EV hand
-            threshold_equity = min(h['equity'] for h in positive_ev_hands)
-
-        # Calculate optimal range
-        optimal_range = [h['shorthand'] for h in positive_ev_hands]
-
-        result = {
-            'threshold_equity': threshold_equity,
-            'optimal_hands': len(positive_ev_hands),
-            'total_hands': len(hand_equities),
-            'sampled_hands': len(sampled_hands),
-            'optimal_range': optimal_range,
-            'top_10_hands': hand_equities[:10],
-            'bottom_10_hands': hand_equities[-10:],
-            'bonus_payouts': self.bonus_payouts.copy()
-        }
-
-        # Cache the result
-        self._cache[cache_key] = result
-
-        self.logger.info(f"GTO threshold found: {threshold_equity:.3f} equity "
-                        f"({len(positive_ev_hands)}/{len(hand_equities)} hands profitable)")
-
-        return result
-
-    def analyze_hand_strategy(self, hole_cards: List[str], num_opponents: int = 8,
-                            pot_size: float = 20, bet_amount: float = 10,
-                            num_simulations: int = 5000, matrix_cell_id: int = 0) -> Dict:
-        """
-        Analyze whether a specific hand should be played in all-in-or-fold.
-
-        Args:
-            hole_cards: The hand to analyze
-            num_opponents: Number of opponents
-            pot_size: Current pot size
-            bet_amount: All-in bet amount
-            num_simulations: Monte Carlo simulations
-            matrix_cell_id: ID of the matrix cell this analysis belongs to
-
-        Returns:
-            Dict with strategy recommendation and EV analysis
-        """
-        # Parameter validation
-        if not isinstance(hole_cards, list) or len(hole_cards) != 2:
-            raise ValueError("hole_cards must be a list of exactly 2 card strings")
-        if not isinstance(num_opponents, int) or not (1 <= num_opponents <= 9):
-            raise ValueError("num_opponents must be an integer between 1 and 9")
-        if not isinstance(pot_size, (int, float)) or pot_size <= 0:
-            raise ValueError("pot_size must be a positive number")
-        if not isinstance(bet_amount, (int, float)) or bet_amount <= 0:
-            raise ValueError("bet_amount must be a positive number")
-        if not isinstance(num_simulations, int) or not (100 <= num_simulations <= 10000):
-            raise ValueError("num_simulations must be an integer between 100 and 10000")
-
-        # Run Monte Carlo simulations and store genuine game states
-        import random
-        from datetime import datetime
-        
-        random.seed(42)  # For reproducible results
-        wins = 0
-        total_simulations = 0
-        
-        # Create a simulation ID for this analysis
-        simulation_id = hash(f"{hole_cards}_{num_opponents}_{num_simulations}_{datetime.now().isoformat()}")
-        
-        for sim_num in range(num_simulations):
-            total_simulations += 1
-            # Determine actual pot from all-in hero bet and opponent calls
-            actual_pot_size = bet_amount * (1 + num_opponents) if bet_amount > 0 else 0.0
-
-            # Create game state for this simulation
-            timestamp = datetime.now().isoformat()
-            game_state_id = self.persistence.store_game_state(
-                timestamp=timestamp,
-                round_name='preflop',
-                pot_size=actual_pot_size,
-                board_cards=[],  # No board cards in preflop all-in
-                outcome='pending'  # Will update after determining winner
-            )
-            
-            # Store hero player
-            hero_hand_class = self.analyzer.get_hand_class_value(hole_cards, [])
-            hero_strength = self.analyzer.evaluate_hand(hole_cards, [])
-            hero_id = self.persistence.store_player(
-                game_state_id=game_state_id,
-                position='HERO',
-                hole_cards=hole_cards,
-                stack_size=100.0,  # Default stack
-                is_hero=True,
-                hand_class=hero_hand_class,
-                final_strength=hero_strength
-            )
-            
-            # Store hero's all-in bet
-            if bet_amount > 0.0:
-                self.persistence.store_bet(
-                    game_state_id=game_state_id,
-                    player_id=hero_id,
-                    amount=bet_amount,
-                    action_type='raise'  # All-in is a raise
-                )
-            
-            # Generate random opponent hands
-            available_cards = [r + s for r in '23456789TJQKA' for s in 'shdc' 
-                             if r + s not in hole_cards]
-            
-            opponent_hands = []
-            for opp_num in range(num_opponents):
-                # Select 2 random cards for opponent
-                opp_cards = random.sample(available_cards, 2)
-                available_cards = [c for c in available_cards if c not in opp_cards]
-                
-                # Store opponent player
-                opp_hand_class = self.analyzer.get_hand_class_value(opp_cards, [])
-                opp_strength = self.analyzer.evaluate_hand(opp_cards, [])
-                opp_id = self.persistence.store_player(
-                    game_state_id=game_state_id,
-                    position=f'OPP{opp_num}',
-                    hole_cards=opp_cards,
-                    stack_size=100.0,
-                    is_hero=False,
-                    hand_class=opp_hand_class,
-                    final_strength=opp_strength
-                )
-                
-                # Opponents call the hero's all-in
-                if bet_amount > 0.0:
-                    self.persistence.store_bet(
-                        game_state_id=game_state_id,
-                        player_id=opp_id,
-                        amount=bet_amount,
-                        action_type='call'
-                    )
-                
-                opponent_hands.append(opp_cards)
-            
-            # Determine winner by evaluating all hands
-            all_hands = [hole_cards] + opponent_hands
-            hand_strengths = []
-            
-            for hand in all_hands:
-                strength = self.analyzer.evaluate_hand(hand, [])
-                hand_strengths.append(strength)
-            
-            # Filter out None strengths (invalid hands) and determine winner
-            valid_hands = [(i, strength) for i, strength in enumerate(hand_strengths) if strength is not None]
-            
-            if not valid_hands:
-                # No valid hands - this shouldn't happen, but handle it
-                outcome = 'invalid_hands'
-                hero_wins = False
-            else:
-                # Hero wins if they have the best valid hand
-                hero_strength = hand_strengths[0]
-                if hero_strength is None:
-                    # Hero's hand is invalid
-                    hero_wins = False
-                else:
-                    # Compare hero's strength against all other valid hands
-                    other_valid_strengths = [s for i, s in valid_hands if i > 0 and s is not None]
-                    hero_wins = all(s < hero_strength for s in other_valid_strengths)
-            
-            if hero_wins:
-                wins += 1
-                outcome = 'hero_win'
-            else:
-                outcome = 'hero_loss'
-            
-            # Update game state with final outcome
-            self.persistence.update_game_state_outcome(game_state_id, outcome)
-            
-            # Check for jackpot if hero won
-            if hero_wins:
-                jackpot = self._detect_jackpot(hole_cards, [])
-                if jackpot:
-                    self.persistence.store_jackpot(
-                        game_state_id=game_state_id,
-                        player_id=hero_id,
-                        jackpot_type=jackpot['type'],
-                        payout_amount=jackpot['payout_multiplier'] * bet_amount,
-                        cards_used=jackpot['cards_used']
-                    )
-            
-            # Update game state with final outcome
-            # Note: In a real implementation, we'd update the stored game state
-            # For now, we'll just use the outcome for statistics
-        
-        # Calculate final equity and EV
-        equity = wins / total_simulations if total_simulations > 0 else 0.0
-        ev = self._calculate_ev_with_bonus(hole_cards, [], equity, pot_size, bet_amount)
-        
-        # Commit all stored data
-        self.persistence.commit_transaction()
-        
-        hand_category = self._get_hand_category(hole_cards, [])
-        bonus_multiplier = self.bonus_payouts.get(hand_category, 0)
-        recommendation = "ALL-IN" if ev > 0 else "FOLD"
-
-        return {
-            'hand': hole_cards,
-            'shorthand': HandRange.shorthand_from_cards(hole_cards),
-            'equity': equity,
-            'ev': ev,
-            'hand_category': hand_category,
-            'bonus_multiplier': bonus_multiplier,
-            'recommendation': recommendation,
-            'pot_size': pot_size,
-            'bet_amount': bet_amount,
-            'num_opponents': num_opponents,
-            'simulations_run': total_simulations,
-            'genuine_data_stored': True
-        }
+        # Adjust for posted blind to get EV relative to folding
+        return total_ev - posted_blind
 
     def solve(self, hero_hole: List[str], villain_hole: List[str], board_cards: List[str] = None,
-              pot_size: float = 20, bet_amount: float = 10) -> Dict:
+              pot_size: float = 20, bb: float = 10, rake: float = 0.0) -> Dict:
         """
         Solve GTO for a specific hero vs villain all-in scenario.
 
@@ -480,7 +152,8 @@ class AllInFoldGTOSolver:
             villain_hole: Villain's hole cards (exactly 2)
             board_cards: Community cards (optional)
             pot_size: Current pot size before bet
-            bet_amount: All-in bet amount
+            bb: Big blind amount
+            rake: Rake percentage (0-1)
 
         Returns:
             Dict with GTO analysis for the matchup
@@ -497,8 +170,10 @@ class AllInFoldGTOSolver:
             raise ValueError("board_cards must be a list")
         if not isinstance(pot_size, (int, float)) or pot_size <= 0:
             raise ValueError("pot_size must be a positive number")
-        if not isinstance(bet_amount, (int, float)) or bet_amount <= 0:
-            raise ValueError("bet_amount must be a positive number")
+        if not isinstance(bb, (int, float)) or bb <= 0:
+            raise ValueError("bb must be a positive number")
+        if not isinstance(rake, (int, float)) or not (0 <= rake <= 1):
+            raise ValueError("rake must be a number between 0 and 1")
 
         # Check for duplicate cards
         all_cards = hero_hole + villain_hole + board_cards
@@ -517,11 +192,11 @@ class AllInFoldGTOSolver:
             return {'error': 'Could not calculate equity'}
 
         hero_equity = equity_result['win_probability']
-        hero_ev = self._calculate_ev_with_bonus(hero_hole, board_cards, hero_equity, pot_size, bet_amount)
+        hero_ev = self._calculate_ev_with_bonus(hero_hole, board_cards, hero_equity, pot_size + bb, bb, rake, 0.5 * bb)
 
         # For villain, equity is 1 - hero_equity, and they don't have to call (they're the bettor)
         villain_equity = 1 - hero_equity
-        villain_ev = villain_equity * (pot_size + bet_amount) - (1 - villain_equity) * bet_amount
+        villain_ev = villain_equity * ((pot_size + bb) * (1 - rake)) - (1 - villain_equity) * bb - bb
 
         # Get hand categories for bonus analysis
         hero_category = self._get_hand_category(hero_hole, board_cards)
@@ -549,7 +224,8 @@ class AllInFoldGTOSolver:
             'hero_bonus_multiplier': hero_bonus,
             'villain_bonus_multiplier': villain_bonus,
             'pot_size': pot_size,
-            'bet_amount': bet_amount,
+            'bb': bb,
+            'rake': rake,
             'total_pot': pot_size + bet_amount
         }
 
@@ -719,34 +395,18 @@ class AllInFoldGTOSolver:
         max_combos = min(len(combos), 10)  # Sample up to 10 combos
         sampled_combos = combos[:max_combos]
 
-        # For evaluation (when matrix_cell_id is 0 or None), don't store GameStates
-        # Just run the analysis without persistence
-        eval_mode = not matrix_cell_id or matrix_cell_id <= 0
-        
         for combo in sampled_combos:
             # Convert tuple to list of card strings
             hole_cards = [combo[0], combo[1]]
             
-            if eval_mode:
-                # Run analysis without storing GameStates, but still capture individual outcomes
-                result = self._analyze_hand_without_storage(
-                    hole_cards=hole_cards,
-                    num_opponents=num_opponents,
-                    pot_size=pot_size,
-                    bet_amount=bet_amount,
-                    num_simulations=500,
-                    return_individual_outcomes=True,
-                )
-            else:
-                # Normal analysis with GameState storage
-                result = self.analyze_hand_strategy(
-                    hole_cards=hole_cards,
-                    num_opponents=num_opponents,
-                    pot_size=pot_size,
-                    bet_amount=bet_amount,
-                    num_simulations=500,
-                    matrix_cell_id=matrix_cell_id
-                )
+            result = self._analyze_hand_without_storage(
+                hole_cards=hole_cards,
+                num_opponents=num_opponents,
+                pot_size=pot_size,
+                bet_amount=bet_amount,
+                num_simulations=500,
+                return_individual_outcomes=True,
+            )
             
             # Format result for compatibility
             combo_result = {

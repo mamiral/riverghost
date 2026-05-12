@@ -49,7 +49,8 @@ class IncrementalAggregationService:
         poker_analyzer: PokerAnalyzer,
         event_emitter: Optional[ConvergenceEventEmitter] = None,
         emit_interval: int = 100,
-        default_batch_size: int = 1000
+        default_batch_size: int = 1000,
+        bb: float = 1.0
     ) -> None:
         """
         Initialize incremental aggregation service.
@@ -59,8 +60,7 @@ class IncrementalAggregationService:
             poker_analyzer: Poker analyzer for metric calculations
             event_emitter: Optional event emitter for convergence tracking
             emit_interval: Sample count interval for convergence emissions
-            default_batch_size: Default batch size for database queries
-        """
+            default_batch_size: Default batch size for database queries            bb: Big blind amount for posted blind adjustments        """
         self.db_connection = db_connection
         self.poker_analyzer = poker_analyzer
         self.event_emitter = event_emitter or ConvergenceEventEmitter()

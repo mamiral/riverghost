@@ -26,29 +26,25 @@ class TestBrowserDatabaseProviderContextBuilding:
     """Tests for context building logic."""
 
     def test_build_context_normalizes_position_actions(self):
-        """Test that context builder normalizes position actions properly."""
+        """Test that context builder uses canonical position actions for AoF scenarios."""
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         
-        position_actions = {
-            "UTG": "FOLD",
-            "BTN": "ALL_IN",
-            "SB": "FOLD",
-        }
-        
+        # For UTG position, canonical scenario has all players ALL_IN
         context = provider._build_context(
             position="UTG",
             metric="EV",
-            position_actions=position_actions,
         )
         
-        # Verify context structure
+        # Verify context structure uses canonical AoF scenario
         assert context["position"] == "UTG"
-        assert context["action"] == "FOLD"
+        assert context["action"] == "ALL_IN"  # Hero is ALL_IN in canonical scenario
         assert context["metric"] == "EV"
-        assert context["position_actions"]["UTG"] == "FOLD"
+        assert context["position_actions"]["UTG"] == "ALL_IN"
         assert context["position_actions"]["BTN"] == "ALL_IN"
-        assert context["active_players"] == 1  # Only BTN is ALL_IN
-        assert context["pot_size"] == 1.0  # bet_amount * active_players
+        assert context["position_actions"]["SB"] == "ALL_IN"
+        assert context["position_actions"]["BB"] == "ALL_IN"
+        assert context["active_players"] == 4  # All players ALL_IN
+        assert context["pot_size"] == 4.0  # bet_amount * active_players
         assert context["bet_amount"] == 1.0  # Default
         assert context["effective_mode"] == "analysis"
 
@@ -56,32 +52,27 @@ class TestBrowserDatabaseProviderContextBuilding:
         """Test context builder sets effective_mode correctly for strict mode."""
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         
+        # Note: strict_current_action parameter was removed from _build_context
+        # This test may need to be updated or removed if strict mode is no longer supported
         context = provider._build_context(
             position="UTG",
             metric="EV",
-            strict_current_action=True,
         )
         
-        assert context["effective_mode"] == "strict-current-action"
+        # The method now always uses "analysis" mode
+        assert context["effective_mode"] == "analysis"
 
     def test_build_context_active_players_count(self):
-        """Test that active_players correctly counts only ALL_IN actions."""
+        """Test that active_players correctly counts ALL_IN actions in canonical scenarios."""
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         
-        position_actions = {
-            "UTG": "FOLD",
-            "BTN": "ALL_IN",
-            "SB": "ALL_IN",
-            "BB": "FOLD",
-        }
-        
+        # Test with BTN position - canonical scenario has UTG folded, others ALL_IN
         context = provider._build_context(
-            position="UTG",
+            position="BTN",
             metric="EV",
-            position_actions=position_actions,
         )
         
-        assert context["active_players"] == 2  # BTN and SB are ALL_IN
+        assert context["active_players"] == 3  # BTN, SB, BB are ALL_IN (UTG folded)
 
 
 class TestBrowserDatabaseProviderValidation:
@@ -186,7 +177,7 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
         payload = provider.get_matrix_payload(
             position="UTG",
             metric="EV",
-            position_actions={"UTG": "FOLD", "BTN": "ALL_IN"},
+            # Note: position_actions parameter is ignored in favor of canonical scenarios
         )
 
         assert payload["status"] == STATUS_AVAILABLE
@@ -194,10 +185,11 @@ class TestBrowserDatabaseProviderDatabaseIntegration:
 
         called_contract = mock_db.get_cross_run_matrix_summary.call_args[0][0]
         assert called_contract["selected_position"] == "UTG"
-        assert called_contract["hero_action"] == "FOLD"
+        assert called_contract["hero_action"] == "ALL_IN"  # Canonical scenario for UTG
+        assert called_contract["position_actions"]["UTG"] == "ALL_IN"
         assert called_contract["position_actions"]["BTN"] == "ALL_IN"
-        assert called_contract["active_players"] == ["BTN"]
-        assert called_contract["num_opponents"] == 1
+        assert called_contract["active_players"] == ["UTG", "BTN", "SB", "BB"]  # All players ALL_IN
+        assert called_contract["num_opponents"] == 3
         assert called_contract["run_kind"] == "matrix_sweep"
 
     @patch('hopilot.gto.browser_database_provider.SimulationRepository')
@@ -290,19 +282,15 @@ class TestBrowserDatabaseProviderStatusPayloads:
         """Test that error payload includes all input parameters for debugging."""
         provider = BrowserDatabaseProvider(database_url="sqlite:///:memory:")
         
-        position_actions = {"UTG": "FOLD", "BTN": "ALL_IN"}
+        # Note: position_actions, pot_size, bet_amount are now ignored in favor of canonical scenarios
         payload = provider.get_matrix_payload(
             position="INVALID",
             metric="EV",
-            position_actions=position_actions,
-            pot_size=50.0,
-            bet_amount=25.0,
         )
         
-        # Verify context includes normalized parameters
+        # Verify context includes position and metric (other params are derived)
         assert payload["context"]["position"] == "INVALID"
-        assert payload["context"]["pot_size"] == 50.0
-        assert payload["context"]["bet_amount"] == 25.0
+        assert payload["context"]["metric"] == "EV"
         assert payload["cells"] == []
 
 

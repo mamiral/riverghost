@@ -11,17 +11,15 @@ class PrecomputeConfig(BaseModel):
 
     max_workers: int = Field(default=4, ge=1, le=16, description="Thread pool size for concurrent processing")
     simulations_per_cell: int = Field(default=1000, ge=100, le=50000, description="Base number of simulations per cell")
-    bet_size: float = Field(default=1.0, gt=0, description="Bet size per player for EV/EQR calculations")
+    bb: float = Field(default=1.0, gt=0, description="Big blind size for EV/EQR calculations")
+    rake: float = Field(default=0.0, ge=0, le=1, description="Rake percentage (0.0 to 1.0)")
     convergence_tracking_enabled: bool = Field(default=False, description="Enable convergence tracking during aggregation")
     convergence_emit_interval: int = Field(default=100, ge=10, le=1000, description="Sample count interval for convergence emissions")
 
     @property
-    def step_sizes(self) -> Dict[str, int]:
-        """Adjustment step sizes for UI controls."""
-        return {
-            'coarse': 1000 if self.simulations_per_cell < 5000 else 5000,
-            'fine': 100 if self.simulations_per_cell < 5000 else 500
-        }
+    def sb(self) -> float:
+        """Small blind, derived from big blind."""
+        return 0.5 * self.bb
 
     @classmethod
     def from_yaml(cls, config_path: Path) -> 'PrecomputeConfig':
@@ -41,7 +39,8 @@ class PrecomputeConfig(BaseModel):
         return cls(
             max_workers=aof_config.get('precompute_max_workers'),
             simulations_per_cell=aof_config.get('num_simulations', 1000),
-            bet_size=aof_config.get('bet_size', 1.0),
+            bb=aof_config.get('bb', 1.0),
+            rake=aof_config.get('rake', 0.0),
             convergence_tracking_enabled=aof_config.get('convergence_tracking_enabled', False),
             convergence_emit_interval=aof_config.get('convergence_emit_interval', 100)
         )
@@ -51,7 +50,8 @@ class PrecomputeConfig(BaseModel):
         return {
             'max_workers': self.max_workers,
             'simulations_per_cell': self.simulations_per_cell,
-            'bet_size': self.bet_size,
+            'bb': self.bb,
+            'rake': self.rake,
             'convergence_tracking_enabled': self.convergence_tracking_enabled,
             'convergence_emit_interval': self.convergence_emit_interval
         }

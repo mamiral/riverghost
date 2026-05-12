@@ -42,14 +42,16 @@ class MatrixCellsDerivationEngine:
         "22",
     ]
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, bb: float = 1.0):
         """
         Initialize the matrix cells derivation engine.
 
         Args:
             database_url: Database connection URL
+            bb: Big blind amount for posted blind adjustments
         """
         self.database_url = database_url
+        self.bb = bb
         self.db_connection = DatabaseConnection(database_url)
         self.aggregation_engine = AggregationEngine(database_url)
         self.performance_monitor = PerformanceMonitor()
@@ -143,7 +145,7 @@ class MatrixCellsDerivationEngine:
         try:
             # Compute aggregations for this cell position
             aggregation_result = self.aggregation_engine.compute_matrix_cell_from_game_states(
-                matrix_id, row_idx, col_idx, min_samples
+                matrix_id, row_idx, col_idx, self.bb, min_samples
             )
 
             if not aggregation_result:

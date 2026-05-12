@@ -30,17 +30,19 @@ class IncrementalAggregationEngine:
     avoiding the need for full recomputation of all matrix cells.
     """
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, bb: float = 1.0):
         """
         Initialize the incremental aggregation engine.
 
         Args:
             database_url: Database connection URL
+            bb: Big blind amount for posted blind adjustments
         """
         self.database_url = database_url
+        self.bb = bb
         self.db_connection = DatabaseConnection(database_url)
         self.aggregation_engine = AggregationEngine(database_url)
-        self.derivation_engine = MatrixCellsDerivationEngine(database_url)
+        self.derivation_engine = MatrixCellsDerivationEngine(database_url, bb)
         self.performance_monitor = PerformanceMonitor()
 
     def update_matrix_from_new_game_states(

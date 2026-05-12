@@ -32,10 +32,10 @@ class _NoOutcomesSolver:
 
 
 def _build_context(provider: BrowserDatabaseProvider) -> dict:
+    # Use canonical scenario for UTG
     return provider._build_context(  # pylint: disable=protected-access
         position="UTG",
         metric="EV",
-        position_actions={"UTG": "ALL_IN", "BTN": "ALL_IN", "SB": "FOLD", "BB": "FOLD"},
     )
 
 
